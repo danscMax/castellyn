@@ -192,7 +192,7 @@ async fn spawn_streamed(
 ) -> Result<i32, String> {
     // Reserve the single run slot (guard dropped before any await).
     {
-        let mut g = state.0.lock().unwrap();
+        let mut g = state.0.lock().unwrap_or_else(|e| e.into_inner());
         if g.is_some() {
             return Err("Уже идёт другой прогон — дождись завершения или отмени.".into());
         }
@@ -215,13 +215,13 @@ async fn spawn_streamed(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            *state.0.lock().unwrap() = None;
+            *state.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
             return Err(format!("не удалось запустить pwsh для {script}: {e}"));
         }
     };
 
     if let Some(pid) = child.id() {
-        *state.0.lock().unwrap() = Some(pid);
+        *state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
     }
 
     let stdout = child.stdout.take().ok_or("нет stdout")?;
@@ -252,7 +252,7 @@ async fn spawn_streamed(
     let _ = h_out.await;
     let _ = h_err.await;
 
-    *state.0.lock().unwrap() = None;
+    *state.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let code = status.code().unwrap_or(-1);
     let _ = app.emit("run-done", RunDone { component: id, code });
     Ok(code)
@@ -659,7 +659,8 @@ fn read_engines() -> Vec<EngineStatus> {
     let s = |e: &serde_json::Value, k: &str| {
         e.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
     };
-    arr.iter()
+    let mut engines: Vec<EngineStatus> = arr
+        .iter()
         .map(|e| {
             let port = e.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
             let is_router = e.get("router").and_then(|r| r.as_bool()).unwrap_or(false);
@@ -673,10 +674,26 @@ fn read_engines() -> Vec<EngineStatus> {
                 has_command: !s(e, "command").is_empty() || !s(e, "start").is_empty(),
                 router: is_router,
                 installed: if is_router { Some(cmd_on_path("ccr")) } else { None },
-                running: port_listening(port),
+                running: false,
             }
         })
-        .collect()
+        .collect();
+    // Probe ports concurrently: each port_listening blocks up to 250ms, so doing them
+    // sequentially would be N*250ms. thread::scope keeps it bounded by the slowest single probe.
+    let running: Vec<bool> = std::thread::scope(|scope| {
+        let handles: Vec<_> = engines
+            .iter()
+            .map(|e| {
+                let p = e.port;
+                scope.spawn(move || port_listening(p))
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap_or(false)).collect()
+    });
+    for (e, r) in engines.iter_mut().zip(running) {
+        e.running = r;
+    }
+    engines
 }
 
 /// Patch an engine's baseUrl + port in config\engines.json (user can change ports when
@@ -1051,6 +1068,11 @@ async fn read_schedules() -> Result<Option<serde_json::Value>, String> {
     }
 }
 
+/// Known schedule actions (whitelist mirrors the ScheduleTab UI + Schedule-Hub.ps1).
+fn valid_schedule_action(a: &str) -> bool {
+    matches!(a, "enable" | "disable" | "run" | "create" | "delete")
+}
+
 /// Manage a scheduled task: enable / disable / run / create / delete (streamed).
 #[tauri::command]
 async fn run_schedule(
@@ -1060,6 +1082,9 @@ async fn run_schedule(
     id: Option<String>,
     time: Option<String>,
 ) -> Result<i32, String> {
+    if !valid_schedule_action(&action) {
+        return Err(format!("неизвестное действие schedule: {action}"));
+    }
     let mut args = vec!["-Action".to_string(), action];
     if let Some(i) = id {
         args.push("-Id".into());
@@ -1442,13 +1467,6 @@ fn profile_env_pairs(name: &str) -> Vec<(String, String)> {
     out
 }
 
-/// True when a value is safe to inline into a cmd `set K=V` without quoting/escaping
-/// (no cmd metacharacters). Provider URLs/tokens/model ids qualify; anything exotic is
-/// left to settings.json (still applied to requests) rather than risking a broken command.
-fn cmd_safe_value(v: &str) -> bool {
-    !v.is_empty() && !v.contains(['&', '|', '<', '>', '"', '^', '%', '\r', '\n'])
-}
-
 #[derive(Serialize)]
 struct ProfileLaunch {
     name: String,
@@ -1695,25 +1713,23 @@ fn launch_profile(name: String, mode: String) -> Result<(), String> {
     let dir = format!("{home}\\.claude-{name}");
     let (launch_mode, _, _) = read_profile_launch(&name);
     let lean = launch_mode == "lean";
-    // New console that exports the profile's provider env + config dir, then starts claude
-    // (keeps window open). Exporting ANTHROPIC_* into the real env is what makes a custom-provider
-    // profile skip the login screen. `set K=V&&` (no space before &&) avoids trailing spaces.
-    let mut prefix = String::new();
-    for (k, v) in profile_env_pairs(&name) {
-        if cmd_safe_value(&v) {
-            prefix.push_str(&format!("set {k}={v}&& "));
-        }
-    }
     // Lean mode → append the lean CLI flags (--bare/--safe-mode + selected MCP).
     let claude_cmd = if lean {
         format!("claude {}", lean_flags(&name).join(" "))
     } else {
         "claude".to_string()
     };
-    let inner = format!("{prefix}set CLAUDE_CONFIG_DIR={dir}&& {claude_cmd}");
-    std::process::Command::new("cmd")
-        .args(["/c", "start", &format!("Claude {name}"), "cmd", "/k", &inner])
-        .creation_flags(CREATE_NO_WINDOW)
+    // New console that starts claude with the profile's provider env + config dir set as REAL
+    // environment variables (inherited by the window `start` spawns), rather than inlined into a
+    // `set K=V&&` cmd string. This avoids any cmd-metacharacter handling on env values and is what
+    // makes a custom-provider profile skip the login screen (claude's auth check reads the env).
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/c", "start", &format!("Claude {name}"), "cmd", "/k", &claude_cmd])
+        .env("CLAUDE_CONFIG_DIR", &dir);
+    for (k, v) in profile_env_pairs(&name) {
+        cmd.env(k, v);
+    }
+    cmd.creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("не удалось открыть терминал: {e}"))?;
     Ok(())
@@ -1725,8 +1741,12 @@ fn open_terminal(path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).is_dir() {
         return Err(format!("каталог не найден: {path}"));
     }
+    // Open the new console directly in `path` via current_dir, rather than inlining the path
+    // into a `cmd /k cd /d {path}` string (which an attacker-named dir with cmd metacharacters
+    // like `&` could break out of). `start` inherits this process's working directory.
     std::process::Command::new("cmd")
-        .args(["/c", "start", "Repo", "cmd", "/k", &format!("cd /d {path}")])
+        .args(["/c", "start", "Repo", "cmd", "/k"])
+        .current_dir(&path)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("не удалось открыть терминал: {e}"))?;
@@ -1800,7 +1820,7 @@ fn open_profile_dir(name: String) -> Result<(), String> {
 /// Kill the currently-running child process tree (Windows: taskkill /T /F).
 #[tauri::command]
 fn cancel_run(state: State<'_, RunState>) -> Result<(), String> {
-    let pid = { *state.0.lock().unwrap() };
+    let pid = { *state.0.lock().unwrap_or_else(|e| e.into_inner()) };
     match pid {
         Some(p) if p != 0 => {
             let _ = std::process::Command::new("taskkill")
@@ -1982,20 +2002,20 @@ mod tests {
     }
 
     #[test]
+    fn schedule_action_whitelist() {
+        for a in ["enable", "disable", "run", "create", "delete"] {
+            assert!(valid_schedule_action(a), "{a} must be allowed");
+        }
+        assert!(!valid_schedule_action("")); // empty
+        assert!(!valid_schedule_action("drop")); // unknown
+        assert!(!valid_schedule_action("delete; rm -rf")); // injection-shaped
+    }
+
+    #[test]
     fn lean_base_flag_by_auth() {
         // Token/API-key profiles get the tiny --bare; OAuth profiles fall back to --safe-mode.
         assert_eq!(lean_base_flag(true), "--bare");
         assert_eq!(lean_base_flag(false), "--safe-mode");
-    }
-
-    #[test]
-    fn cmd_safe_value_rejects_metachars() {
-        assert!(cmd_safe_value("http://localhost:1234"));
-        assert!(cmd_safe_value("lmstudio"));
-        assert!(!cmd_safe_value("")); // empty
-        assert!(!cmd_safe_value("a&b")); // cmd separator
-        assert!(!cmd_safe_value("a%b")); // env expansion
-        assert!(!cmd_safe_value("a\"b")); // quote
     }
 
     #[test]
