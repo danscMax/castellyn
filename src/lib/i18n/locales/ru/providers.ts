@@ -1,0 +1,125 @@
+export default {
+  // Header
+  title: 'Провайдеры и движки',
+  subtitle: 'Локальные LLM-движки и привязка провайдера к каждому профилю Claude Code',
+  refreshTitle: 'Перечитать статус движков и провайдеры профилей',
+  refreshLabel: 'Обновить',
+  busy: 'Идёт…',
+
+  // Engines section
+  enginesHeading: 'Движки',
+  running: 'работает',
+  stopped: 'остановлен',
+  portListening: 'Порт слушается',
+  portNotResponding: 'Порт не отвечает',
+  protoAnthropicTitle: 'Anthropic-совместим — можно вешать на профиль напрямую',
+  protoOpenaiTitle: 'OpenAI-совместим — для Claude Code нужен Anthropic-роутер',
+  installed: 'установлен',
+  notInstalled: 'не установлен',
+  ccrInstalledTitle: 'ccr установлен (npm)',
+  ccrNotInstalledTitle: 'ccr не установлен — нажми «Установить»',
+
+  // Inline endpoint editor
+  endpointEditorTitle: 'Адрес и порт (если занят другим сервисом)',
+  portPlaceholder: 'порт',
+  editUrlInputTip: 'Base URL, куда движок принимает запросы — на него будет смотреть профиль',
+  editPortInputTip: 'TCP-порт движка — по нему проверяется, запущен ли он',
+  cancelEditTip: 'Закрыть редактор, не записывая изменения в engines.json',
+  saveEngineTitle: 'Сохранить в engines.json',
+  save: 'Сохранить',
+  cancel: 'Отмена',
+
+  // Engine actions
+  installCcrTitle: 'Установить claude-code-router (npm). Нужен один раз.',
+  install: 'Установить',
+  stopRouterTitle: 'Остановить роутер (ccr stop)',
+  stopProcessTitle: 'Остановить процесс на порту {port}',
+  stop: 'Остановить',
+  startRouterTitle: 'Запустить роутер (ccr start)',
+  startEngineTitle: 'Запустить движок в отдельном окне',
+  start: 'Запустить',
+  manualStart: 'запуск вручную',
+  bindReadyTitle:
+    'Привязать этот Anthropic-нативный движок к профилю напрямую: выбрать модель и профиль.',
+  bindNotReadyTitle: 'Сначала запусти движок (и загрузи модель), затем привязывай.',
+  bindToProfile: 'Привязать к профилю',
+  connectReadyTitle:
+    'Подключить этот OpenAI-движок к Claude Code через роутер ccr: выбрать модель и профиль, настроить+запустить ccr и привязать профиль.',
+  connectNotReadyTitle: 'Сначала запусти движок (и загрузи модель), затем подключай.',
+  connectViaRouter: 'Подключить через роутер',
+  openDashboardTitle: 'Открыть дашборд {url}',
+  dashboardWhenRunningTitle: 'Дашборд доступен, когда движок запущен',
+  dashboard: 'Дашборд',
+  editEndpointTitle: 'Изменить адрес/порт движка (если порт занят другим сервисом)',
+  portUrl: 'Порт/URL',
+  noEngines: 'Движки не настроены (config\\engines.json).',
+
+  // Provider per profile section
+  providerPerProfileHeading: 'Провайдер на профиль',
+  defaultProvider: 'по умолчанию (Anthropic-логин)',
+  customProviderTitle: 'Профиль использует кастомный провайдер',
+  custom: 'custom',
+  modelTitle: 'ANTHROPIC_MODEL',
+  smallModelTitle: 'ANTHROPIC_SMALL_FAST_MODEL',
+  tokenSetTitle: 'ANTHROPIC_AUTH_TOKEN задан',
+  tokenSet: 'токен задан',
+  editProviderTitle: 'Назначить/изменить провайдера этого профиля',
+  edit: 'Изменить',
+  resetProviderTitle: 'Сбросить на стандартный Anthropic-логин',
+  reset: 'Сбросить',
+  noProviderData: 'Нет данных. Нажми «Обновить».',
+  footnote:
+    'Провайдер пишется в env профиля (~/.claude-<имя>/settings.json) и применяется при следующем запуске профиля. Токен хранится в settings.json (как у Claude Code) и не синхронизируется между машинами.',
+
+  // ProviderEditDialog
+  dialogClose: 'Закрыть',
+  dialogTitle: 'Провайдер профиля «{name}»',
+  presetLabel: 'Пресет (только Anthropic-совместимые)',
+  presetSelectTip: 'Подставить Base URL запущенного движка вместо ввода адреса вручную',
+  presetPlaceholder: '— выбрать пресет —',
+  presetCustom: 'Custom: {url}',
+  presetHint:
+    'Anthropic-нативные движки (LM Studio, роутер GLM) вешаются на профиль напрямую. Чисто OpenAI-движки (FreeLLMAPI, DeepSeek, Qwen) — только через «Подключить через роутер».',
+  baseUrlLabel: 'Base URL',
+  baseUrlInputTip: 'Адрес Anthropic-совместимого эндпоинта — записывается в ANTHROPIC_BASE_URL профиля',
+  openaiWarn:
+    '⚠ Это OpenAI-совместимый движок — Claude Code напрямую его не примет, нужен Anthropic-роутер (см. вкладку «Провайдеры»).',
+  tokenLabel: 'Токен (Bearer)',
+  tokenInputTip: 'Bearer-токен для эндпоинта — сохраняется в settings.json профиля',
+  tokenSavedPlaceholder: '•••••• (сохранён)',
+  tokenLocalPlaceholder: 'для локальных прокси — любой непустой',
+  keepTokenTitle: 'Оставить текущий токен',
+  keepToken: 'Оставить текущий токен',
+  modelsLabel: 'Модели',
+  loadModelsTitle:
+    'Запросить список моделей у движка (GET /models) — например, скачанные в LM Studio',
+  loading: 'Загрузка…',
+  loadModels: 'Загрузить модели',
+  modelsAvailable: 'Доступно: {n} — выбери из подсказки в полях ниже.',
+  modelLabel: 'Модель (опц.)',
+  modelInputTip: 'Имя модели для ANTHROPIC_MODEL — пусто = модель по умолчанию у движка',
+  smallModelLabel: 'Small/fast модель (опц.)',
+  smallModelInputTip: 'Лёгкая модель для фоновых задач (ANTHROPIC_SMALL_FAST_MODEL)',
+  dialogCancelTip: 'Закрыть окно, не меняя провайдера профиля',
+  applyProviderTip: 'Записать провайдера в env профиля; применится при следующем запуске',
+  apply: 'Применить',
+
+  // RouterConnectDialog
+  rcBindTitle: 'Привязать «{name}» к профилю',
+  rcConnectTitle: 'Подключить «{name}» через роутер',
+  rcDirectSub:
+    'Движок говорит на Anthropic-протоколе напрямую — выбранный профиль будет привязан к {url}. Перезапусти профиль, чтобы изменения применились.',
+  rcRouterSub:
+    'Настроит claude-code-router на {url}, запустит его и привяжет выбранный профиль к Anthropic-эндпоинту ccr (http://127.0.0.1:3456). Так Claude Code сможет использовать OpenAI-движок.',
+  rcModelLoading: 'Модель (загрузка…)',
+  rcModelAvailable: 'Модель ({n} доступно)',
+  rcModelManual: 'Модель (не загрузились — введите вручную)',
+  rcModelPlaceholder: 'например, qwen2.5-coder',
+  rcModelInputTip: 'Модель, которую будет запрашивать профиль через этот движок',
+  rcProfileLabel: 'Профиль',
+  rcProfileSelectTip: 'Профиль Claude Code, который привяжется к этому движку',
+  rcBindTip: 'Привязать профиль к движку напрямую и записать настройки в его env',
+  rcConnectTip: 'Настроить и запустить ccr, затем привязать профиль к его Anthropic-эндпоинту',
+  rcBind: 'Привязать',
+  rcConnect: 'Подключить'
+};

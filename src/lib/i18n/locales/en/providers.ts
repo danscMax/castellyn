@@ -1,0 +1,125 @@
+export default {
+  // Header
+  title: 'Providers and engines',
+  subtitle: 'Local LLM engines and binding a provider to each Claude Code profile',
+  refreshTitle: 'Re-read engine status and profile providers',
+  refreshLabel: 'Refresh',
+  busy: 'Working…',
+
+  // Engines section
+  enginesHeading: 'Engines',
+  running: 'running',
+  stopped: 'stopped',
+  portListening: 'Port is listening',
+  portNotResponding: 'Port not responding',
+  protoAnthropicTitle: 'Anthropic-compatible — can bind to a profile directly',
+  protoOpenaiTitle: 'OpenAI-compatible — Claude Code needs an Anthropic router',
+  installed: 'installed',
+  notInstalled: 'not installed',
+  ccrInstalledTitle: 'ccr installed (npm)',
+  ccrNotInstalledTitle: 'ccr not installed — click "Install"',
+
+  // Inline endpoint editor
+  endpointEditorTitle: 'Address and port (if taken by another service)',
+  portPlaceholder: 'port',
+  editUrlInputTip: 'Base URL where the engine accepts requests — the profile will point here',
+  editPortInputTip: 'The engine TCP port — used to check whether it is running',
+  cancelEditTip: 'Close the editor without writing changes to engines.json',
+  saveEngineTitle: 'Save to engines.json',
+  save: 'Save',
+  cancel: 'Cancel',
+
+  // Engine actions
+  installCcrTitle: 'Install claude-code-router (npm). Needed once.',
+  install: 'Install',
+  stopRouterTitle: 'Stop the router (ccr stop)',
+  stopProcessTitle: 'Stop the process on port {port}',
+  stop: 'Stop',
+  startRouterTitle: 'Start the router (ccr start)',
+  startEngineTitle: 'Start the engine in a separate window',
+  start: 'Start',
+  manualStart: 'manual start',
+  bindReadyTitle:
+    'Bind this Anthropic-native engine to a profile directly: pick a model and profile.',
+  bindNotReadyTitle: 'Start the engine first (and load a model), then bind.',
+  bindToProfile: 'Bind to profile',
+  connectReadyTitle:
+    'Connect this OpenAI engine to Claude Code via the ccr router: pick a model and profile, configure+start ccr and bind the profile.',
+  connectNotReadyTitle: 'Start the engine first (and load a model), then connect.',
+  connectViaRouter: 'Connect via router',
+  openDashboardTitle: 'Open dashboard {url}',
+  dashboardWhenRunningTitle: 'Dashboard is available when the engine is running',
+  dashboard: 'Dashboard',
+  editEndpointTitle: 'Change engine address/port (if the port is taken by another service)',
+  portUrl: 'Port/URL',
+  noEngines: 'No engines configured (config\\engines.json).',
+
+  // Provider per profile section
+  providerPerProfileHeading: 'Provider per profile',
+  defaultProvider: 'default (Anthropic login)',
+  customProviderTitle: 'Profile uses a custom provider',
+  custom: 'custom',
+  modelTitle: 'ANTHROPIC_MODEL',
+  smallModelTitle: 'ANTHROPIC_SMALL_FAST_MODEL',
+  tokenSetTitle: 'ANTHROPIC_AUTH_TOKEN set',
+  tokenSet: 'token set',
+  editProviderTitle: 'Assign/change this profile\'s provider',
+  edit: 'Edit',
+  resetProviderTitle: 'Reset to the standard Anthropic login',
+  reset: 'Reset',
+  noProviderData: 'No data. Click "Refresh".',
+  footnote:
+    'The provider is written to the profile env (~/.claude-<name>/settings.json) and applies on the next profile start. The token is stored in settings.json (like Claude Code) and is not synced between machines.',
+
+  // ProviderEditDialog
+  dialogClose: 'Close',
+  dialogTitle: 'Provider for profile "{name}"',
+  presetLabel: 'Preset (Anthropic-compatible only)',
+  presetSelectTip: 'Fill in a running engine\'s Base URL instead of typing the address by hand',
+  presetPlaceholder: '— pick a preset —',
+  presetCustom: 'Custom: {url}',
+  presetHint:
+    'Anthropic-native engines (LM Studio, GLM router) bind to a profile directly. Pure OpenAI engines (FreeLLMAPI, DeepSeek, Qwen) — only via "Connect via router".',
+  baseUrlLabel: 'Base URL',
+  baseUrlInputTip: 'Anthropic-compatible endpoint address — written to the profile\'s ANTHROPIC_BASE_URL',
+  openaiWarn:
+    '⚠ This is an OpenAI-compatible engine — Claude Code won\'t accept it directly, an Anthropic router is needed (see the "Providers" tab).',
+  tokenLabel: 'Token (Bearer)',
+  tokenInputTip: 'Bearer token for the endpoint — stored in the profile\'s settings.json',
+  tokenSavedPlaceholder: '•••••• (saved)',
+  tokenLocalPlaceholder: 'for local proxies — any non-empty value',
+  keepTokenTitle: 'Keep the current token',
+  keepToken: 'Keep the current token',
+  modelsLabel: 'Models',
+  loadModelsTitle:
+    'Request the model list from the engine (GET /models) — e.g. those downloaded in LM Studio',
+  loading: 'Loading…',
+  loadModels: 'Load models',
+  modelsAvailable: 'Available: {n} — pick from the hint in the fields below.',
+  modelLabel: 'Model (opt.)',
+  modelInputTip: 'Model name for ANTHROPIC_MODEL — empty = the engine\'s default model',
+  smallModelLabel: 'Small/fast model (opt.)',
+  smallModelInputTip: 'Lightweight model for background tasks (ANTHROPIC_SMALL_FAST_MODEL)',
+  dialogCancelTip: 'Close the window without changing the profile\'s provider',
+  applyProviderTip: 'Write the provider to the profile env; applies on the next start',
+  apply: 'Apply',
+
+  // RouterConnectDialog
+  rcBindTitle: 'Bind "{name}" to a profile',
+  rcConnectTitle: 'Connect "{name}" via router',
+  rcDirectSub:
+    'The engine speaks the Anthropic protocol directly — the chosen profile will be bound to {url}. Restart the profile for the changes to apply.',
+  rcRouterSub:
+    'Configures claude-code-router on {url}, starts it and binds the chosen profile to the ccr Anthropic endpoint (http://127.0.0.1:3456). This lets Claude Code use the OpenAI engine.',
+  rcModelLoading: 'Model (loading…)',
+  rcModelAvailable: 'Model ({n} available)',
+  rcModelManual: 'Model (failed to load — enter manually)',
+  rcModelPlaceholder: 'e.g. qwen2.5-coder',
+  rcModelInputTip: 'The model the profile will request through this engine',
+  rcProfileLabel: 'Profile',
+  rcProfileSelectTip: 'The Claude Code profile to bind to this engine',
+  rcBindTip: 'Bind the profile to the engine directly and write the settings to its env',
+  rcConnectTip: 'Configure and start ccr, then bind the profile to its Anthropic endpoint',
+  rcBind: 'Bind',
+  rcConnect: 'Connect'
+};

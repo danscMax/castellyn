@@ -1,0 +1,7 @@
+# Pin to 1.93.0: rustc 1.94 has a trait-coherence regression that breaks the
+# `time` crate (E0119 in cookie/tauri-utils). Matches the Sweet Whisper project,
+# which builds cleanly on this toolchain. Revisit when `time` ships a 1.94 fix.
+[toolchain]
+channel = "1.93.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

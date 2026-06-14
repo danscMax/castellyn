@@ -1,0 +1,921 @@
+<script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import {
+    listComponents,
+    readStatus,
+    runComponent,
+    runForks,
+    listBackups,
+    runBackup,
+    readProfiles,
+    runProfiles,
+    readProfilesConfig,
+    runProfileMgmt,
+    openProfileDir,
+    launchProfile,
+    readLaunchConfig,
+    setLaunchConfig,
+    measureContext,
+    readMcp,
+    runMcp,
+    readSync,
+    runSync,
+    readEngines,
+    runEngine,
+    runRouter,
+    runConnectRouter,
+    readEngineModels,
+    readProviders,
+    runProvider,
+    openPath,
+    listPlugins,
+    listSkills,
+    listPluginUpdates,
+    listPluginContents,
+    runPlugin,
+    readSchedules,
+    runSchedule,
+    cancelRun,
+    type Component,
+    type ForkAction,
+    type BackupAction,
+    type BackupList,
+    type RestoreOpts,
+    type ProfileAction,
+    type ProfilesStatus,
+    type ProfilesConfig,
+    type ProfileMgmtArgs,
+    type LaunchConfigStatus,
+    type McpStatus,
+    type SyncStatus,
+    type EngineStatus,
+    type ProfileProvider,
+    type ProviderArgs,
+    type SchedulesStatus,
+    type ScheduleAction,
+    type PluginInfo,
+    type SkillInfo,
+    type PluginAction,
+    type PluginUpdate,
+    type PluginContents
+  } from '$lib/ipc';
+  import {
+    updatesAttention,
+    forksAttention,
+    backupAttention,
+    profilesAttention,
+    pluginsAttention,
+    syncAttention
+  } from '$lib/attention';
+  import { getTheme, applyTheme, type Theme } from '$lib/theme';
+  import Sidebar from '$lib/components/Sidebar.svelte';
+  import Console from '$lib/components/Console.svelte';
+  import UpdatesTab from '$lib/components/UpdatesTab.svelte';
+  import ForksTab from '$lib/components/ForksTab.svelte';
+  import BackupTab from '$lib/components/BackupTab.svelte';
+  import ProfilesTab from '$lib/components/ProfilesTab.svelte';
+  import McpTab from '$lib/components/McpTab.svelte';
+  import SyncTab from '$lib/components/SyncTab.svelte';
+  import ProvidersTab from '$lib/components/ProvidersTab.svelte';
+  import PluginsTab from '$lib/components/PluginsTab.svelte';
+  import ScheduleTab from '$lib/components/ScheduleTab.svelte';
+  import SettingsTab from '$lib/components/SettingsTab.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import ToastHost from '$lib/components/ToastHost.svelte';
+  import { pushToast } from '$lib/toast.svelte';
+  import { deriveOutcome } from '$lib/outcome';
+  import { t } from '$lib/i18n';
+
+  let components = $state<Component[]>([]);
+  let statuses = $state<Record<string, any>>({});
+  let running = $state<string | null>(null);
+  let log = $state<string[]>([]);
+  let active = $state('updates');
+  let theme = $state<Theme>('dark');
+  let backupData = $state<BackupList | null>(null);
+  let profilesData = $state<ProfilesStatus | null>(null);
+  let profilesConfig = $state<ProfilesConfig | null>(null);
+  let launchConfig = $state<LaunchConfigStatus | null>(null);
+  let mcpData = $state<McpStatus | null>(null);
+  let syncData = $state<SyncStatus | null>(null);
+  let syncLoaded = $state(false);
+  let enginesData = $state<EngineStatus[] | null>(null);
+  let providersData = $state<ProfileProvider[] | null>(null);
+  let providersLoaded = $state(false);
+  let schedulesData = $state<SchedulesStatus | null>(null);
+  let schedulesLoaded = $state(false);
+  let pluginsData = $state<PluginInfo[] | null>(null);
+  let skillsData = $state<SkillInfo[] | null>(null);
+  let pluginUpdates = $state<PluginUpdate[]>([]);
+  let pluginContents = $state<PluginContents[]>([]);
+  let extensionsLoaded = $state(false);
+  let loadError = $state<string | null>(null);
+  let confirm = $state<{
+    open: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: (() => void) | null;
+  }>({ open: false, title: '', message: '', confirmLabel: t('common.confirm'), action: null });
+
+  let unlisten: UnlistenFn[] = [];
+
+  async function loadStatus(c: Component) {
+    if (!c.lastJson) return;
+    try {
+      statuses[c.id] = await readStatus(c.lastJson);
+    } catch {
+      statuses[c.id] = null;
+    }
+  }
+
+  // Friendly names for operational (non-component) runs, used in result toasts.
+  // Resolved through t() at call time so toasts follow the current language.
+  const OP_KEYS: Record<string, string> = {
+    backup: 'op_backup',
+    profiles: 'op_profiles',
+    mcp: 'op_mcp',
+    sync: 'op_sync',
+    engine: 'op_engine',
+    provider: 'op_provider',
+    schedule: 'op_schedule',
+    'plugin-mgr': 'op_plugins'
+  };
+  const opName = (id: string) => (OP_KEYS[id] ? t(`page.${OP_KEYS[id]}`) : id);
+
+  // Bumped to force-expand the console (toast "Open log" action).
+  let consoleReveal = $state(0);
+  // Last fork action, so run-done can auto-recheck after a mutating one.
+  let lastForkAction: ForkAction | null = null;
+
+  // Tracks the mode of the in-flight component run so run-done can auto-refresh availability
+  // after an apply (apply scripts report what they CHANGED, which the UI must not keep showing
+  // as "update available" — a fresh check is the authoritative signal).
+  let lastRunMode: 'check' | 'apply' = 'check';
+
+  function startRun(id: string, mode: 'check' | 'apply', append = false) {
+    if (running) return;
+    const comp = components.find((c) => c.id === id);
+    running = id;
+    lastRunMode = mode;
+    const verb = mode === 'apply' ? t('page.verb_apply') : t('page.verb_check');
+    const line = t('page.log_component', { name: comp?.name ?? id, verb });
+    log = append ? [...log, line] : [line];
+    runComponent(id, mode).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onCheck(id: string) {
+    startRun(id, 'check');
+  }
+
+  function closeConfirm() {
+    confirm = { open: false, title: '', message: '', confirmLabel: t('common.confirm'), action: null };
+  }
+
+  function askConfirm(title: string, message: string, confirmLabel: string, action: () => void) {
+    confirm = { open: true, title, message, confirmLabel, action };
+  }
+
+  function doConfirm() {
+    const a = confirm.action;
+    closeConfirm();
+    a?.();
+  }
+
+  function onApply(comp: Component) {
+    askConfirm(
+      t('page.confirm_apply_title'),
+      t('page.confirm_apply_msg', { name: comp.name }),
+      t('page.confirm_apply_btn'),
+      () => startRun(comp.id, 'apply')
+    );
+  }
+
+  // --- Forks tab ---
+  function startForks(action: ForkAction, path?: string) {
+    if (running) return;
+    lastForkAction = action;
+    running = 'forks';
+    const verb =
+      action === 'check'
+        ? t('page.forks_verb_check')
+        : action === 'plan'
+          ? t('page.forks_verb_plan')
+          : t('page.forks_verb_action', { action });
+    log = [t('page.forks_log', { verb, path: path ? ` — ${path}` : '' })];
+    runForks(action, path).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onForkAction(action: ForkAction, path?: string, label?: string) {
+    if (path) {
+      // mutation -> confirm with the repo-specific description
+      askConfirm(
+        t('page.confirm_fork_title'),
+        t('page.confirm_fork_msg', { label: label ?? action }),
+        t('page.confirm_fork_btn'),
+        () => startForks(action, path)
+      );
+    } else {
+      startForks(action);
+    }
+  }
+
+  // Safe batch: fast-forward all behind forks (ff is non-destructive; fork-sync backs up refs).
+  function onBatchFf(names: string[]) {
+    if (running || names.length === 0) return;
+    askConfirm(
+      t('page.confirm_batchff_title'),
+      t('page.confirm_batchff_msg', { n: names.length, names: names.join(', ') }),
+      t('page.confirm_batchff_btn'),
+      () => startForks('ff')
+    );
+  }
+
+  // --- Backup tab ---
+  async function reloadBackup() {
+    try {
+      backupData = await listBackups();
+    } catch {
+      backupData = null;
+    }
+  }
+
+  function startBackup(action: BackupAction, opts?: RestoreOpts) {
+    if (running) return;
+    running = 'backup';
+    const verb =
+      action === 'backup'
+        ? t('page.backup_verb_snapshot')
+        : action === 'restore-preview'
+          ? t('page.backup_verb_restore_preview')
+          : t('page.backup_verb_restore');
+    log = [t('page.backup_log', { verb })];
+    runBackup(action, opts).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onBackupAction(action: BackupAction, opts?: RestoreOpts) {
+    if (action === 'restore') {
+      const snap = opts?.timestamp ?? t('page.backup_snap_last');
+      askConfirm(
+        t('page.confirm_restore_title'),
+        t('page.confirm_restore_msg', { snap }),
+        t('page.confirm_restore_btn'),
+        () => startBackup('restore', opts)
+      );
+    } else {
+      startBackup(action, opts);
+    }
+  }
+
+  // --- Profiles tab ---
+  async function reloadProfiles() {
+    try {
+      profilesData = await readProfiles();
+    } catch {
+      profilesData = null;
+    }
+    try {
+      profilesConfig = await readProfilesConfig();
+    } catch {
+      profilesConfig = null;
+    }
+    try {
+      launchConfig = await readLaunchConfig();
+    } catch {
+      launchConfig = null;
+    }
+  }
+
+  async function onSaveLaunch(
+    name: string,
+    mode: 'full' | 'lean',
+    mcp: string[],
+    claudeMd: boolean
+  ) {
+    await setLaunchConfig(name, mode, mcp, claudeMd);
+    await reloadProfiles();
+  }
+
+  function onMeasure(name: string, lean: boolean) {
+    return measureContext(name, lean);
+  }
+
+  function onProfileMgmt(args: ProfileMgmtArgs) {
+    if (running) return;
+    const run = () => {
+      running = 'profiles';
+      const verb: Record<string, string> = {
+        add: t('page.prof_verb_add', { name: args.name }),
+        remove: t('page.prof_verb_remove', { name: args.name }),
+        rename: t('page.prof_verb_rename', { name: args.name, newName: args.newName ?? '' }),
+        recolor: t('page.prof_verb_recolor', { name: args.name }),
+        'set-links': t('page.prof_verb_setlinks', { name: args.name })
+      };
+      log = [t('page.prof_log', { verb: verb[args.action] ?? args.action })];
+      runProfileMgmt(args).catch((e) => {
+        log = [...log, t('page.log_error', { e })];
+        running = null;
+      });
+    };
+    if (args.action === 'remove') {
+      askConfirm(
+        t('page.confirm_prof_remove_title', { name: args.name }),
+        t('page.confirm_prof_remove_msg', { name: args.name }),
+        t('page.confirm_prof_remove_btn'),
+        run
+      );
+    } else {
+      run();
+    }
+  }
+
+  function startProfiles(action: ProfileAction, name?: string) {
+    if (running) return;
+    running = 'profiles';
+    const verb =
+      action === 'check'
+        ? t('page.prof_verb_check')
+        : action === 'clean-conflicts'
+          ? t('page.prof_verb_clean')
+          : action === 'repair'
+            ? t('page.prof_verb_repair', { name: name ?? '' })
+            : t('page.prof_verb_reinstall');
+    log = [t('page.prof_log', { verb })];
+    runProfiles(action, name).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onProfileAction(action: ProfileAction, name?: string) {
+    if (action === 'repair') {
+      startProfiles('repair', name);
+    } else if (action === 'reinstall') {
+      askConfirm(
+        t('page.confirm_reinstall_title'),
+        t('page.confirm_reinstall_msg'),
+        t('page.confirm_reinstall_btn'),
+        () => startProfiles('reinstall')
+      );
+    } else if (action === 'clean-conflicts') {
+      askConfirm(
+        t('page.confirm_clean_title'),
+        t('page.confirm_clean_msg'),
+        t('page.confirm_clean_btn'),
+        () => startProfiles('clean-conflicts')
+      );
+    } else {
+      startProfiles(action);
+    }
+  }
+
+  function onProfileOpen(name: string) {
+    openProfileDir(name).catch((e) => {
+      log = [...log, t('page.log_warn', { e })];
+    });
+  }
+
+  function onProfileLaunch(name: string, mode: 'terminal' | 'vscode') {
+    launchProfile(name, mode).catch((e) => {
+      log = [...log, t('page.log_warn', { e })];
+    });
+  }
+
+  // --- MCP tab ---
+  async function reloadMcp() {
+    try {
+      mcpData = await readMcp();
+    } catch {
+      mcpData = null;
+    }
+  }
+
+  function startMcp(action: 'deploy') {
+    if (running) return;
+    running = 'mcp';
+    log = [t('page.mcp_log')];
+    runMcp(action).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onMcpDeploy() {
+    askConfirm(
+      t('page.confirm_mcp_title'),
+      t('page.confirm_mcp_msg'),
+      t('page.confirm_mcp_btn'),
+      () => startMcp('deploy')
+    );
+  }
+
+  // --- Sync tab ---
+  async function reloadSync() {
+    try {
+      syncData = await readSync();
+    } catch {
+      syncData = null;
+    }
+  }
+
+  function startSync(action: 'query' | 'set', enabled?: string[]) {
+    if (running) return;
+    running = 'sync';
+    log = [action === 'set' ? t('page.sync_log_set') : t('page.sync_log_query')];
+    runSync(action, enabled).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  // Lazy-load on first open + run a fresh query to fetch live Syncthing status.
+  $effect(() => {
+    if (active === 'sync' && !syncLoaded) {
+      syncLoaded = true;
+      reloadSync().then(() => startSync('query'));
+    }
+  });
+
+  function onSyncRefresh() {
+    startSync('query');
+  }
+
+  function onSyncApply(enabled: string[]) {
+    const all = ['history', 'projects', 'skills', 'agents', 'commands', 'keybindings'];
+    const off = all.filter((i) => !enabled.includes(i));
+    const detail = off.length
+      ? t('page.sync_apply_off', { off: off.join(', ') })
+      : t('page.sync_apply_all');
+    askConfirm(t('page.confirm_sync_title'), detail, t('page.confirm_sync_btn'), () =>
+      startSync('set', enabled)
+    );
+  }
+
+  // --- Providers / engines tab ---
+  async function reloadProviders() {
+    try {
+      enginesData = await readEngines();
+    } catch {
+      enginesData = null;
+    }
+    try {
+      providersData = await readProviders();
+    } catch {
+      providersData = null;
+    }
+  }
+
+  $effect(() => {
+    // Providers/engines are shown both on their own tab and inside profile cards.
+    if ((active === 'providers' || active === 'profiles') && !providersLoaded) {
+      providersLoaded = true;
+      reloadProviders();
+    }
+  });
+
+  function onEngineAction(action: 'start' | 'stop', id: string) {
+    if (running) return;
+    const run = () => {
+      running = 'engine';
+      log = [
+        t('page.engine_log', {
+          id,
+          verb: action === 'start' ? t('page.engine_verb_start') : t('page.engine_verb_stop')
+        })
+      ];
+      runEngine(action, id).catch((e) => {
+        log = [...log, t('page.log_error', { e })];
+        running = null;
+      });
+    };
+    if (action === 'stop') {
+      askConfirm(
+        t('page.confirm_engine_stop_title'),
+        t('page.confirm_engine_stop_msg', { id }),
+        t('page.confirm_engine_stop_btn'),
+        run
+      );
+    } else {
+      run();
+    }
+  }
+
+  function startProvider(args: ProviderArgs) {
+    running = 'provider';
+    log = [
+      t('page.provider_log', {
+        name: args.name,
+        verb: args.action === 'set' ? t('page.provider_verb_set') : t('page.provider_verb_clear')
+      })
+    ];
+    runProvider(args).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onProviderSet(args: ProviderArgs) {
+    if (running) return;
+    startProvider(args);
+  }
+
+  function onProviderClear(name: string) {
+    if (running) return;
+    askConfirm(
+      t('page.confirm_provider_clear_title'),
+      t('page.confirm_provider_clear_msg', { name }),
+      t('page.confirm_provider_clear_btn'),
+      () => startProvider({ action: 'clear', name })
+    );
+  }
+
+  function onOpenUrl(url: string) {
+    openPath(url).catch((e) => (log = [...log, t('page.log_warn', { e })]));
+  }
+
+  function onRouterInstall() {
+    if (running) return;
+    running = 'engine';
+    log = [t('page.router_install_log')];
+    runRouter('install').catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onConnectRouter(engine: EngineStatus, model: string, profile: string) {
+    if (running) return;
+    askConfirm(
+      t('page.confirm_router_title'),
+      t('page.confirm_router_msg', { profile, engine: engine.name, model }),
+      t('page.confirm_router_btn'),
+      () => {
+        running = 'provider';
+        log = [t('page.router_log', { engine: engine.name, model, profile })];
+        runConnectRouter(engine.baseUrl, model, profile, engine.id).catch((e) => {
+          log = [...log, t('page.log_error', { e })];
+          running = null;
+        });
+      }
+    );
+  }
+
+  // --- Schedule tab ---
+  async function reloadSchedules() {
+    try {
+      schedulesData = await readSchedules();
+      schedulesLoaded = true;
+    } catch {
+      schedulesData = null;
+    }
+  }
+
+  // Lazy-load schedules the first time the tab is opened (query spawns pwsh).
+  $effect(() => {
+    if (active === 'schedule' && !schedulesLoaded) reloadSchedules();
+  });
+
+  function startSchedule(action: ScheduleAction, id: string) {
+    if (running) return;
+    running = 'schedule';
+    const verb: Record<ScheduleAction, string> = {
+      enable: t('page.sched_verb_enable'),
+      disable: t('page.sched_verb_disable'),
+      run: t('page.sched_verb_run'),
+      create: t('page.sched_verb_create'),
+      delete: t('page.sched_verb_delete')
+    };
+    log = [t('page.sched_log', { id, verb: verb[action] })];
+    runSchedule(action, id).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onScheduleAction(action: ScheduleAction, id: string) {
+    if (action === 'delete') {
+      askConfirm(
+        t('page.confirm_sched_delete_title'),
+        t('page.confirm_sched_delete_msg', { id }),
+        t('page.confirm_sched_delete_btn'),
+        () => startSchedule('delete', id)
+      );
+    } else {
+      startSchedule(action, id);
+    }
+  }
+
+  // --- Plugins & Skills tab ---
+  async function reloadPluginUpdates() {
+    try {
+      pluginUpdates = await listPluginUpdates();
+    } catch {
+      pluginUpdates = [];
+    }
+  }
+
+  async function reloadExtensions() {
+    try {
+      pluginsData = await listPlugins();
+    } catch {
+      pluginsData = null;
+    }
+    try {
+      skillsData = await listSkills();
+    } catch {
+      skillsData = null;
+    }
+    try {
+      pluginContents = await listPluginContents();
+    } catch {
+      pluginContents = [];
+    }
+    await reloadPluginUpdates();
+    extensionsLoaded = true;
+  }
+
+  // Sidebar "needs attention" indicators, from already-loaded data.
+  const attention = $derived({
+    updates: updatesAttention(components, statuses),
+    forks: forksAttention(statuses.forks),
+    backup: backupAttention(backupData),
+    profiles: profilesAttention(profilesData),
+    sync: syncAttention(syncData),
+    extensions: pluginsAttention(pluginUpdates.length)
+  });
+
+  // Lazy-load on first open (list_plugins spawns the claude CLI).
+  $effect(() => {
+    if (active === 'extensions' && !extensionsLoaded) reloadExtensions();
+  });
+
+  function startPlugin(action: PluginAction, id: string) {
+    if (running) return;
+    running = 'plugin-mgr';
+    const verb =
+      action === 'update'
+        ? t('page.plugin_verb_update')
+        : action === 'enable'
+          ? t('page.plugin_verb_enable')
+          : t('page.plugin_verb_disable');
+    log = [t('page.plugin_log', { id, verb })];
+    runPlugin(action, id).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onPluginAction(action: PluginAction, id: string) {
+    if (action === 'disable') {
+      askConfirm(
+        t('page.confirm_plugin_disable_title'),
+        t('page.confirm_plugin_disable_msg', { id }),
+        t('page.confirm_plugin_disable_btn'),
+        () => startPlugin('disable', id)
+      );
+    } else {
+      startPlugin(action, id);
+    }
+  }
+
+  function onOpenSkills() {
+    const d = skillsData?.[0]?.dir;
+    if (!d) return;
+    const parent = d.slice(0, Math.max(d.lastIndexOf('\\'), d.lastIndexOf('/')));
+    if (parent) openPath(parent).catch((e) => (log = [...log, t('page.log_warn', { e })]));
+  }
+
+  async function cancel() {
+    try {
+      await cancelRun();
+    } catch (e) {
+      log = [...log, t('page.log_warn', { e: String(e) })];
+    }
+  }
+
+  function setTheme(th: Theme) {
+    theme = th;
+    applyTheme(th);
+  }
+
+  onMount(async () => {
+    theme = getTheme();
+    try {
+      components = await listComponents();
+      await Promise.all(components.map(loadStatus));
+    } catch (e) {
+      loadError = String(e);
+    }
+    reloadBackup();
+    reloadProfiles();
+    reloadMcp();
+    reloadPluginUpdates();
+
+    unlisten.push(
+      await listen<{ component: string; stream: string; line: string }>('run-log', (e) => {
+        const p = e.payload;
+        log = [...log, (p.stream === 'err' ? '⚠ ' : '') + p.line];
+      })
+    );
+    unlisten.push(
+      await listen<{ component: string; code: number }>('run-done', async (e) => {
+        log = [...log, t('page.log_done', { code: e.payload.code })];
+        running = null;
+        const id = e.payload.component;
+        const code = e.payload.code;
+        const wasApply = lastRunMode === 'apply';
+        lastRunMode = 'check';
+        const forkAct = lastForkAction;
+        lastForkAction = null;
+        const c = components.find((x) => x.id === id);
+        if (c) await loadStatus(c);
+        // Component-specific data reloads (keep fresh before surfacing the outcome).
+        if (id === 'backup') await reloadBackup();
+        if (id === 'profiles') await reloadProfiles();
+        if (id === 'mcp') await reloadMcp();
+        if (id === 'sync') await reloadSync();
+        if (id === 'engine' || id === 'provider') await reloadProviders();
+        if (id === 'schedule') await reloadSchedules();
+        if (id === 'plugin-mgr') await reloadExtensions();
+
+        // Auto-recheck after a successful single-component apply (apply scripts write the applied
+        // count, not availability) — toast appears after the follow-up check, not the apply.
+        if (wasApply && code === 0 && c && c.supportsApply && c.id !== 'all') {
+          startRun(c.id, 'check', true);
+          return;
+        }
+        // Auto-recheck after a mutating fork action so the cards reflect the new state.
+        if (id === 'forks' && code === 0 && forkAct && forkAct !== 'check' && forkAct !== 'plan') {
+          log = [...log, t('page.forks_recheck')];
+          startForks('check');
+          return;
+        }
+
+        // Surface a glanceable, actionable outcome (toast) — not just the log.
+        try {
+          if (c) {
+            // Update/forks components: rich outcome from the status envelope.
+            const out = deriveOutcome({
+              id,
+              name: c.name,
+              code,
+              mode: wasApply ? 'apply' : 'check',
+              status: statuses[id]
+            });
+            pushToast({
+              kind: out.kind,
+              title: out.title,
+              detail: out.detail,
+              action: out.action
+                ? {
+                    label: out.action.label,
+                    onClick: () => {
+                      if (out.action!.kind === 'log') consoleReveal++;
+                      else if (out.action!.kind === 'tab' && out.action!.target) active = out.action!.target;
+                    }
+                  }
+                : undefined
+            });
+          } else {
+            // Operational actions (provider/mcp/sync/backup/profiles/schedule/plugins): simple result.
+            const name = opName(id);
+            if (code === 0) {
+              pushToast({ kind: 'success', title: t('page.toast_op_done', { name }) });
+            } else {
+              pushToast({
+                kind: 'error',
+                title: t('page.toast_op_error', { name, code }),
+                detail: t('page.toast_op_error_detail'),
+                action: { label: t('page.toast_open_log'), onClick: () => consoleReveal++ }
+              });
+            }
+          }
+        } catch {
+          /* surfacing the outcome must never break the run lifecycle */
+        }
+      })
+    );
+    unlisten.push(
+      await listen('tray-check-all', () => {
+        active = 'updates';
+        startRun('all', 'check');
+      })
+    );
+
+    // Refresh statuses when the window regains focus.
+    const onFocus = () => {
+      components.forEach(loadStatus);
+      reloadBackup();
+      reloadProfiles();
+      reloadMcp();
+      reloadPluginUpdates();
+    };
+    window.addEventListener('focus', onFocus);
+    unlisten.push(() => window.removeEventListener('focus', onFocus));
+  });
+
+  onDestroy(() => unlisten.forEach((u) => u()));
+
+</script>
+
+<div class="flex h-full overflow-hidden">
+  <Sidebar {active} onSelect={(id) => (active = id)} {attention} />
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <main class="min-h-0 flex-1 overflow-auto">
+      <div class="mx-auto w-full max-w-[1600px]">
+      {#if loadError}
+        <div class="m-sw-6 sw-card text-red-400">{t('page.load_error', { e: loadError })}</div>
+      {/if}
+
+      {#if active === 'updates'}
+        <UpdatesTab {components} {statuses} {running} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
+      {:else if active === 'forks'}
+        <ForksTab status={statuses.forks} {running} onAction={onForkAction} {onBatchFf} />
+      {:else if active === 'backup'}
+        <BackupTab data={backupData} {running} onAction={onBackupAction} />
+      {:else if active === 'profiles'}
+        <ProfilesTab
+          data={profilesData}
+          config={profilesConfig}
+          {launchConfig}
+          providers={providersData}
+          engines={enginesData}
+          {running}
+          onAction={onProfileAction}
+          onMgmt={onProfileMgmt}
+          onOpen={onProfileOpen}
+          onLaunch={onProfileLaunch}
+          {onSaveLaunch}
+          {onMeasure}
+          {onProviderSet}
+          {onProviderClear}
+        />
+      {:else if active === 'mcp'}
+        <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy} />
+      {:else if active === 'sync'}
+        <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply} />
+      {:else if active === 'providers'}
+        <ProvidersTab
+          engines={enginesData}
+          providers={providersData}
+          {running}
+          onEngine={onEngineAction}
+          onProviderSet={onProviderSet}
+          onProviderClear={onProviderClear}
+          onRouterInstall={onRouterInstall}
+          onConnectRouter={onConnectRouter}
+          onRefresh={reloadProviders}
+          {onOpenUrl}
+        />
+      {:else if active === 'extensions'}
+        <PluginsTab
+          plugins={pluginsData}
+          skills={skillsData}
+          updates={pluginUpdates}
+          contents={pluginContents}
+          {running}
+          onAction={onPluginAction}
+          onRefresh={reloadExtensions}
+          {onOpenSkills}
+        />
+      {:else if active === 'schedule'}
+        <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} />
+      {:else if active === 'settings'}
+        <SettingsTab {theme} onSetTheme={setTheme} />
+      {:else}
+        <div class="grid h-full place-items-center p-sw-6 text-center text-sw-text-muted">
+          <div>
+            <div class="mb-sw-2 text-2xl">🛠</div>
+            <div class="font-medium text-sw-text">{t('nav.' + active)}</div>
+            <div class="text-sw-sm">{t('page.wip')}</div>
+          </div>
+        </div>
+      {/if}
+      </div>
+    </main>
+
+    <Console {log} {running} revealSignal={consoleReveal} onClear={() => (log = [])} onCancel={cancel} />
+  </div>
+</div>
+
+<ToastHost />
+
+<ConfirmDialog
+  open={confirm.open}
+  title={confirm.title}
+  message={confirm.message}
+  confirmLabel={confirm.confirmLabel}
+  onConfirm={doConfirm}
+  onCancel={closeConfirm}
+/>

@@ -1,0 +1,23 @@
+export default {
+  title: 'Расписание',
+  subtitle: 'Автоматический запуск обслуживания по расписанию (Windows Scheduled Tasks)',
+  refreshHint: 'Перечитать статус заданий планировщика',
+  statusNotCreatedBadge: 'не создано',
+  statusNotCreatedHint: 'Задание не создано в планировщике',
+  statusEnabledBadge: 'включено',
+  statusEnabledHint: 'Задание включено и будет запускаться по расписанию',
+  statusDisabledBadge: 'выключено',
+  statusDisabledHint: 'Задание создано, но отключено',
+  timeDaily: 'Время (ежедневно)',
+  nextRun: 'Следующий запуск',
+  willCreate: 'Будет создано ежедневное задание на {time}.',
+  createSchedule: 'Создать расписание',
+  createScheduleHint: 'Создать ежедневное задание на {time}',
+  runNow: 'Запустить сейчас',
+  runNowHint: 'Запустить задание прямо сейчас',
+  disableHint: 'Отключить (не будет запускаться по расписанию)',
+  enableHint: 'Включить запуск по расписанию',
+  deleteHint: 'Удалить задание из планировщика',
+  emptyTitle: 'Нет данных',
+  emptyHint: 'Нажми «Обновить», чтобы прочитать задания планировщика.'
+};

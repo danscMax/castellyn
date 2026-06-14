@@ -1,0 +1,23 @@
+export default {
+  title: 'Schedule',
+  subtitle: 'Automatically run maintenance on a schedule (Windows Scheduled Tasks)',
+  refreshHint: 'Re-read the status of scheduler tasks',
+  statusNotCreatedBadge: 'not created',
+  statusNotCreatedHint: 'Task is not created in the scheduler',
+  statusEnabledBadge: 'enabled',
+  statusEnabledHint: 'Task is enabled and will run on schedule',
+  statusDisabledBadge: 'disabled',
+  statusDisabledHint: 'Task is created but disabled',
+  timeDaily: 'Time (daily)',
+  nextRun: 'Next run',
+  willCreate: 'A daily task will be created at {time}.',
+  createSchedule: 'Create schedule',
+  createScheduleHint: 'Create a daily task at {time}',
+  runNow: 'Run now',
+  runNowHint: 'Run the task right now',
+  disableHint: 'Disable (will not run on schedule)',
+  enableHint: 'Enable running on schedule',
+  deleteHint: 'Delete the task from the scheduler',
+  emptyTitle: 'No data',
+  emptyHint: 'Press “Refresh” to read the scheduler tasks.'
+};

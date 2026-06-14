@@ -1,0 +1,28 @@
+export default {
+  brand: 'AgentHub',
+  updates: 'Обновления',
+  forks: 'Форки',
+  backup: 'Бэкап',
+  profiles: 'Профили',
+  mcp: 'MCP',
+  sync: 'Синхронизация',
+  providers: 'Провайдеры',
+  extensions: 'Плагины и скиллы',
+  schedule: 'Расписание',
+  settings: 'Настройки',
+  soon: 'скоро',
+  attention: 'Требует внимания',
+  attentionCount: 'Требует внимания: {count}',
+
+  // Section tooltips
+  updatesTip: 'Проверка и установка обновлений всего стека Claude Code',
+  forksTip: 'Статус ваших форков на GitHub и синхронизация с оригиналами (upstream)',
+  backupTip: 'Снапшоты конфигов профилей и восстановление из них',
+  profilesTip: 'Профили Claude Code: установка, запуск, провайдеры, общие папки',
+  mcpTip: 'MCP-серверы: источник истины (.mcp.json) и развёртывание по профилям',
+  syncTip: 'Синхронизация настроек Claude Code между компьютерами через Syncthing',
+  providersTip: 'Локальные LLM-движки и привязка провайдера к каждому профилю',
+  extensionsTip: 'Плагины и скиллы Claude Code: обновление, включение и выключение',
+  scheduleTip: 'Автоматический запуск обслуживания по расписанию (планировщик Windows)',
+  settingsTip: 'Настройки приложения: тема, язык, пути, автозапуск'
+};

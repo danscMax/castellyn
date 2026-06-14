@@ -1,0 +1,143 @@
+export default {
+  // Header
+  title: '配置',
+  health: '{n} 个 Claude Code {profiles}的健康状况',
+  checkTip: '重新生成配置状态（只读）',
+  checking: '进行中…',
+  addProfile: '+ 添加配置',
+  addProfileTip: '创建新配置 ~/.claude-<名称> 并链接共享文件夹',
+  reinstall: '重新安装',
+  reinstallTip:
+    '重新安装配置（Install -Force）：重建 junction/符号链接。需要管理员权限（UAC）',
+
+  // Recommendations
+  recommendations: '建议',
+  brokenLinks: '有 {n} 个{profiles}的共享链接已损坏。',
+  repairName: '修复 {name}',
+  repairNameTip: '修复配置“{name}”的链接，无需完全重新安装',
+  missingDirs: '缺少配置目录：{names}。',
+  create: '创建',
+  createTip: '重新安装配置——将创建缺少的目录',
+  syncConflicts: 'Syncthing 同步冲突：{n}（重复文件 *.sync-conflict-*）。',
+  cleanConflictsTip: '删除冲突重复文件（原文件不受影响；Syncthing 保留版本）',
+  allGood: '一切正常',
+  allGoodHint: '所有配置都在，链接完好，无冲突。',
+
+  // Card header
+  colorDot: '配置颜色',
+
+  // Status row
+  noDir: '无目录',
+  noDirTip: '未找到目录 ~/.claude-{name}——配置未安装',
+  loggedIn: '已登录 ✓',
+  loggedInTip: '已保存登录（.credentials.json）',
+  noLogin: '未登录',
+  noLoginTip: '无已保存登录——需要授权',
+  lean: '精简',
+  leanTip: '以精简模式启动（{flag}）——裁剪系统提示',
+  links: '链接 {linked}/{total}',
+  linksTip: '共享文件夹（junction/符号链接）。点击展开详情。',
+
+  // Provider section
+  providerLabel: '提供商：',
+  providerDefault: 'Anthropic（默认）',
+  providerStdTip: '标准 Anthropic 登录',
+  providerEdit: '更改',
+  providerEditTip: '为此配置指定/更改 LLM 提供商（LM Studio、路由器、自定义）',
+  providerClear: '重置',
+  providerClearTip: '重置为标准 Anthropic 登录',
+
+  // Link kinds / tips
+  linkJunction: 'junction',
+  linkSymlink: 'symlink',
+  linkHardlink: 'hardlink',
+  linkNotLink: '非链接',
+  linkNone: '无',
+  linkTipOk: '“{folder}”通过 {kind} 在所有配置间共享——这是正常的',
+  linkTipNone: '“{folder}”存在但未链接（副本）——共享内容不会同步',
+  linkTipMissing: '“{folder}”缺失——共享内容不可用；“重新安装配置”可解决',
+
+  // Shared-folders editor
+  sharedFolders: '配置共享文件夹',
+  sharedFoldersTip: '此配置要链接哪些共享文件夹（junction/符号链接到 ~/.claude）',
+  applyLinks: '应用',
+  applyLinksTip: '保存选择并重建配置链接',
+  linksCancelTip: '关闭编辑器，不更改此配置当前的链接',
+  cancel: '取消',
+
+  // Main actions
+  launch: '启动',
+  launchTip: '打开终端，以此配置运行 claude（CLAUDE_CONFIG_DIR=~/.claude-{name}）',
+  folder: '文件夹',
+  folderTip: '在资源管理器中打开配置目录 ~/.claude-{name}',
+
+  // Empty state
+  noData: '无数据',
+  noDataHint: '点击“检查”以收集配置状态。',
+
+  // Overflow menu
+  menuTitle: '配置操作',
+  menuTools: '工具 / 大小',
+  menuToolsTip: '精简模式、MCP/CLAUDE.md 选择以及系统提示大小测量',
+  menuRepair: '修复链接',
+  menuRepairTip: '重建损坏/缺失的 junction/符号链接，无需完全重新安装',
+  menuSharedFolders: '共享文件夹…',
+  menuSharedFoldersTip: '选择此配置要链接哪些共享文件夹',
+  menuColor: '颜色…',
+  menuColorTip: '更改配置颜色',
+  menuRename: '重命名…',
+  menuRenameTip: '重命名配置及其目录',
+  menuDelete: '删除',
+  menuDeleteTip: '删除配置及目录 ~/.claude-{name}',
+
+  // ProfileEditDialog
+  dlgClose: '关闭',
+  dlgAddTitle: '添加配置',
+  dlgRenameTitle: '重命名“{name}”',
+  dlgRecolorTitle: '配置“{name}”的颜色',
+  dlgNewName: '新名称',
+  dlgName: '配置名称',
+  dlgNamePlaceholder: '例如 cc6',
+  dlgNameTip: '将成为目录 ~/.claude-<名称> 的一部分；重命名时目录也会一并重命名',
+  dlgNameError: '字母/数字/_/-，以字母或数字开头，最多 32 个字符',
+  dlgColor: '颜色',
+  dlgDescription: '描述（可选）',
+  dlgDescriptionPlaceholder: '例如 测试',
+  dlgDescriptionTip: '给自己看的备注（例如配置用途）；不影响 claude 的运行',
+  dlgCancelTip: '关闭且不做更改——不会创建/重命名/改色配置',
+  dlgSubmitTip: '确认：创建配置，或应用新的名称/颜色',
+  dlgCancel: '取消',
+  dlgAdd: '添加',
+  dlgRename: '重命名',
+  dlgApply: '应用',
+
+  // LaunchConfigDialog
+  lcClose: '关闭',
+  lcTitle: '工具与大小 · 配置“{name}”',
+  lcLeanToggle: '精简模式',
+  lcLeanHeading: '精简模式（更少上下文）',
+  lcLeanDesc:
+    '通过启动参数裁剪系统提示（可逆，无需修改全局 managed）。对本地模型有用——令牌更少、更快、工具调用更准确。',
+  lcBareNote:
+    '将应用 {bare}（约 1k 令牌）：无插件/hooks/LSP/自动记忆。Hooks（含 RTK）不工作。在下方选择要恢复的内容。',
+  lcSafeModeNote:
+    '此配置无令牌提供商（OAuth）→ 将应用 {safeMode}（约 28k）：禁用插件/MCP/技能。此处无法精细选择 MCP/CLAUDE.md。',
+  lcMcpLabel: 'MCP 服务器（精简模式下连接哪些）',
+  lcMcpEmpty: 'MCP 列表为空（config\\.mcp.json）。',
+  lcClaudeMdToggle: 'CLAUDE.md',
+  lcClaudeMd: '附加配置的 CLAUDE.md（--add-dir）',
+  lcSizeLabel: '系统提示大小 · 测量：',
+  lcMeasuring: '测量中…',
+  lcMeasureLean: '精简',
+  lcMeasureLeanTip: '保存选择并测量精简集（快速）',
+  lcMeasureFull: '完整（慢）',
+  lcMeasureFullTip: '测量完整模式（在本地模型上较慢——数十秒）',
+  lcLeanResult: '精简：',
+  lcFullResult: '完整：',
+  lcTokensUnit: '令牌',
+  lcMeasureNote: '测量会针对配置的提供商运行 {cmd} 并读取 usage.input_tokens。',
+  lcCancelTip: '关闭且不保存——配置的模式和工具集保持不变',
+  lcApplyTip: '保存此配置的启动模式和所选工具集',
+  lcCancel: '取消',
+  lcApply: '应用'
+};

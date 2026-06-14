@@ -1,0 +1,23 @@
+export default {
+  title: '计划任务',
+  subtitle: '按计划自动运行维护（Windows 计划任务程序）',
+  refreshHint: '重新读取计划任务程序中任务的状态',
+  statusNotCreatedBadge: '未创建',
+  statusNotCreatedHint: '任务尚未在计划任务程序中创建',
+  statusEnabledBadge: '已启用',
+  statusEnabledHint: '任务已启用，将按计划运行',
+  statusDisabledBadge: '已禁用',
+  statusDisabledHint: '任务已创建，但已禁用',
+  timeDaily: '时间（每日）',
+  nextRun: '下次运行',
+  willCreate: '将在 {time} 创建每日任务。',
+  createSchedule: '创建计划任务',
+  createScheduleHint: '在 {time} 创建每日任务',
+  runNow: '立即运行',
+  runNowHint: '立即运行该任务',
+  disableHint: '禁用（将不再按计划运行）',
+  enableHint: '启用按计划运行',
+  deleteHint: '从计划任务程序中删除该任务',
+  emptyTitle: '暂无数据',
+  emptyHint: '点击“刷新”以读取计划任务程序中的任务。'
+};

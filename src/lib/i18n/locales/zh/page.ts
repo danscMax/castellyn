@@ -1,0 +1,156 @@
+// Strings owned by the top-level page orchestrator (+page.svelte) and the
+// run-outcome mapper (outcome.ts): confirm dialogs, run-log lines, toasts.
+export default {
+  // Operational display names (toasts / log)
+  op_backup: '备份',
+  op_profiles: '配置',
+  op_mcp: 'MCP',
+  op_sync: '同步',
+  op_engine: '引擎',
+  op_provider: '提供商',
+  op_schedule: '计划任务',
+  op_plugins: '插件',
+
+  // Generic run-log lines
+  log_component: '▶ {name}：{verb}…',
+  log_error: '✖ 错误：{e}',
+  log_warn: '⚠ {e}',
+  log_done: '■ 完成（退出码 {code}）。',
+  verb_apply: '应用中',
+  verb_check: '检查中',
+
+  // Component apply
+  confirm_apply_title: '应用更新？',
+  confirm_apply_msg: '组件“{name}”将被实际更新（-Apply）。是否继续？',
+  confirm_apply_btn: '应用',
+
+  // Forks
+  forks_verb_check: '检查中',
+  forks_verb_plan: '计划（预演）',
+  forks_verb_action: '操作“{action}”',
+  forks_log: '▶ 复刻：{verb}{path}…',
+  forks_recheck: '▶ 复刻：重新检查…',
+  confirm_fork_title: '修改复刻？',
+  confirm_fork_msg: '{label}。这将实际更改该仓库。是否继续？',
+  confirm_fork_btn: '执行',
+  confirm_batchff_title: '拉取所有更新？',
+  confirm_batchff_msg:
+    '将对 {n} 个复刻执行安全的快进：{names}。仅快进（不合并、不强制推送）。是否继续？',
+  confirm_batchff_btn: '拉取',
+
+  // Backup
+  backup_verb_snapshot: '创建快照',
+  backup_verb_restore_preview: '恢复计划（-WhatIf）',
+  backup_verb_restore: '恢复中',
+  backup_log: '▶ 备份：{verb}…',
+  backup_snap_last: '最新',
+  confirm_restore_title: '恢复配置？',
+  confirm_restore_msg: '快照“{snap}”将覆盖所选配置的当前文件——不可逆。是否继续？',
+  confirm_restore_btn: '恢复',
+
+  // Profiles
+  prof_verb_add: '添加配置 {name}',
+  prof_verb_remove: '删除配置 {name}',
+  prof_verb_rename: '重命名 {name} → {newName}',
+  prof_verb_recolor: '更改颜色 {name}',
+  prof_verb_setlinks: '共享文件夹 {name}',
+  prof_log: '▶ 配置：{verb}…',
+  prof_verb_check: '检查中',
+  prof_verb_clean: '删除同步冲突',
+  prof_verb_repair: '修复链接 {name}',
+  prof_verb_reinstall: '重新安装配置',
+  confirm_prof_remove_title: '删除配置“{name}”？',
+  confirm_prof_remove_msg:
+    '目录 ~/.claude-{name} 将连同该配置已保存的登录信息和设置一并删除。共享内容（skills/projects 等）不受影响。此操作不可逆。',
+  confirm_prof_remove_btn: '删除',
+  confirm_reinstall_title: '重新安装配置？',
+  confirm_reinstall_msg:
+    'Install-ClaudeProfiles.ps1 -Force 将重建所有配置的 junction/符号链接，并需要管理员权限（UAC）。是否继续？',
+  confirm_reinstall_btn: '重新安装',
+  confirm_clean_title: '删除同步冲突？',
+  confirm_clean_msg:
+    '将删除重复的 *.sync-conflict-* 文件（原始文件不受影响；Syncthing 会保留版本）。是否继续？',
+  confirm_clean_btn: '删除',
+
+  // MCP
+  mcp_log: '▶ MCP：部署到所有配置…',
+  confirm_mcp_title: '将 MCP 部署到所有配置？',
+  confirm_mcp_msg:
+    'config/.mcp.json 中的服务器将被添加到每个配置（用户范围，幂等）。已存在的将以相同值覆盖。是否继续？',
+  confirm_mcp_btn: '部署',
+
+  // Sync
+  sync_log_set: '▶ 同步：应用设置…',
+  sync_log_query: '▶ 同步：检查…',
+  sync_apply_off: '以下项目将停止跨设备同步：{off}（本地文件不会删除）。.stignore 将被重新生成。',
+  sync_apply_all: '所有项目都将同步。.stignore 将被重新生成。',
+  confirm_sync_title: '应用同步设置？',
+  confirm_sync_btn: '应用',
+
+  // Engines / providers / router
+  engine_log: '▶ 引擎 {id}：{verb}…',
+  engine_verb_start: '启动',
+  engine_verb_stop: '停止',
+  confirm_engine_stop_title: '停止引擎？',
+  confirm_engine_stop_msg: '将停止监听引擎“{id}”端口的进程。是否继续？',
+  confirm_engine_stop_btn: '停止',
+  provider_log: '▶ 提供商 {name}：{verb}…',
+  provider_verb_set: '绑定',
+  provider_verb_clear: '重置',
+  confirm_provider_clear_title: '重置提供商？',
+  confirm_provider_clear_msg: '配置“{name}”将恢复为标准 Anthropic 登录（提供商环境变量将被清除）。是否继续？',
+  confirm_provider_clear_btn: '重置',
+  router_install_log: '▶ 路由器：安装 claude-code-router（npm）…',
+  confirm_router_title: '通过路由器连接？',
+  confirm_router_msg:
+    '配置“{profile}”将通过 ccr 切换到“{engine}”（模型“{model}”）：我会配置并启动 claude-code-router，并将该配置绑定到 http://127.0.0.1:3456。之后请重启该配置。是否继续？',
+  confirm_router_btn: '连接',
+  router_log: '▶ 路由器：{engine}（{model}）→ 配置 {profile}…',
+
+  // Schedule
+  sched_verb_enable: '启用',
+  sched_verb_disable: '禁用',
+  sched_verb_run: '运行',
+  sched_verb_create: '创建计划任务',
+  sched_verb_delete: '删除计划任务',
+  sched_log: '▶ 计划任务（{id}）：{verb}…',
+  confirm_sched_delete_title: '删除任务？',
+  confirm_sched_delete_msg: '任务“{id}”将从 Windows 计划任务程序中删除。是否继续？',
+  confirm_sched_delete_btn: '删除',
+
+  // Plugins
+  plugin_verb_update: '更新',
+  plugin_verb_enable: '启用',
+  plugin_verb_disable: '禁用',
+  plugin_log: '▶ 插件 {id}：{verb}…',
+  confirm_plugin_disable_title: '禁用插件？',
+  confirm_plugin_disable_msg: '“{id}”将在所有配置中被禁用。是否继续？',
+  confirm_plugin_disable_btn: '禁用',
+
+  // Operational toasts
+  toast_op_done: '{name}：完成',
+  toast_op_error: '{name}：错误（代码 {code}）',
+  toast_op_error_detail: '详情见运行日志。',
+  toast_open_log: '打开日志',
+
+  // Misc
+  load_error: '加载错误：{e}',
+  wip: '此板块正在开发中——将在后续迭代中推出。',
+
+  // Run outcomes (outcome.ts)
+  out_duration: '用时 {d}',
+  out_sec: '{n} 秒',
+  out_fork_conflicts: '{n} 个有冲突',
+  out_fork_merged: '{n} 个分支待删除',
+  out_fork_open: '{n} 个开放 PR',
+  out_forks_need: '复刻：需要处理 — {need}',
+  out_forks_synced: '复刻：已全部同步',
+  out_open_forks: '打开复刻',
+  out_failed_count: '{name}：需要关注 — {failed}',
+  out_failed_problems: '{name}：存在问题',
+  out_applied: '{name}：已更新',
+  out_changes_count: '{name}：有可用更新 — {changed}',
+  out_changes_any: '{name}：有可用更新',
+  out_changes_detail: '在卡片上点击“更新”。',
+  out_uptodate: '{name}：已是最新'
+};
