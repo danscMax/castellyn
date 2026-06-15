@@ -265,7 +265,8 @@
 
   // --- Forks tab ---
   function startForks(action: ForkAction, path?: string) {
-    if (running) return;
+    // A whole-stack run must not overlap per-repo runs (shared git/status-file contention).
+    if (running || Object.values(forkRuns).some((r) => r?.running)) return;
     lastForkAction = action;
     running = 'forks';
     const verb =

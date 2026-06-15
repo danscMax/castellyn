@@ -460,13 +460,9 @@ async fn run_fork_repo(
     // Strict single-repo run: only this repo is processed, and its result is written to a per-repo
     // JSON (not the shared fork-sync.last.json) — so concurrent repo runs never race the file.
     let out_file = fork_repo_out_file(&path).unwrap_or_default();
-    let mut full = vec![
-        "-Single".to_string(),
-        path.clone(),
-        "-OutFile".to_string(),
-        out_file,
-        "-Unattended".to_string(),
-    ];
+    // `args` (from forks_action_args) already carries -Unattended for every action — don't repeat it
+    // here, or pwsh fails with "parameter 'Unattended' specified more than once".
+    let mut full = vec!["-Single".to_string(), path.clone(), "-OutFile".to_string(), out_file];
     full.append(&mut args);
     let cfg = read_config_file();
     if let Some(t) = cfg.fetch_timeout_sec {

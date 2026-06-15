@@ -24,6 +24,9 @@
   } = $props();
 
   const anyRunning = $derived(!!running);
+  // A whole-stack action must not run while any single-repo run is in flight (they'd contend on the
+  // same repos' git + the shared status file) — and vice-versa (per-repo buttons gate on anyRunning).
+  const anyForkRunning = $derived(Object.values(forkRuns).some((r) => r?.running));
   const repos = $derived(status?.repos ?? []);
   const summary = $derived(status?.summary);
 
@@ -105,15 +108,15 @@
       </p>
     </div>
     <div class="flex shrink-0 gap-sw-2">
-      <button class="sw-btn sw-btn-ghost" disabled={anyRunning} onclick={() => onAction('check')}
+      <button class="sw-btn sw-btn-ghost" disabled={anyRunning || anyForkRunning} onclick={() => onAction('check')}
         title={t('forks.checkTip')}>
         {running === 'forks' ? t('common.busy') : t('common.check')}
       </button>
-      <button class="sw-btn sw-btn-ghost" disabled={anyRunning} onclick={() => onAction('plan')}
+      <button class="sw-btn sw-btn-ghost" disabled={anyRunning || anyForkRunning} onclick={() => onAction('plan')}
         title={t('forks.planTip')}>
         {t('forks.planBtn')}
       </button>
-      <button class="sw-btn sw-btn-primary" disabled={anyRunning || ffable.length === 0}
+      <button class="sw-btn sw-btn-primary" disabled={anyRunning || anyForkRunning || ffable.length === 0}
         onclick={() => onBatchFf(ffable.map((r) => r.Name))}
         title={ffable.length
           ? t('forks.ffAllTip', { n: ffable.length })
