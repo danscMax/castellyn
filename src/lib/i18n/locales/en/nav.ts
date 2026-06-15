@@ -7,6 +7,7 @@ export default {
   mcp: 'MCP',
   sync: 'Sync',
   providers: 'Providers',
+  analytics: 'Analytics',
   extensions: 'Plugins & skills',
   schedule: 'Schedule',
   settings: 'Settings',
@@ -22,6 +23,7 @@ export default {
   mcpTip: 'MCP servers: source of truth (.mcp.json) and deployment per profile',
   syncTip: 'Sync Claude Code settings across your computers via Syncthing',
   providersTip: 'Local LLM engines and binding a provider to each profile',
+  analyticsTip: 'freellmapi gateway usage analytics (requests, tokens, savings)',
   extensionsTip: 'Claude Code plugins & skills: update, enable and disable',
   scheduleTip: 'Run maintenance automatically on a schedule (Windows Task Scheduler)',
   settingsTip: 'App settings: theme, language, paths, autostart'

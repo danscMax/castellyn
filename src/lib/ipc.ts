@@ -223,6 +223,35 @@ export type StackService = {
 export const readStack = () => invoke<StackService[]>('read_stack');
 export const runStack = (action: 'start' | 'stop') => invoke<number>('run_stack', { action });
 
+// --- freellmapi analytics (read-only over the gateway's SQLite via a node helper) ---
+export type AnalyticsTotals = {
+  totalRequests: number;
+  successRate: number; // percent
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgLatencyMs: number;
+  estimatedCostSavings: number; // $ vs paid APIs
+  firstRequestAt: string | null;
+};
+export type AnalyticsModel = {
+  platform: string;
+  modelId: string;
+  displayName: string;
+  requests: number;
+  successRate: number;
+  avgLatencyMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  estimatedCost: number;
+};
+export type FreellmapiAnalytics = {
+  available: boolean; // false → gateway DB/node/data missing (empty state)
+  totals: AnalyticsTotals;
+  perModel: AnalyticsModel[];
+};
+export const readFreellmapiAnalytics = (rangeHours: number) =>
+  invoke<FreellmapiAnalytics>('read_freellmapi_analytics', { rangeHours });
+
 // --- opencode agent (single global config: ~/.config/opencode/opencode.json) ---
 export type OpencodeProvider = {
   id: string;

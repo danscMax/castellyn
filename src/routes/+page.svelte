@@ -87,6 +87,7 @@
   import McpTab from '$lib/components/McpTab.svelte';
   import SyncTab from '$lib/components/SyncTab.svelte';
   import ProvidersTab from '$lib/components/ProvidersTab.svelte';
+  import AnalyticsTab from '$lib/components/AnalyticsTab.svelte';
   import PluginsTab from '$lib/components/PluginsTab.svelte';
   import ScheduleTab from '$lib/components/ScheduleTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
@@ -1087,6 +1088,8 @@
           }}
           {onOpenUrl}
         />
+      {:else if active === 'analytics'}
+        <AnalyticsTab />
       {:else if active === 'extensions'}
         <PluginsTab
           plugins={pluginsData}

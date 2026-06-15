@@ -7,6 +7,7 @@ export default {
   mcp: 'MCP',
   sync: '同步',
   providers: '提供商',
+  analytics: '分析',
   extensions: '插件与技能',
   schedule: '计划任务',
   settings: '设置',
@@ -22,6 +23,7 @@ export default {
   mcpTip: 'MCP 服务器：来源真相（.mcp.json）及按配置部署',
   syncTip: '通过 Syncthing 在多台电脑间同步 Claude Code 设置',
   providersTip: '本地 LLM 引擎以及为每个配置绑定提供商',
+  analyticsTip: 'freellmapi 网关用量分析（请求、令牌、节省）',
   extensionsTip: 'Claude Code 插件与技能：更新、启用和禁用',
   scheduleTip: '按计划自动运行维护（Windows 计划任务程序）',
   settingsTip: '应用设置：主题、语言、路径、开机自启'

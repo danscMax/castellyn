@@ -848,6 +848,99 @@ async fn run_stack(
     spawn_streamed(app, state, "engine".to_string(), script, args).await
 }
 
+// ---- freellmapi analytics (read-only via a node helper over its SQLite DB) ----
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AnalyticsTotals {
+    total_requests: i64,
+    success_rate: f64,
+    total_input_tokens: i64,
+    total_output_tokens: i64,
+    avg_latency_ms: i64,
+    estimated_cost_savings: f64,
+    first_request_at: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalyticsModel {
+    platform: String,
+    model_id: String,
+    display_name: String,
+    requests: i64,
+    success_rate: f64,
+    avg_latency_ms: i64,
+    total_input_tokens: i64,
+    total_output_tokens: i64,
+    estimated_cost: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalyticsHelperOut {
+    totals: Option<AnalyticsTotals>,
+    per_model: Option<Vec<AnalyticsModel>>,
+    error: Option<String>,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct FreellmapiAnalytics {
+    /// False when the gateway DB / node / data is missing — UI shows an empty state.
+    available: bool,
+    totals: AnalyticsTotals,
+    per_model: Vec<AnalyticsModel>,
+}
+
+/// Path to the freellmapi SQLite DB, from the `gateway` service `dir` in stack.json (placeholders
+/// expanded). None if the manifest or the entry is missing.
+fn gateway_db_path() -> Option<String> {
+    let content = std::fs::read_to_string(abs(STACK_CONFIG_REL)).ok()?;
+    let v = parse_json_bom(&content).ok()?;
+    let dir = v
+        .get("services")?
+        .as_array()?
+        .iter()
+        .find(|e| e.get("id").and_then(|x| x.as_str()) == Some("gateway"))
+        .and_then(|e| e.get("dir"))
+        .and_then(|x| x.as_str())?;
+    Some(format!("{}\\data\\freeapi.db", expand_placeholders(dir)))
+}
+
+/// freellmapi usage analytics for the last `range_hours`, read **read-only** (WAL-safe) by a node
+/// helper over the gateway's own better-sqlite3 — never disturbs the live gateway. Returns an empty
+/// (available=false) result when node, the helper, or the DB is missing.
+#[tauri::command]
+async fn read_freellmapi_analytics(range_hours: u32) -> FreellmapiAnalytics {
+    let hours = if range_hours == 0 { 168 } else { range_hours };
+    let db = match gateway_db_path() {
+        Some(p) if std::path::Path::new(&p).exists() => p,
+        _ => return FreellmapiAnalytics::default(),
+    };
+    let helper = abs("AgentHub\\tools\\analytics\\query.cjs");
+    let out = tokio::process::Command::new("node")
+        .args([&helper, &db, &hours.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .await;
+    let Ok(out) = out else { return FreellmapiAnalytics::default() };
+    if !out.status.success() {
+        return FreellmapiAnalytics::default();
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: Option<AnalyticsHelperOut> =
+        parse_json_bom(stdout.trim()).ok().and_then(|v| serde_json::from_value(v).ok());
+    match parsed {
+        Some(p) if p.error.is_none() && p.totals.is_some() => FreellmapiAnalytics {
+            available: true,
+            totals: p.totals.unwrap_or_default(),
+            per_model: p.per_model.unwrap_or_default(),
+        },
+        _ => FreellmapiAnalytics::default(),
+    }
+}
+
 /// Patch an engine's baseUrl + port in config\engines.json (user can change ports when
 /// something else occupies the default). Read-modify-write, preserves everything else.
 #[tauri::command]
@@ -2271,6 +2364,7 @@ pub fn run() {
             list_github_repos,
             read_stack,
             run_stack,
+            read_freellmapi_analytics,
             read_providers,
             run_provider,
             read_opencode,
