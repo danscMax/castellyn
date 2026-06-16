@@ -37,7 +37,7 @@ export default {
   noLoginTip: 'Нет сохранённого входа — потребуется авторизация',
   lean: 'лёгкий',
   leanTip: 'Запуск в лёгком режиме ({flag}) — урезанный системный промпт',
-  links: 'связи {linked}/{total}',
+  links: 'папки {linked}/{total}',
   linksTip: 'Подключено {linked} из {total} общих папок (junction/symlink). Нажми, чтобы развернуть детали.',
 
   // Provider section
@@ -45,6 +45,7 @@ export default {
   providerDefault: 'Anthropic (по умолчанию)',
   providerStdTip: 'Стандартный Anthropic-логин',
   providerEdit: 'изменить',
+  providerOpenTip: 'Открыть вкладку «Провайдеры» — там настройка и ключи этого провайдера',
   providerEditTip:
     'Назначить/изменить LLM-провайдера этого профиля (LM Studio, роутер, кастомный)',
   providerClear: 'сбросить',

@@ -37,7 +37,7 @@ export default {
   noLoginTip: 'No saved login — authorization required',
   lean: 'lean',
   leanTip: 'Launches in lean mode ({flag}) — trimmed system prompt',
-  links: 'links {linked}/{total}',
+  links: 'folders {linked}/{total}',
   linksTip: 'Connected {linked} of {total} shared folders (junction/symlink). Click to expand details.',
 
   // Provider section
@@ -45,6 +45,7 @@ export default {
   providerDefault: 'Anthropic (default)',
   providerStdTip: 'Standard Anthropic login',
   providerEdit: 'change',
+  providerOpenTip: 'Open the Providers tab — configure this provider and its keys there',
   providerEditTip:
     'Assign/change this profile’s LLM provider (LM Studio, router, custom)',
   providerClear: 'reset',

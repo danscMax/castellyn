@@ -36,7 +36,7 @@ export default {
   noLoginTip: '无已保存登录——需要授权',
   lean: '精简',
   leanTip: '以精简模式启动（{flag}）——裁剪系统提示',
-  links: '链接 {linked}/{total}',
+  links: '文件夹 {linked}/{total}',
   linksTip: '已连接 {total} 个共享文件夹中的 {linked} 个（junction/符号链接）。点击展开详情。',
 
   // Provider section
@@ -44,6 +44,7 @@ export default {
   providerDefault: 'Anthropic（默认）',
   providerStdTip: '标准 Anthropic 登录',
   providerEdit: '更改',
+  providerOpenTip: '打开「提供方」标签页 — 在那里配置该提供方及其密钥',
   providerEditTip: '为此配置指定/更改 LLM 提供商（LM Studio、路由器、自定义）',
   providerClear: '重置',
   providerClearTip: '重置为标准 Anthropic 登录',

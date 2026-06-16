@@ -31,7 +31,8 @@
     onSaveLaunch,
     onMeasure,
     onProviderSet,
-    onProviderClear
+    onProviderClear,
+    onOpenProviders
   }: {
     data: ProfilesStatus | null;
     config: ProfilesConfig | null;
@@ -47,6 +48,7 @@
     onMeasure: (name: string, lean: boolean) => Promise<number>;
     onProviderSet: (args: ProviderArgs) => void;
     onProviderClear: (name: string) => void;
+    onOpenProviders: () => void;
   } = $props();
 
   const busy = $derived(!!running);
@@ -381,7 +383,8 @@
             {@const prov = providerByName.get(p.name)}
             <div class="flex min-w-0 items-center gap-sw-2 text-sw-xs">
               <span class="shrink-0 text-sw-text-muted">{t('profiles.providerLabel')}</span>
-              <span class="min-w-0 flex-1 truncate font-medium text-sw-text-secondary" title={prov?.baseUrl || t('profiles.providerStdTip')}>{providerLabel(p.name)}</span>
+              <button type="button" class="min-w-0 flex-1 truncate text-left font-medium text-sw-text-secondary underline decoration-dotted underline-offset-2 hover:text-sw-text"
+                onclick={onOpenProviders} title={t('profiles.providerOpenTip')}>{providerLabel(p.name)}</button>
               <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => editProvider(p.name)}
                 title={t('profiles.providerEditTip')}>{t('profiles.providerEdit')}</button>
             </div>

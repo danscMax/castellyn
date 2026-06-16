@@ -1195,6 +1195,7 @@
           {onMeasure}
           {onProviderSet}
           {onProviderClear}
+          onOpenProviders={() => (active = 'providers')}
         />
       {:else if active === 'mcp'}
         <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy} />
