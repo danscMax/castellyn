@@ -520,10 +520,10 @@
     });
   }
 
-  // No arg → deploy to all profiles (confirm). A profile name → deploy just that one.
-  function onMcpDeploy(profile?: string) {
-    if (profile) {
-      startMcp('deploy', [profile]);
+  // No arg → deploy to all profiles (confirm). A profile name or array → deploy just those.
+  function onMcpDeploy(target?: string | string[]) {
+    if (target) {
+      startMcp('deploy', Array.isArray(target) ? target : [target]);
     } else {
       askConfirm(
         t('page.confirm_mcp_title'),

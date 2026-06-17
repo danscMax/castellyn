@@ -11,9 +11,12 @@
     ProviderArgs
   } from '$lib/ipc';
   import { pProfile, t } from '$lib/i18n';
+  import { readProfileFile } from '$lib/ipc';
+  import { copyText } from '$lib/clipboard';
   import ProfileEditDialog from './ProfileEditDialog.svelte';
   import LaunchConfigDialog from './LaunchConfigDialog.svelte';
   import ProviderEditDialog from './ProviderEditDialog.svelte';
+  import ModalShell from './ModalShell.svelte';
   import DropdownMenu from './DropdownMenu.svelte';
   import Toggle from './Toggle.svelte';
 
@@ -136,6 +139,37 @@
     });
   }
 
+  // Read-only config viewer (#80): CLAUDE.md / settings.json of a profile in a modal.
+  let viewerOpen = $state(false);
+  let viewerName = $state('');
+  let viewerWhich = $state<'claude' | 'settings'>('settings');
+  let viewerContent = $state('');
+  let viewerErr = $state('');
+  let viewerLoading = $state(false);
+  async function loadViewer() {
+    viewerLoading = true;
+    viewerErr = '';
+    viewerContent = '';
+    try {
+      viewerContent = await readProfileFile(viewerName, viewerWhich);
+    } catch (e) {
+      viewerErr = String(e);
+    } finally {
+      viewerLoading = false;
+    }
+  }
+  function openViewer(name: string) {
+    viewerName = name;
+    viewerWhich = 'settings';
+    viewerOpen = true;
+    loadViewer();
+  }
+  function setWhich(w: 'claude' | 'settings') {
+    if (viewerWhich === w) return;
+    viewerWhich = w;
+    loadViewer();
+  }
+
   // Collapsible shared-folder matrix (progressive disclosure).
   let expanded = $state<Record<string, boolean>>({});
 
@@ -204,6 +238,11 @@
       }
     ];
     if (p.exists) {
+      items.push({
+        label: t('profiles.menuViewConfig'),
+        title: t('profiles.menuViewConfigTip'),
+        onClick: () => openViewer(p.name)
+      });
       items.push({
         label: t('profiles.menuRepair'),
         title: t('profiles.menuRepairTip'),
@@ -457,3 +496,41 @@
     </div>
   {/if}
 </div>
+
+<ModalShell open={viewerOpen} onClose={() => (viewerOpen = false)} size="lg">
+  <div class="mb-sw-3 flex flex-wrap items-center justify-between gap-sw-2">
+    <h3 class="font-semibold">{t('profiles.menuViewConfig')}: {viewerName}</h3>
+    <div class="flex gap-sw-2">
+      <button class="sw-btn text-sw-xs {viewerWhich === 'settings' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
+        onclick={() => setWhich('settings')}>{t('profiles.viewSettings')}</button>
+      <button class="sw-btn text-sw-xs {viewerWhich === 'claude' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
+        onclick={() => setWhich('claude')}>{t('profiles.viewClaudeMd')}</button>
+      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!viewerContent} onclick={() => copyText(viewerContent)}
+        title={t('common.copy')}>{t('common.copy')}</button>
+    </div>
+  </div>
+  {#if viewerLoading}
+    <p class="text-sw-sm text-sw-text-muted">{t('common.loading')}</p>
+  {:else if viewerErr}
+    <p class="text-sw-sm text-red-400">{viewerErr}</p>
+  {:else}
+    <pre class="cfg-view">{viewerContent}</pre>
+  {/if}
+</ModalShell>
+
+<style>
+  .cfg-view {
+    max-height: 60vh;
+    overflow: auto;
+    margin: 0;
+    padding: var(--sw-space-3);
+    background: var(--sw-bg-secondary);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>

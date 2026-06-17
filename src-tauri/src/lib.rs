@@ -2168,6 +2168,25 @@ async fn check_provider_url(base_url: String, protocol: String) -> serde_json::V
     run_provider_check(&base_url, &protocol, "").await
 }
 
+/// Read-only view of a profile's CLAUDE.md or settings.json (#80). Whitelisted filenames +
+/// validated profile name guard against path traversal.
+#[tauri::command]
+async fn read_profile_file(name: String, which: String) -> Result<String, String> {
+    if !valid_profile_name(&name) {
+        return Err("invalid profile name".into());
+    }
+    let file = match which.as_str() {
+        "claude" => "CLAUDE.md",
+        "settings" => "settings.json",
+        _ => return Err("unknown file".into()),
+    };
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let path = std::path::Path::new(&home)
+        .join(format!(".claude-{name}"))
+        .join(file);
+    std::fs::read_to_string(&path).map_err(|e| format!("{e}"))
+}
+
 const OPENCODE_PROVIDER_SCRIPT_REL: &str =
     "!Настройки и MCP\\ClaudeProfiles\\Manage-OpenCode-Provider.ps1";
 
@@ -3473,6 +3492,7 @@ pub fn run() {
             connect_my_provider,
             check_my_provider,
             check_provider_url,
+            read_profile_file,
             add_provider_key,
             remove_provider_key,
             next_provider_key,

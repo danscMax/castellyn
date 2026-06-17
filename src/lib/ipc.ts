@@ -413,6 +413,9 @@ export const checkMyProvider = (id: string) =>
 // Liveness check for an arbitrary base URL (local engines / stack services — no key).
 export const checkProviderUrl = (baseUrl: string, protocol: string) =>
   invoke<{ ok: boolean; detail: string; count?: number }>('check_provider_url', { baseUrl, protocol });
+// Read-only view of a profile's CLAUDE.md / settings.json (#80).
+export const readProfileFile = (name: string, which: 'claude' | 'settings') =>
+  invoke<string>('read_profile_file', { name, which });
 // Multi-key rotation pool (e.g. several aerolink keys rotated on balance exhaustion).
 export const addProviderKey = (id: string, apiKey: string) =>
   invoke<MyProvider>('add_provider_key', { id, apiKey });

@@ -11,10 +11,20 @@
     data: McpStatus | null;
     running: string | null;
     onRefresh: () => void;
-    onDeploy: (profile?: string) => void;
+    onDeploy: (target?: string | string[]) => void;
   } = $props();
 
   const busy = $derived(!!running);
+  // Bulk MCP deploy (#76): pick profiles, deploy to all of them in one run.
+  let bulkSel = $state<Record<string, boolean>>({});
+  const bulkCount = $derived(Object.values(bulkSel).filter(Boolean).length);
+  function toggleBulk(p: string) {
+    bulkSel = { ...bulkSel, [p]: !bulkSel[p] };
+  }
+  function deployBulk() {
+    const only = ALL_PROFILES.filter((p) => bulkSel[p]);
+    if (only.length) onDeploy(only);
+  }
   // Real profile list from the backend (read_mcp); falls back to the canonical set on first paint
   // so the n/total badge and the per-profile chips never lie when profiles are added/removed.
   const ALL_PROFILES = $derived(
@@ -60,6 +70,17 @@
   </header>
 
   {#if source.length}
+    <div class="mb-sw-4 flex flex-wrap items-center gap-sw-2">
+      <span class="text-sw-xs text-sw-text-muted">{t('mcp.selectProfiles')}</span>
+      {#each ALL_PROFILES as p (p)}
+        <button class="badge {bulkSel[p] ? 'badge-info' : 'badge-muted'}" onclick={() => toggleBulk(p)}
+          title={t('mcp.selectProfileTip', { p })}>{p}</button>
+      {/each}
+      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !bulkCount} onclick={deployBulk}
+        title={t('mcp.bulkDeployTip')}>
+        {t('mcp.bulkDeploy')}{bulkCount ? ` (${bulkCount})` : ''}
+      </button>
+    </div>
     <div class="card-grid">
       {#each sortedSource as srv (srv.name)}
         <div class="sw-card flex flex-col gap-sw-3">

@@ -87,6 +87,10 @@ export default {
   menuTools: 'Инструменты / размер',
   menuToolsTip:
     'Лёгкий режим, выбор MCP/CLAUDE.md и измерение размера системного промпта',
+  menuViewConfig: 'Просмотр конфига',
+  menuViewConfigTip: 'Открыть CLAUDE.md / settings.json профиля (только чтение)',
+  viewSettings: 'settings.json',
+  viewClaudeMd: 'CLAUDE.md',
   menuRepair: 'Починить связи',
   menuRepairTip:
     'Пересоздать битые/отсутствующие junction/symlink без полной переустановки',

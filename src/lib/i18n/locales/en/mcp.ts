@@ -8,6 +8,10 @@ export default {
   deployTitle:
     'Deploy all servers from config/.mcp.json into every profile (user-scope, idempotent). Fills the gray cells.',
   deployAll: 'Deploy to all profiles',
+  selectProfiles: 'Select profiles:',
+  selectProfileTip: 'Toggle “{p}” for bulk deploy',
+  bulkDeploy: 'Deploy to selected',
+  bulkDeployTip: 'Deploy all MCP servers to the checked profiles',
 
   // Server card
   commandTitle: 'Server launch command',

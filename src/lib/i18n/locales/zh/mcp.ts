@@ -8,6 +8,10 @@ export default {
   deployTitle:
     '将 config/.mcp.json 中的所有服务器部署到每个配置（用户范围，幂等）。会填充灰色单元格。',
   deployAll: '部署到所有配置',
+  selectProfiles: '选择配置：',
+  selectProfileTip: '切换「{p}」以批量部署',
+  bulkDeploy: '部署到所选',
+  bulkDeployTip: '将所有 MCP 服务器部署到选中的配置',
 
   // Server card
   commandTitle: '服务器启动命令',

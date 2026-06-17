@@ -8,6 +8,10 @@ export default {
   deployTitle:
     'Развернуть все серверы из config/.mcp.json во все профили (user-scope, идемпотентно). Заполнит серые ячейки.',
   deployAll: 'Развернуть во все профили',
+  selectProfiles: 'Выбрать профили:',
+  selectProfileTip: 'Отметить «{p}» для массового развёртывания',
+  bulkDeploy: 'Развернуть в выбранные',
+  bulkDeployTip: 'Развернуть все MCP-серверы в отмеченные профили',
 
   // Server card
   commandTitle: 'Команда запуска сервера',
