@@ -3,6 +3,11 @@
   import { t, locale } from '$lib/i18n';
   import Sparkline from './Sparkline.svelte';
 
+  let { onOpenProviders }: { onOpenProviders?: () => void } = $props();
+
+  // Stacked-bar / legend colours, cycled by model index.
+  const SEG_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+
   // Range presets (hours). Self-contained: this tab owns its fetch + range state.
   const ranges = [
     { hours: 1, key: 'analytics.range1h' },
@@ -24,13 +29,24 @@
 
   const keyOf = (m: { platform: string; modelId: string }) => `${m.platform}/${m.modelId}`;
 
-  async function load(h: number) {
+  // Per-range cache so switching 1h↔24h↔7d↔30d is instant within the TTL; "Refresh" forces a fetch.
+  const cache = new Map<number, { ts: number; data: FreellmapiAnalytics }>();
+  const CACHE_TTL = 60_000;
+  async function load(h: number, force = false) {
+    const hit = cache.get(h);
+    if (!force && hit && Date.now() - hit.ts < CACHE_TTL) {
+      data = hit.data;
+      return;
+    }
     loading = true;
     const token = `${h}:${Date.now()}`;
     loaded = token;
     try {
       const r = await readFreellmapiAnalytics(h);
-      if (loaded === token) data = r;
+      if (loaded === token) {
+        data = r;
+        cache.set(h, { ts: Date.now(), data: r });
+      }
     } catch {
       if (loaded === token) data = null;
     } finally {
@@ -141,6 +157,43 @@
     return sums;
   });
 
+  // Hover labels for the sparkline: "<bucket time> · <N>" per bucket (#22). Mirrors trend's axis.
+  const tf = $derived.by(() => {
+    const step = data?.stepSec ?? 0;
+    const opts: Intl.DateTimeFormatOptions =
+      step >= 86400 ? { month: 'short', day: 'numeric' } : { hour: '2-digit', minute: '2-digit' };
+    return new Intl.DateTimeFormat(fmtLocale, opts);
+  });
+  const trendLabels = $derived.by(() => {
+    const series = data?.series ?? [];
+    const step = data?.stepSec ?? 0;
+    if (!series.length || step <= 0) return [] as string[];
+    const lo = Math.min(...series.map((s) => s.bucket));
+    return trend.map((v, i) => `${tf.format(new Date((lo + i * step) * 1000))} · ${fmt(v)}`);
+  });
+
+  // Top-N insight (#112): most expensive + most frequent models, derived client-side.
+  const topCost = $derived(
+    [...models].filter((m) => m.estimatedCost > 0).sort((a, b) => b.estimatedCost - a.estimatedCost).slice(0, 3)
+  );
+  const topReq = $derived([...models].sort((a, b) => b.requests - a.requests).slice(0, 3));
+
+  // Cost breakdown by model as a stacked bar (#23). Hidden when everything is free (cost 0).
+  const totalCost = $derived(models.reduce((s, m) => s + (m.estimatedCost ?? 0), 0));
+  const costSegs = $derived(
+    totalCost > 0
+      ? [...models]
+          .filter((m) => m.estimatedCost > 0)
+          .sort((a, b) => b.estimatedCost - a.estimatedCost)
+          .map((m, i) => ({
+            name: m.displayName,
+            cost: m.estimatedCost,
+            pct: (m.estimatedCost / totalCost) * 100,
+            color: SEG_COLORS[i % SEG_COLORS.length]
+          }))
+      : []
+  );
+
   const grainLabel = $derived.by(() => {
     const step = data?.stepSec ?? 0;
     const k =
@@ -160,7 +213,10 @@
 <div class="p-sw-6">
   <header class="mb-sw-4 flex items-start justify-between gap-sw-4">
     <div>
-      <h1 class="text-lg font-semibold">{t('analytics.title')}</h1>
+      <h1 class="text-lg font-semibold">
+        {t('analytics.title')}
+        <span class="help" title={t('analytics.help')}>?</span>
+      </h1>
       <p class="text-sw-sm text-sw-text-secondary">{t('analytics.subtitle')}</p>
     </div>
     <div class="flex shrink-0 items-center gap-sw-2">
@@ -178,7 +234,7 @@
           {t('analytics.exportCsv')}
         </button>
       {/if}
-      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={loading} onclick={() => load(rangeHours)}
+      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={loading} onclick={() => load(rangeHours, true)}
         title={t('analytics.refreshTip')}>
         {loading ? t('analytics.loading') : t('analytics.refresh')}
       </button>
@@ -186,9 +242,31 @@
   </header>
 
   {#if !available}
-    <div class="sw-card text-sw-sm text-sw-text-muted">
-      {loading ? t('analytics.loading') : t('analytics.empty')}
-    </div>
+    {#if loading}
+      <!-- First load: skeleton totals instead of a bare "loading…" line (#147). -->
+      <div class="card-grid mb-sw-4">
+        {#each Array(4) as _, i (i)}
+          <div class="sw-card flex flex-col gap-sw-2">
+            <div class="skeleton" style="height:0.7rem;width:50%"></div>
+            <div class="skeleton" style="height:1.6rem;width:70%"></div>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <!-- Empty state with a CTA pointing at the gateway/providers (#47). -->
+      <div class="grid place-items-center py-sw-8 text-center text-sw-text-muted">
+        <div class="flex flex-col items-center gap-sw-2">
+          <div class="text-2xl opacity-50">📊</div>
+          <div class="font-medium text-sw-text">{t('analytics.emptyTitle')}</div>
+          <div class="text-sw-sm">{t('analytics.emptyHint')}</div>
+          {#if onOpenProviders}
+            <button class="sw-btn sw-btn-primary text-sw-xs mt-sw-2" onclick={onOpenProviders}>
+              {t('analytics.emptyCta')}
+            </button>
+          {/if}
+        </div>
+      </div>
+    {/if}
   {:else}
     {#if selectedModel}
       <div class="mb-sw-3 flex items-center gap-sw-2 text-sw-sm">
@@ -226,6 +304,47 @@
       </div>
     </div>
 
+    <!-- Top-N insight: most frequent + most expensive models (#112) -->
+    {#if topReq.length}
+      <div class="card-grid mb-sw-4">
+        <div class="sw-card">
+          <p class="text-sw-xs font-semibold uppercase tracking-wide text-sw-text-muted">{t('analytics.topRequests')}</p>
+          <ol class="mt-sw-2 flex flex-col gap-1 text-sw-sm">
+            {#each topReq as m, i (keyOf(m))}
+              <li class="flex justify-between gap-sw-2"><span class="truncate" title={m.displayName}>{i + 1}. {m.displayName}</span><span class="tabular-nums text-sw-text-muted">{fmt(m.requests)}</span></li>
+            {/each}
+          </ol>
+        </div>
+        {#if topCost.length}
+          <div class="sw-card">
+            <p class="text-sw-xs font-semibold uppercase tracking-wide text-sw-text-muted">{t('analytics.topCost')}</p>
+            <ol class="mt-sw-2 flex flex-col gap-1 text-sw-sm">
+              {#each topCost as m, i (keyOf(m))}
+                <li class="flex justify-between gap-sw-2"><span class="truncate" title={m.displayName}>{i + 1}. {m.displayName}</span><span class="tabular-nums text-sw-text-muted">{money(m.estimatedCost)}</span></li>
+              {/each}
+            </ol>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Cost breakdown by model as a stacked bar (#23); hidden when all usage is free. -->
+    {#if costSegs.length}
+      <div class="sw-card mb-sw-4">
+        <p class="mb-sw-2 text-sw-xs font-semibold uppercase tracking-wide text-sw-text-muted">{t('analytics.costByModel')}</p>
+        <div class="costbar">
+          {#each costSegs as s (s.name)}
+            <div class="seg" style="width:{s.pct}%;background:{s.color}" title="{s.name}: {money(s.cost)} ({s.pct.toFixed(1)}%)"></div>
+          {/each}
+        </div>
+        <div class="mt-sw-2 flex flex-wrap gap-x-sw-4 gap-y-1 text-sw-xs">
+          {#each costSegs as s (s.name)}
+            <span class="flex items-center gap-1"><span class="legend-dot" style="background:{s.color}"></span><span class="truncate" style="max-width:160px" title={s.name}>{s.name}</span><span class="text-sw-text-muted">{s.pct.toFixed(0)}%</span></span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <!-- Trend -->
     <div class="sw-card mb-sw-6">
       <div class="mb-sw-2 flex items-baseline justify-between gap-sw-2">
@@ -233,7 +352,7 @@
         <p class="text-sw-xs text-sw-text-muted">{grainLabel}</p>
       </div>
       {#if trend.length >= 2}
-        <Sparkline points={trend} width={680} height={56} title={t('analytics.trend')}
+        <Sparkline points={trend} labels={trendLabels} width={680} height={56} title={t('analytics.trend')}
           peakLabel={trend.length ? `↑ ${fmt(Math.max(...trend))}` : ''} />
       {:else}
         <p class="text-sw-sm text-sw-text-muted">{t('analytics.trendEmpty')}</p>
@@ -323,5 +442,34 @@
     cursor: pointer;
     color: inherit;
     font: inherit;
+  }
+  .help {
+    display: inline-grid;
+    place-items: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 1px solid var(--sw-border);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--sw-text-muted);
+    cursor: help;
+    vertical-align: middle;
+  }
+  .costbar {
+    display: flex;
+    height: 14px;
+    border-radius: var(--sw-radius-sm);
+    overflow: hidden;
+    background: var(--sw-bg-secondary);
+  }
+  .costbar .seg {
+    height: 100%;
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
 </style>

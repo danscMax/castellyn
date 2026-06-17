@@ -1313,7 +1313,7 @@
           {onOpenUrl}
         />
       {:else if active === 'analytics'}
-        <AnalyticsTab />
+        <AnalyticsTab onOpenProviders={() => (active = 'providers')} />
       {:else if active === 'extensions'}
         <PluginsTab
           plugins={pluginsData}

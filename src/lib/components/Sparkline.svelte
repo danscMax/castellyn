@@ -7,7 +7,8 @@
     height = 40,
     color = 'var(--sw-accent)',
     title = '',
-    peakLabel = ''
+    peakLabel = '',
+    labels = []
   }: {
     points?: number[];
     width?: number;
@@ -15,6 +16,9 @@
     color?: string;
     title?: string;
     peakLabel?: string;
+    // Per-bucket hover text (e.g. "14:00 · 12 req"), same length as points. When present, each
+    // bucket gets a transparent hit-rect with a native <title> tooltip + a hover column highlight.
+    labels?: string[];
   } = $props();
 
   const pad = 2; // keep the stroke off the edges
@@ -72,5 +76,24 @@
     {#if peakLabel}
       <text x={width} y="9" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">{peakLabel}</text>
     {/if}
+    {#if labels.length === coords.length}
+      {#each coords as c, i (i)}
+        <rect class="hit" x={Math.max(0, c.x - width / coords.length / 2)} y="0"
+          width={width / coords.length} {height}>
+          <title>{labels[i]}</title>
+        </rect>
+      {/each}
+    {/if}
   </svg>
 {/if}
+
+<style>
+  /* Transparent per-bucket hit areas: native <title> tooltip on hover + a faint column highlight. */
+  .hit {
+    fill: transparent;
+  }
+  .hit:hover {
+    fill: currentColor;
+    opacity: 0.08;
+  }
+</style>
