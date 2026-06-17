@@ -4,6 +4,8 @@ export default {
   subtitle: 'Snapshots of Claude Code profile configs',
   createTitle: 'Create a new snapshot of all profile configs now',
   makeBackup: 'Make backup',
+  retention: 'Keep:',
+  retentionTip: 'How many recent snapshots to keep (older ones pruned on backup)',
 
   // Freshness badge
   fresh: 'fresh',

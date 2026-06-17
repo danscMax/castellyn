@@ -76,6 +76,16 @@
                 <dt class="text-sw-xs text-sw-text-muted">{t('schedule.nextRun')}</dt>
                 <dd class="text-sw-text">{fmtNext(task.nextRun)}</dd>
               </div>
+              {#if task.lastRun}
+                <div class="col-span-2">
+                  <dt class="text-sw-xs text-sw-text-muted">{t('schedule.lastRun')}</dt>
+                  <dd class="text-sw-text">
+                    {fmtNext(task.lastRun)}
+                    {#if task.lastResult === 0}<span class="text-emerald-400">· {t('schedule.lastResultOk')}</span>
+                    {:else if task.lastResult != null}<span class="text-amber-400">· {t('schedule.lastResultFail', { code: task.lastResult })}</span>{/if}
+                  </dd>
+                </div>
+              {/if}
             </dl>
           {:else}
             <label class="flex items-center gap-sw-2 text-sw-sm text-sw-text-secondary">

@@ -582,9 +582,17 @@ async fn run_backup(
     timestamp: Option<String>,
     profiles: Option<Vec<String>>,
     include_credentials: Option<bool>,
+    keep_snapshots: Option<u32>,
 ) -> Result<i32, String> {
     let (script_rel, mut args): (&str, Vec<String>) = match action.as_str() {
-        "backup" => (BACKUP_SCRIPT_REL, vec!["-Force".to_string()]),
+        "backup" => {
+            let mut a = vec!["-Force".to_string()];
+            if let Some(k) = keep_snapshots {
+                a.push("-KeepSnapshots".into());
+                a.push(k.max(1).to_string());
+            }
+            (BACKUP_SCRIPT_REL, a)
+        }
         "restore-preview" => (RESTORE_SCRIPT_REL, vec!["-WhatIf".to_string()]),
         "restore" => (RESTORE_SCRIPT_REL, Vec::new()),
         _ => return Err(format!("неизвестное действие backup: {action}")),

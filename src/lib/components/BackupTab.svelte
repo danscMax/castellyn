@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { BackupList, BackupAction, RestoreOpts } from '$lib/ipc';
   import RestoreDialog from './RestoreDialog.svelte';
   import { t, locale } from '$lib/i18n';
@@ -21,6 +22,25 @@
   const bstate = $derived(data?.state ?? null);
 
   let restoreSnap = $state<string | null>(null);
+
+  // #101: how many snapshots to retain (passed to Backup-ClaudeSetup.ps1 -KeepSnapshots).
+  let keepSnapshots = $state(30);
+  onMount(() => {
+    try {
+      const v = Number(localStorage.getItem('cmh-backup-keep'));
+      if (v >= 1) keepSnapshots = v;
+    } catch {
+      /* ignore */
+    }
+  });
+  function doBackup() {
+    try {
+      localStorage.setItem('cmh-backup-keep', String(keepSnapshots));
+    } catch {
+      /* ignore */
+    }
+    onAction('backup', { keepSnapshots });
+  }
 
   // "2026-06-12_100002" -> "2026-06-12 10:00:02" (snapshot-name format). Returns null if it
   // isn't that format, so callers can fall back.
@@ -70,10 +90,16 @@
       <h1 class="text-lg font-semibold">{t('backup.title')}</h1>
       <p class="text-sw-sm text-sw-text-secondary">{t('backup.subtitle')}</p>
     </div>
-    <button class="sw-btn sw-btn-primary shrink-0" disabled={busy} onclick={() => onAction('backup')}
-      title={t('backup.createTitle')}>
-      {running === 'backup' ? t('common.busy') : t('backup.makeBackup')}
-    </button>
+    <div class="flex shrink-0 items-center gap-sw-3">
+      <label class="flex items-center gap-sw-2 text-sw-xs text-sw-text-muted" title={t('backup.retentionTip')}>
+        {t('backup.retention')}
+        <input type="number" min="1" max="200" class="sw-input w-20 text-sw-sm" bind:value={keepSnapshots} />
+      </label>
+      <button class="sw-btn sw-btn-primary" disabled={busy} onclick={doBackup}
+        title={t('backup.createTitle')}>
+        {running === 'backup' ? t('common.busy') : t('backup.makeBackup')}
+      </button>
+    </div>
   </header>
 
   <!-- status -->

@@ -4,6 +4,8 @@ export default {
   subtitle: 'Снапшоты конфигов профилей Claude Code',
   createTitle: 'Создать новый снапшот конфигов всех профилей сейчас',
   makeBackup: 'Сделать бэкап',
+  retention: 'Хранить:',
+  retentionTip: 'Сколько последних снапшотов оставлять (старые удаляются при бэкапе)',
 
   // Freshness badge
   fresh: 'свежий',

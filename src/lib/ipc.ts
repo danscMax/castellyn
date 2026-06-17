@@ -109,6 +109,7 @@ export type RestoreOpts = {
   timestamp?: string;
   profiles?: string[];
   includeCredentials?: boolean;
+  keepSnapshots?: number; // backup action only: how many snapshots to retain
 };
 
 export const listBackups = () => invoke<BackupList>('list_backups');
@@ -118,7 +119,8 @@ export const runBackup = (action: BackupAction, opts: RestoreOpts = {}) =>
     action,
     timestamp: opts.timestamp ?? null,
     profiles: opts.profiles ?? null,
-    includeCredentials: opts.includeCredentials ?? null
+    includeCredentials: opts.includeCredentials ?? null,
+    keepSnapshots: opts.keepSnapshots ?? null
   });
 
 // --- Profiles tab ---
@@ -488,6 +490,8 @@ export type ScheduleTask = {
   enabled: boolean;
   time: string | null;
   nextRun: string | null;
+  lastRun: string | null;
+  lastResult: number | null;
   defaultTime: string;
 };
 export type SchedulesStatus = { generatedAt?: string; tasks?: ScheduleTask[] };

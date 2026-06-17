@@ -4,6 +4,8 @@ export default {
   subtitle: 'Claude Code 配置文件的快照',
   createTitle: '立即为所有配置文件创建新快照',
   makeBackup: '创建备份',
+  retention: '保留：',
+  retentionTip: '保留多少个最近的快照（备份时清理更旧的）',
 
   // Freshness badge
   fresh: '最新',
