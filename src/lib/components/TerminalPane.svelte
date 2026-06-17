@@ -26,7 +26,8 @@
     onDragEnter,
     onDrop,
     onInput,
-    onIdChange
+    onIdChange,
+    onNewSession
   }: {
     profile: string;
     tool?: SessionTool;
@@ -44,6 +45,7 @@
     onDrop?: () => void;
     onInput?: (data: string) => void;
     onIdChange?: (key: string, id: string | null) => void;
+    onNewSession?: () => void;
   } = $props();
 
   // Pane title: tool + the profile (claude) or the folder it's running in (opencode/shell).
@@ -222,6 +224,10 @@
       }
       if (e.ctrlKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
         openSearch();
+        return false;
+      }
+      if (e.ctrlKey && !e.shiftKey && (e.key === 't' || e.key === 'T') && onNewSession) {
+        onNewSession();
         return false;
       }
       return true;

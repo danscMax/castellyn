@@ -156,6 +156,18 @@
     dragKey = null;
   }
 
+  // Tab-scoped shortcuts (only while the Sessions tab is shown): Ctrl+T new session, Alt+1/2/3 cols.
+  function onKey(e: KeyboardEvent) {
+    if (!visible) return;
+    if (e.ctrlKey && !e.shiftKey && (e.key === 't' || e.key === 'T')) {
+      e.preventDefault();
+      openDlg();
+    } else if (e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
+      e.preventDefault();
+      columns = Number(e.key);
+    }
+  }
+
   // ── Workspaces: save the current set of panes under a name, re-launch it later ──
   let savingWs = $state(false);
   let wsName = $state('');
@@ -187,6 +199,8 @@
     persistWs();
   }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="wrap">
   <header class="mb-sw-3 flex items-center justify-between gap-sw-4">
@@ -290,6 +304,7 @@
             {broadcast}
             onInput={broadcastInput}
             {onIdChange}
+            onNewSession={() => openDlg()}
             onClose={() => closePane(pane.key)}
             onToggleMax={() => toggleMax(pane.key)}
             onDuplicate={() => duplicate(pane.key)}
