@@ -3371,6 +3371,7 @@ fn session_kill(state: State<'_, SessionState>, id: String) -> Result<(), String
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // Remember window position/size across launches (auto-restores on start, saves on exit).
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(RunState::default())

@@ -7,6 +7,7 @@ export default {
   closeAllTip: '终止所有终端',
   cwd: '工作目录',
   cwdPlaceholder: '（默认 — 主目录）',
+  browse: '浏览…',
   launchTip: '在配置「{profile}」下打开运行 claude 的终端',
   launchAll: '启动所有配置',
   launchAllTip: '为每个配置各开一个终端',

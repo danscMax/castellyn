@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import type { SessionTool } from '$lib/ipc';
+  import { pickFolder, type SessionTool } from '$lib/ipc';
+  import Select from './Select.svelte';
 
   let {
     open,
@@ -43,6 +44,26 @@
 
   const canSubmit = $derived(tool !== 'claude' || !!profile);
 
+  async function browse() {
+    const dir = await pickFolder(cwd);
+    if (dir) cwd = dir;
+  }
+
+  // Common launch flags as one-click chips; clicking toggles the exact flag in the args string.
+  const PRESETS: Record<string, string[]> = {
+    claude: ['--dangerously-skip-permissions', '--effort max', '--effort high', '--continue', '--resume'],
+    opencode: ['--continue']
+  };
+  const presets = $derived(PRESETS[tool] ?? []);
+  function hasArg(flag: string) {
+    return args.includes(flag);
+  }
+  function toggleArg(flag: string) {
+    args = hasArg(flag)
+      ? args.replace(flag, '').replace(/\s+/g, ' ').trim()
+      : `${args.trim()} ${flag}`.trim();
+  }
+
   function submit() {
     if (!canSubmit) return;
     onSubmit({ tool, profile: tool === 'claude' ? profile : '', cwd: cwd.trim(), args: args.trim() });
@@ -70,25 +91,35 @@
       </label>
 
       {#if tool === 'claude'}
-        <label class="fld">
-          <span>{t('sessions.dlgProfile')}</span>
-          <select class="sw-input" bind:value={profile}>
-            {#each profiles as p (p)}<option value={p}>{p}</option>{/each}
-          </select>
-        </label>
+        <div class="fld">
+          <span class="lbl">{t('sessions.dlgProfile')}</span>
+          <Select bind:value={profile} options={profiles} placeholder={t('sessions.dlgProfile')} />
+        </div>
       {/if}
 
-      <label class="fld">
-        <span>{t('sessions.cwd')}</span>
-        <input class="sw-input" bind:value={cwd} placeholder={t('sessions.cwdPlaceholder')} spellcheck="false" autocomplete="off" />
-      </label>
+      <div class="fld">
+        <span class="lbl">{t('sessions.cwd')}</span>
+        <div class="row-input">
+          <input class="sw-input grow" bind:value={cwd} placeholder={t('sessions.cwdPlaceholder')} spellcheck="false" autocomplete="off" />
+          <button type="button" class="sw-btn sw-btn-ghost text-sw-xs shrink-0" onclick={browse} title={t('sessions.browse')}>
+            📁 {t('sessions.browse')}
+          </button>
+        </div>
+      </div>
 
       {#if tool !== 'shell'}
-        <label class="fld">
-          <span>{t('sessions.dlgArgs')}</span>
-          <input class="sw-input font-mono text-sw-xs" bind:value={args} placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
+        <div class="fld">
+          <span class="lbl">{t('sessions.dlgArgs')}</span>
+          <input class="sw-input grow font-mono text-sw-xs" bind:value={args} placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
+          {#if presets.length}
+            <div class="chips">
+              {#each presets as flag (flag)}
+                <button type="button" class="chip" class:on={hasArg(flag)} onclick={() => toggleArg(flag)}>{flag}</button>
+              {/each}
+            </div>
+          {/if}
           <span class="hint">{t('sessions.dlgArgsHint')}</span>
-        </label>
+        </div>
       {/if}
 
       <div class="row">
@@ -119,12 +150,52 @@
   }
   .dialog {
     position: relative;
-    width: min(460px, 92vw);
+    width: min(560px, 94vw);
     background: var(--sw-bg-secondary);
     border: 1px solid var(--sw-border);
     border-radius: var(--sw-radius-lg);
     padding: var(--sw-space-6);
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  }
+  .lbl {
+    display: block;
+    margin-bottom: 6px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
+  }
+  .row-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .grow {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .chip {
+    padding: 3px 8px;
+    border: 1px solid var(--sw-border);
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--sw-text-muted);
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .chip:hover {
+    color: var(--sw-text-secondary);
+  }
+  .chip.on {
+    background: var(--sw-accent-glow);
+    color: var(--sw-text-primary);
+    border-color: var(--sw-accent-text);
   }
   h3 {
     margin: 0 0 var(--sw-space-4);

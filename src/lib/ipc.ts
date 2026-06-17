@@ -264,6 +264,13 @@ export const sessionResize = (id: string, cols: number, rows: number) =>
   invoke('session_resize', { id, cols, rows });
 export const sessionKill = (id: string) => invoke('session_kill', { id });
 
+// --- Native folder picker (Windows Explorer) ---
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+export const pickFolder = async (defaultPath?: string): Promise<string | null> => {
+  const res = await openDialog({ directory: true, multiple: false, defaultPath: defaultPath || undefined });
+  return typeof res === 'string' ? res : null;
+};
+
 // --- freellmapi analytics (read-only over the gateway's SQLite via a node helper) ---
 export type AnalyticsTotals = {
   totalRequests: number;

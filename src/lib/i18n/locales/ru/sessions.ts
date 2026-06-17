@@ -7,6 +7,7 @@ export default {
   closeAllTip: 'Завершить все терминалы',
   cwd: 'Рабочая папка',
   cwdPlaceholder: '(по умолчанию — домашняя)',
+  browse: 'Обзор…',
   launchTip: 'Открыть терминал с claude под профилем «{profile}»',
   launchAll: 'Запустить все профили',
   launchAllTip: 'Открыть по терминалу на каждый профиль',

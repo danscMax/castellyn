@@ -7,6 +7,7 @@ export default {
   closeAllTip: 'Terminate every terminal',
   cwd: 'Working folder',
   cwdPlaceholder: '(default — home)',
+  browse: 'Browse…',
   launchTip: 'Open a terminal running claude under profile “{profile}”',
   launchAll: 'Launch all profiles',
   launchAllTip: 'Open one terminal per profile',

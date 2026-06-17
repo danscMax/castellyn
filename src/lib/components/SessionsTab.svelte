@@ -3,7 +3,7 @@
   import TerminalPane from './TerminalPane.svelte';
   import SessionLaunchDialog from './SessionLaunchDialog.svelte';
   import { t } from '$lib/i18n';
-  import type { SessionTool } from '$lib/ipc';
+  import { pickFolder, type SessionTool } from '$lib/ipc';
 
   let { profiles = [], visible = true }: { profiles?: string[]; visible?: boolean } = $props();
 
@@ -87,6 +87,10 @@
     dlgOpen = false;
     addPane(v);
   }
+  async function browseMain() {
+    const dir = await pickFolder(cwd);
+    if (dir) cwd = dir;
+  }
 
   function duplicate(key: string) {
     const p = panes.find((x) => x.key === key);
@@ -168,7 +172,10 @@
   <div class="launcher">
     <label class="cwd">
       <span class="text-sw-xs text-sw-text-muted">{t('sessions.cwd')}</span>
-      <input class="sw-input text-sw-xs" bind:value={cwd} placeholder={t('sessions.cwdPlaceholder')} spellcheck="false" />
+      <div class="flex items-center gap-sw-2">
+        <input class="sw-input text-sw-xs" style="flex:1;min-width:0" bind:value={cwd} placeholder={t('sessions.cwdPlaceholder')} spellcheck="false" />
+        <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" onclick={browseMain} title={t('sessions.browse')}>📁</button>
+      </div>
     </label>
     <div class="profiles">
       <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => openDlg()} title={t('sessions.newSessionTip')}>
