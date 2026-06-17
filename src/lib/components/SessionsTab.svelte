@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import TerminalPane from './TerminalPane.svelte';
   import SessionLaunchDialog from './SessionLaunchDialog.svelte';
+  import Toggle from './Toggle.svelte';
   import { t } from '$lib/i18n';
   import { pickFolder, type SessionTool } from '$lib/ipc';
 
@@ -20,7 +21,10 @@
   const FKEY = 'cmh-sessions-folders';
   const CKEY = 'cmh-sessions-cols';
   const WKEY = 'cmh-sessions-workspaces';
+  const AKEY = 'cmh-sessions-askfolder';
   let lastFolders = $state<Record<string, string>>({});
+  // When ON, a quick profile launch opens the folder picker first (ask every time).
+  let askFolder = $state(false);
   // A workspace is a named set of session configs you can re-launch with one click.
   type WsConfig = { tool: SessionTool; profile: string; cwd: string; args: string };
   let workspaces = $state<Record<string, WsConfig[]>>({});
@@ -28,6 +32,7 @@
     try {
       lastFolders = JSON.parse(localStorage.getItem(FKEY) ?? '{}');
       workspaces = JSON.parse(localStorage.getItem(WKEY) ?? '{}');
+      askFolder = localStorage.getItem(AKEY) === '1';
       const c = Number(localStorage.getItem(CKEY));
       if (c >= 1 && c <= 3) columns = c;
     } catch {
@@ -56,12 +61,33 @@
     panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
   }
-  // Quick launch: Claude under a profile, in its remembered folder (or the default), no extra args.
-  function quick(profile: string) {
-    addPane({ tool: 'claude', profile, cwd: lastFolders[profile] ?? cwd, args: '' });
+  $effect(() => {
+    try {
+      localStorage.setItem(AKEY, askFolder ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  });
+  // Quick launch: Claude under a profile. With "ask folder" on, prompt for the folder first
+  // (cancel = don't launch); otherwise use the profile's remembered folder (or the default).
+  async function quick(profile: string) {
+    let dir = lastFolders[profile] ?? cwd;
+    if (askFolder) {
+      const picked = await pickFolder(dir);
+      if (picked === null) return; // cancelled
+      dir = picked;
+    }
+    addPane({ tool: 'claude', profile, cwd: dir, args: '' });
   }
-  function launchAll() {
-    for (const p of profiles) quick(p);
+  async function launchAll() {
+    // Ask once for a shared folder rather than prompting per profile.
+    let dir = cwd;
+    if (askFolder) {
+      const picked = await pickFolder(dir);
+      if (picked === null) return;
+      dir = picked;
+    }
+    for (const p of profiles) addPane({ tool: 'claude', profile: p, cwd: askFolder ? dir : (lastFolders[p] ?? cwd), args: '' });
   }
   function closePane(key: string) {
     panes = panes.filter((p) => p.key !== key);
@@ -171,11 +197,15 @@
   <!-- Launcher: quick-launch a profile (Claude), or open the dialog for tool/folder/args -->
   <div class="launcher">
     <label class="cwd">
-      <span class="text-sw-xs text-sw-text-muted">{t('sessions.cwd')}</span>
+      <span class="text-sw-xs text-sw-text-muted">{t('sessions.cwdDefault')}</span>
       <div class="flex items-center gap-sw-2">
-        <input class="sw-input text-sw-xs" style="flex:1;min-width:0" bind:value={cwd} placeholder={t('sessions.cwdPlaceholder')} spellcheck="false" />
-        <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" onclick={browseMain} title={t('sessions.browse')}>📁</button>
+        <input class="sw-input text-sw-xs" style="flex:1;min-width:0" bind:value={cwd} placeholder={t('sessions.cwdShort')} spellcheck="false" />
+        <button class="sw-btn shrink-0" onclick={browseMain} title={t('sessions.browse')}>📁 {t('sessions.browse')}</button>
       </div>
+      <label class="ask">
+        <Toggle bind:checked={askFolder} title={t('sessions.askFolderTip')} />
+        <span class="text-sw-xs text-sw-text-secondary">{t('sessions.askFolder')}</span>
+      </label>
     </label>
     <div class="profiles">
       <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => openDlg()} title={t('sessions.newSessionTip')}>
@@ -310,6 +340,13 @@
   }
   .ws-del:hover {
     color: #f87171;
+  }
+  .ask {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    cursor: pointer;
   }
   .cwd {
     display: flex;

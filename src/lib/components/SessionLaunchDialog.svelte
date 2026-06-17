@@ -100,8 +100,8 @@
       <div class="fld">
         <span class="lbl">{t('sessions.cwd')}</span>
         <div class="row-input">
-          <input class="sw-input grow" bind:value={cwd} placeholder={t('sessions.cwdPlaceholder')} spellcheck="false" autocomplete="off" />
-          <button type="button" class="sw-btn sw-btn-ghost text-sw-xs shrink-0" onclick={browse} title={t('sessions.browse')}>
+          <input class="sw-input grow" bind:value={cwd} placeholder={t('sessions.cwdShort')} spellcheck="false" autocomplete="off" />
+          <button type="button" class="sw-btn shrink-0" onclick={browse} title={t('sessions.browse')}>
             📁 {t('sessions.browse')}
           </button>
         </div>
