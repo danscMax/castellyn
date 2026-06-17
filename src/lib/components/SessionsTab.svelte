@@ -112,6 +112,46 @@
     panes = [];
     maximized = null;
   }
+  // Resizable columns: per-column fraction weights + draggable dividers between them.
+  let colFr = $state<number[]>([1, 1]);
+  let gridEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (colFr.length !== columns) colFr = Array(columns).fill(1);
+  });
+  const colBounds = $derived.by(() => {
+    const total = colFr.reduce((s, f) => s + f, 0) || 1;
+    const out: number[] = [];
+    let acc = 0;
+    for (let i = 0; i < colFr.length - 1; i++) {
+      acc += colFr[i];
+      out.push((acc / total) * 100);
+    }
+    return out; // percent positions of each divider
+  });
+  function startResize(e: PointerEvent, k: number) {
+    e.preventDefault();
+    const w = gridEl?.clientWidth || 1;
+    const total = colFr.reduce((s, f) => s + f, 0);
+    const startX = e.clientX;
+    const a = colFr[k];
+    const b = colFr[k + 1];
+    const move = (ev: PointerEvent) => {
+      const dFr = ((ev.clientX - startX) / w) * total;
+      const na = Math.max(0.25, a + dFr);
+      const nb = Math.max(0.25, b - dFr);
+      const next = [...colFr];
+      next[k] = na;
+      next[k + 1] = nb;
+      colFr = next;
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   function toggleMax(key: string) {
     maximized = maximized === key ? null : key;
   }
@@ -288,7 +328,11 @@
   {/if}
 
   {#if panes.length}
-    <div class="grid" style="grid-template-columns: repeat({maximized ? 1 : columns}, minmax(0, 1fr));">
+    <div
+      class="grid"
+      bind:this={gridEl}
+      style="grid-template-columns: {maximized ? '1fr' : colFr.map((f) => `minmax(0, ${f}fr)`).join(' ')};"
+    >
       <!-- Every pane stays MOUNTED (sessions must survive maximize); non-maximized ones are just
            hidden, so the maximized pane fills the single column. -->
       {#each panes as pane (pane.key)}
@@ -314,6 +358,14 @@
           />
         </div>
       {/each}
+      {#if !maximized && columns > 1}
+        {#each colBounds as pos, k (k)}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <button type="button" class="col-divider" style="left:{pos}%"
+            title={t('sessions.resizeCol')} aria-label={t('sessions.resizeCol')}
+            onpointerdown={(e) => startResize(e, k)}></button>
+        {/each}
+      {/if}
     </div>
   {:else}
     <div class="empty">
@@ -414,7 +466,34 @@
   .cell.hidden {
     display: none;
   }
+  .col-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 10px;
+    transform: translateX(-50%);
+    border: none;
+    background: transparent;
+    cursor: col-resize;
+    z-index: 4;
+    padding: 0;
+  }
+  .col-divider::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    transform: translateX(-50%);
+    background: transparent;
+    transition: background 0.12s;
+  }
+  .col-divider:hover::after {
+    background: var(--sw-accent-text);
+  }
   .grid {
+    position: relative;
     display: grid;
     gap: var(--sw-space-3);
     flex: 1;

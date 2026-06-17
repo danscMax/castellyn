@@ -3,6 +3,7 @@ export default {
   subtitle: 'Запускай Claude сразу в нескольких профилях — каждый в своём терминале.',
   layout: 'Колонок:',
   layoutCols: '{n} в ряд',
+  resizeCol: 'Потяни, чтобы изменить ширину колонок',
   closeAll: 'Закрыть все',
   closeAllTip: 'Завершить все терминалы',
   broadcast: 'Во все',

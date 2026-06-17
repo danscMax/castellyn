@@ -3,6 +3,7 @@ export default {
   subtitle: 'Run Claude across several profiles at once — each in its own terminal.',
   layout: 'Columns:',
   layoutCols: '{n} per row',
+  resizeCol: 'Drag to resize columns',
   closeAll: 'Close all',
   closeAllTip: 'Terminate every terminal',
   broadcast: 'To all',

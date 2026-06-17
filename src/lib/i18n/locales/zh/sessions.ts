@@ -3,6 +3,7 @@ export default {
   subtitle: '同时在多个配置中运行 Claude — 每个都有自己的终端。',
   layout: '列数：',
   layoutCols: '每行 {n} 个',
+  resizeCol: '拖动以调整列宽',
   closeAll: '全部关闭',
   closeAllTip: '终止所有终端',
   broadcast: '广播',
