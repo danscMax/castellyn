@@ -1807,8 +1807,6 @@ async fn run_engine(
     spawn_streamed_prog(app, state, "engine".into(), "taskkill".into(), args, None).await
 }
 
-const CONNECT_ROUTER_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Connect-Router.ps1";
-
 /// Run a child process to completion, forwarding stdout/stderr to the UI log (indented, mirroring the
 /// PS `| ForEach Write-Host "    $_"`). Returns the exit code (None if it failed to launch). Uses
 /// `.output()` (deadlock-free); the npm/ccr commands here are non-interactive. Simple args only — no
@@ -1967,6 +1965,66 @@ fn setup_router_native(
     }
 }
 
+/// Native port of Connect-Router.ps1: turnkey configure+start ccr then bind a profile to it.
+/// Reuses the native Setup-Router (`setup_router_native`) and Manage-Provider
+/// (`manage_provider_native`) steps (DRY) — the only extra logic is starting ccr, waiting for
+/// :3456, and reading ccr's APIKEY. Returns the exit code; streams via out/err.
+fn connect_router_native(
+    backend: &str,
+    model: &str,
+    profile: &str,
+    name: &str,
+    out: &dyn Fn(&str),
+    err: &dyn Fn(&str),
+) -> i32 {
+    let ccr_base = "http://127.0.0.1:3456";
+    out(&format!("=== Подключение через роутер: {name} → профиль {profile} ==="));
+
+    // 1. Configure ccr for this backend/model (+ ccr restart inside Setup-Router).
+    let code = setup_router_native("configure", backend, model, name, out, err);
+    if code != 0 {
+        err("Прервано: не удалось настроить ccr.");
+        return code;
+    }
+
+    // 2. Ensure ccr is running and verify the port came up (non-fatal warning, mirrors the script).
+    if let Some(ccr) = exe_on_path("ccr") {
+        out("  ccr start …");
+        stream_output(&ccr, &["start"], out, err);
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if port_listening(3456) {
+            out("  ccr слушает :3456 ✓");
+        } else {
+            out("  [ВНИМАНИЕ] ccr не поднял порт :3456. Конфиг и привязка сделаны, но сервер не запущен.");
+            out("            Попробуй обновить ccr (вкладка «Обновления») или запусти «ccr code» в терминале.");
+        }
+    }
+
+    // 3. Read ccr's APIKEY (token the profile must send; empty when ccr is open on localhost).
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let cfg_path = format!("{home}\\.claude-code-router\\config.json");
+    let token = std::fs::read_to_string(&cfg_path)
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok())
+        .and_then(|v| v.get("APIKEY").and_then(|k| k.as_str()).map(str::to_string))
+        .unwrap_or_default();
+
+    // 4. Bind the profile to ccr (Anthropic endpoint). Empty token → Manage-Provider writes the
+    //    dummy bearer (single source of that rule) so a bare `claude` skips the login screen.
+    let token_opt = if token.is_empty() { None } else { Some(token.as_str()) };
+    let code = manage_provider_native(
+        profile, "set", ccr_base, false, token_opt, Some(model), None, out, err,
+    );
+    if code != 0 {
+        err("Прервано: не удалось привязать профиль.");
+        return code;
+    }
+    out(&format!(
+        "Готово. Профиль '{profile}' → {ccr_base} (ccr) → {name} ({model}). Перезапусти профиль."
+    ));
+    0
+}
+
 /// Install or configure claude-code-router (ccr) (native; was Setup-Router.ps1).
 /// `configure` needs `backend` (engine baseUrl) + `model`.
 #[tauri::command]
@@ -2010,20 +2068,12 @@ async fn run_connect_router(
     if !valid_profile_name(&profile) {
         return Err(format!("недопустимый профиль: {profile}"));
     }
-    let mut args: Vec<String> = vec![
-        "-Backend".into(),
-        backend,
-        "-Model".into(),
-        model,
-        "-Profile".into(),
-        profile,
-    ];
-    if let Some(n) = name.filter(|s| !s.is_empty()) {
-        args.push("-Name".into());
-        args.push(n);
-    }
-    let script = abs(CONNECT_ROUTER_SCRIPT_REL);
-    spawn_streamed(app, state, "provider".to_string(), script, args).await
+    // PS default provider name is 'lmstudio'.
+    let name = name.filter(|s| !s.is_empty()).unwrap_or_else(|| "lmstudio".to_string());
+    run_native_streamed(app, state, "provider".to_string(), move |out, err| {
+        connect_router_native(&backend, &model, &profile, &name, out, err)
+    })
+    .await
 }
 
 /// Fetch model ids from an OpenAI-compatible engine (GET <baseUrl>/models). Empty on error.
