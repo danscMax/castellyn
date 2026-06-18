@@ -17,6 +17,22 @@
 
 </div>
 
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><b>Profiles</b> — accounts, usage limits (5h / weekly), per‑profile providers<br><img src="docs/img/screenshot-profiles.png" alt="Profiles tab" /></td>
+<td width="50%"><b>Plugins &amp; skills</b> — sortable tables, ownership, bulk actions<br><img src="docs/img/screenshot-plugins-skills.png" alt="Plugins and skills tab" /></td>
+</tr>
+<tr>
+<td><b>MCP</b> — source‑of‑truth + per‑profile deploy matrix<br><img src="docs/img/screenshot-mcp.png" alt="MCP tab" /></td>
+<td><b>Providers &amp; engines</b> — local stack, routers, per‑profile binding<br><img src="docs/img/screenshot-providers.png" alt="Providers tab" /></td>
+</tr>
+<tr>
+<td colspan="2"><b>Sync</b> — exactly what syncs across machines via Syncthing<br><img src="docs/img/screenshot-sync.png" alt="Sync tab" /></td>
+</tr>
+</table>
+
 ---
 
 <a id="english"></a>
