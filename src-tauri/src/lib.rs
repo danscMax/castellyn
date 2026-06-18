@@ -1330,7 +1330,6 @@ async fn run_engine(
 
 const ROUTER_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Setup-Router.ps1";
 const CONNECT_ROUTER_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Connect-Router.ps1";
-const MODELS_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Get-EngineModels.ps1";
 
 /// Install or configure claude-code-router (ccr) via Setup-Router.ps1 (streamed).
 /// `configure` needs `backend` (engine baseUrl) + `model`.
@@ -1401,18 +1400,10 @@ async fn run_connect_router(
 /// Fetch model ids from an OpenAI-compatible engine (GET <baseUrl>/models). Empty on error.
 #[tauri::command]
 async fn read_engine_models(base_url: String) -> Vec<String> {
-    if base_url.is_empty() {
-        return Vec::new();
-    }
-    let script = abs(MODELS_SCRIPT_REL);
-    let out = tokio::process::Command::new("pwsh")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", &script, "-BaseUrl", &base_url])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .await;
-    let Ok(out) = out else { return Vec::new() };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    serde_json::from_str::<Vec<String>>(stdout.trim()).unwrap_or_default()
+    // Native HTTP (was Get-EngineModels.ps1). Blocking ureq → spawn_blocking off the async runtime.
+    tokio::task::spawn_blocking(move || fetch_engine_models(&base_url))
+        .await
+        .unwrap_or_default()
 }
 
 #[derive(Serialize)]
@@ -2115,45 +2106,119 @@ async fn next_provider_key(
     connect_my_provider(app, state, id).await
 }
 
-const CHECK_PROVIDER_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Check-Provider.ps1";
-
-/// Shared liveness check: GET {baseUrl}/v1/models via Check-Provider.ps1 with an API key fed over
-/// STDIN (never argv). Returns `{ ok, detail, count? }`. No run slot taken.
-async fn run_provider_check(base_url: &str, protocol: &str, api_key: &str) -> serde_json::Value {
-    let script = abs(CHECK_PROVIDER_SCRIPT_REL);
-    let child = tokio::process::Command::new("pwsh")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            &script,
-            "-BaseUrl",
-            base_url,
-            "-Protocol",
-            protocol,
-        ])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
-    let mut child = match child {
-        Ok(c) => c,
-        Err(e) => return serde_json::json!({ "ok": false, "detail": format!("запуск: {e}") }),
-    };
-    if let Some(mut sin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        let _ = sin.write_all(api_key.as_bytes()).await;
-        let _ = sin.shutdown().await;
+/// Count models in an OpenAI/Anthropic-style /models response (data[] | models[] | bare array).
+fn count_models(v: &serde_json::Value) -> usize {
+    if let Some(d) = v.get("data").and_then(|x| x.as_array()) {
+        return d.len();
     }
-    let out = match child.wait_with_output().await {
-        Ok(o) => o,
-        Err(e) => return serde_json::json!({ "ok": false, "detail": format!("{e}") }),
+    if let Some(m) = v.get("models").and_then(|x| x.as_array()) {
+        return m.len();
+    }
+    if let Some(a) = v.as_array() {
+        return a.len();
+    }
+    0
+}
+
+/// Does a URL carry a non-empty path after the host? (mirrors the old PS `[uri].AbsolutePath` check)
+fn url_has_path(u: &str) -> bool {
+    let after = u.split_once("://").map(|(_, r)| r).unwrap_or(u);
+    after
+        .split_once('/')
+        .map(|(_, p)| !p.trim_matches('/').is_empty())
+        .unwrap_or(false)
+}
+
+/// Native provider liveness probe (was Check-Provider.ps1). Blocking — call via spawn_blocking.
+/// GET {root}/v1/models with the optional key; returns `{ ok, detail, count? }` (same shape as before).
+fn probe_provider(base_url: &str, protocol: &str, api_key: &str) -> serde_json::Value {
+    // Normalize: strip a trailing /v1, then always query /v1/models (works with or without /v1).
+    let root = base_url.trim_end_matches('/');
+    let root = root.strip_suffix("/v1").unwrap_or(root);
+    let url = format!("{root}/v1/models");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(12)))
+        .build()
+        .into();
+    let mut req = agent.get(&url);
+    if protocol == "anthropic" {
+        if !api_key.is_empty() {
+            req = req.header("x-api-key", api_key);
+        }
+        req = req.header("anthropic-version", "2023-06-01");
+    } else if !api_key.is_empty() {
+        req = req.header("Authorization", &format!("Bearer {api_key}"));
+    }
+
+    match req.call() {
+        Ok(mut resp) => {
+            let n = resp
+                .body_mut()
+                .read_to_string()
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|v| count_models(&v))
+                .unwrap_or(0);
+            serde_json::json!({ "ok": true, "detail": format!("ответил (моделей: {n})"), "count": n })
+        }
+        Err(ureq::Error::StatusCode(code)) => {
+            let detail = if code == 401 || code == 403 {
+                format!("ключ отклонён ({code})")
+            } else {
+                format!("ответ HTTP {code}")
+            };
+            serde_json::json!({ "ok": false, "detail": detail })
+        }
+        Err(e) => serde_json::json!({ "ok": false, "detail": format!("не отвечает: {e}") }),
+    }
+}
+
+/// Native model list (was Get-EngineModels.ps1). Blocking — call via spawn_blocking.
+/// GET <base>/models (or /v1/models for a bare host). Returns model ids; empty on any error.
+fn fetch_engine_models(base_url: &str) -> Vec<String> {
+    if base_url.is_empty() {
+        return Vec::new();
+    }
+    let u = base_url.trim_end_matches('/');
+    let url = if u.ends_with("/models") {
+        u.to_string()
+    } else if url_has_path(u) {
+        format!("{u}/models")
+    } else {
+        format!("{u}/v1/models")
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    parse_json_bom(stdout.trim())
-        .unwrap_or_else(|_| serde_json::json!({ "ok": false, "detail": "нет ответа" }))
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(6)))
+        .build()
+        .into();
+    // Some servers want an Authorization header even when no real key is needed.
+    let body = match agent.get(&url).header("Authorization", "Bearer not-needed").call() {
+        Ok(mut resp) => resp.body_mut().read_to_string().unwrap_or_default(),
+        Err(_) => return Vec::new(),
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return Vec::new();
+    };
+    let arr = v.get("data").and_then(|x| x.as_array()).or_else(|| v.as_array());
+    match arr {
+        Some(items) => items
+            .iter()
+            .filter_map(|it| it.get("id").and_then(|x| x.as_str()).map(String::from))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Shared liveness check: GET {baseUrl}/v1/models with the API key. Returns `{ ok, detail, count? }`.
+/// Native HTTP (ureq) via spawn_blocking — no PowerShell, no run slot taken.
+async fn run_provider_check(base_url: &str, protocol: &str, api_key: &str) -> serde_json::Value {
+    let (b, p, k) = (base_url.to_string(), protocol.to_string(), api_key.to_string());
+    tokio::task::spawn_blocking(move || probe_provider(&b, &p, &k))
+        .await
+        .unwrap_or_else(|e| serde_json::json!({ "ok": false, "detail": format!("{e}") }))
 }
 
 /// Liveness check for a saved custom provider: key read from the Credential Manager.

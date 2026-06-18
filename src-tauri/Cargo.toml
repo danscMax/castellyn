@@ -25,6 +25,9 @@ tauri-plugin-window-state = "2"
 tauri-plugin-dialog = "2"
 # OS-level hotkey to show/hide the window from anywhere (registered from Rust only).
 tauri-plugin-global-shortcut = "2"
+# Native HTTP probes for provider liveness / model lists (replaces the PowerShell Invoke-RestMethod
+# scripts). Blocking client (rustls by default), called from spawn_blocking. Minimal deps.
+ureq = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros", "time"] }
