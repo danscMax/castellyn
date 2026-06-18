@@ -359,6 +359,51 @@ async fn pump_and_wait(
     code
 }
 
+/// Run a NATIVE job under the single-slot RunState guard, mirroring `spawn_streamed`'s contract so a
+/// command can drop its PowerShell layer without any frontend change: it emits `run-log` lines
+/// (component = `id`) and a final `run-done`. The job runs on a blocking thread (file IO / ureq /
+/// subprocess), receives `out`/`err` line emitters, and returns the exit code. Secrets are passed
+/// into `job` as ordinary captured values (process memory) — no argv/STDIN dance needed natively.
+async fn run_native_streamed<F>(
+    app: AppHandle,
+    state: State<'_, RunState>,
+    id: String,
+    job: F,
+) -> Result<i32, String>
+where
+    F: FnOnce(&dyn Fn(&str), &dyn Fn(&str)) -> i32 + Send + 'static,
+{
+    {
+        let mut g = state.0.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_some() {
+            return Err("Уже идёт другой прогон — дождись завершения или отмени.".into());
+        }
+        *g = Some(0);
+    }
+    let app_job = app.clone();
+    let id_job = id.clone();
+    let code = tokio::task::spawn_blocking(move || {
+        let out = |line: &str| {
+            let _ = app_job.emit(
+                "run-log",
+                LogLine { component: id_job.clone(), stream: "out".into(), line: line.to_string() },
+            );
+        };
+        let err = |line: &str| {
+            let _ = app_job.emit(
+                "run-log",
+                LogLine { component: id_job.clone(), stream: "err".into(), line: line.to_string() },
+            );
+        };
+        job(&out, &err)
+    })
+    .await
+    .unwrap_or(-1);
+    *state.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let _ = app.emit("run-done", RunDone { component: id, code });
+    Ok(code)
+}
+
 /// Run a component's script in `mode` ("check" | "apply"). Only one run at a time.
 #[tauri::command]
 async fn run_component(
@@ -2883,9 +2928,6 @@ async fn read_profile_usage(
     Ok(fetched)
 }
 
-const OPENCODE_PROVIDER_SCRIPT_REL: &str =
-    "!Настройки и MCP\\ClaudeProfiles\\Manage-OpenCode-Provider.ps1";
-
 /// opencode's global config path: $OPENCODE_CONFIG → $XDG_CONFIG_HOME\opencode → ~/.config/opencode.
 fn opencode_config_path() -> String {
     if let Ok(p) = std::env::var("OPENCODE_CONFIG") {
@@ -2960,7 +3002,146 @@ fn read_opencode() -> OpencodeStatus {
 }
 
 /// Bind (`set`) or unbind (`clear`) a custom OpenAI-compatible provider for opencode via
-/// Manage-OpenCode-Provider.ps1 (merge-patch of opencode.json). apiKey: literal `key`, else
+/// Native port of Manage-OpenCode-Provider.ps1: merge-patch opencode.json's `provider.<id>` (and the
+/// top-level active `model`), preserving every other key. apiKey precedence (mirrors the script):
+/// keep_key → literal key → `{env:VAR}` → keep existing. Returns the exit code; streams via out/err.
+#[allow(clippy::too_many_arguments)]
+fn opencode_provider_native(
+    cfg_path: &str,
+    action: &str,
+    provider_id: &str,
+    name: Option<&str>,
+    base_url: &str,
+    model: Option<&str>,
+    key: Option<&str>,
+    env_key: Option<&str>,
+    keep_key: bool,
+    out: &dyn Fn(&str),
+    err: &dyn Fn(&str),
+) -> i32 {
+    use serde_json::{json, Value};
+
+    // Load opencode.json (BOM-tolerant) or start minimal; a parse failure aborts (as the script does).
+    let mut cfg: Value = match std::fs::read_to_string(cfg_path) {
+        Ok(ref c) if !c.trim().is_empty() => match parse_json_bom(c) {
+            Ok(v) => v,
+            Err(e) => {
+                err(&format!("ОШИБКА: не удалось прочитать opencode.json ({e})."));
+                return 1;
+            }
+        },
+        _ => json!({}),
+    };
+    if !cfg.is_object() {
+        cfg = json!({});
+    }
+    let obj = cfg.as_object_mut().unwrap();
+    obj.entry("$schema").or_insert_with(|| json!("https://opencode.ai/config.json"));
+    if !obj.get("provider").map(|p| p.is_object()).unwrap_or(false) {
+        obj.insert("provider".into(), json!({}));
+    }
+
+    out(&format!("=== opencode provider: {action} {provider_id} ==="));
+
+    if action == "set" {
+        let mut active_model: Option<String> = None;
+        {
+            let providers = obj.get_mut("provider").unwrap().as_object_mut().unwrap();
+            if !providers.get(provider_id).map(|x| x.is_object()).unwrap_or(false) {
+                providers.insert(provider_id.to_string(), json!({}));
+            }
+            let p = providers.get_mut(provider_id).unwrap().as_object_mut().unwrap();
+            p.insert("npm".into(), json!("@ai-sdk/openai-compatible"));
+            match name.filter(|s| !s.is_empty()) {
+                Some(n) => {
+                    p.insert("name".into(), json!(n));
+                }
+                None => {
+                    if !p.contains_key("name") {
+                        p.insert("name".into(), json!(provider_id));
+                    }
+                }
+            }
+            if !p.get("options").map(|x| x.is_object()).unwrap_or(false) {
+                p.insert("options".into(), json!({}));
+            }
+            let opts = p.get_mut("options").unwrap().as_object_mut().unwrap();
+            opts.insert("baseURL".into(), json!(base_url));
+            // apiKey: keep_key → leave; literal key; {env:VAR}; else leave as-is.
+            if keep_key {
+                // leave options.apiKey untouched
+            } else if let Some(k) = key.filter(|s| !s.is_empty()) {
+                opts.insert("apiKey".into(), json!(k));
+            } else if let Some(e) = env_key.filter(|s| !s.is_empty()) {
+                opts.insert("apiKey".into(), json!(format!("{{env:{e}}}")));
+            }
+            // Model: register it (preserve curated models) and remember it as the active model.
+            if let Some(m) = model.filter(|s| !s.is_empty()) {
+                if !p.get("models").map(|x| x.is_object()).unwrap_or(false) {
+                    p.insert("models".into(), json!({}));
+                }
+                let models = p.get_mut("models").unwrap().as_object_mut().unwrap();
+                if !models.contains_key(m) {
+                    models.insert(m.to_string(), json!({ "name": m }));
+                }
+                active_model = Some(format!("{provider_id}/{m}"));
+            }
+        }
+        if let Some(am) = &active_model {
+            obj.insert("model".into(), json!(am));
+        }
+        let key_shown = if keep_key {
+            "(без изменений)".to_string()
+        } else if key.filter(|s| !s.is_empty()).is_some() {
+            "(литерал)".to_string()
+        } else if let Some(e) = env_key.filter(|s| !s.is_empty()) {
+            format!("{{env:{e}}}")
+        } else {
+            "(без изменений)".to_string()
+        };
+        out(&format!(
+            "  baseURL={base_url}  model={}  apiKey={key_shown}",
+            active_model.as_deref().unwrap_or("—")
+        ));
+    } else {
+        {
+            let providers = obj.get_mut("provider").unwrap().as_object_mut().unwrap();
+            providers.remove(provider_id);
+        }
+        let points_here = obj
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.starts_with(&format!("{provider_id}/")))
+            .unwrap_or(false);
+        if points_here {
+            obj.remove("model");
+        }
+        out(&format!("  Провайдер '{provider_id}' удалён из opencode.json."));
+    }
+
+    // Backup then write (UTF-8 no BOM).
+    if let Some(dir) = std::path::Path::new(cfg_path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::path::Path::new(cfg_path).exists() {
+        let _ = std::fs::copy(cfg_path, format!("{cfg_path}.bak"));
+    }
+    let serialized = match serde_json::to_string_pretty(&cfg) {
+        Ok(s) => s,
+        Err(e) => {
+            err(&format!("ОШИБКА сериализации opencode.json: {e}"));
+            return 1;
+        }
+    };
+    if let Err(e) = write_file_no_bom(cfg_path, &serialized) {
+        err(&format!("ОШИБКА записи opencode.json: {e}"));
+        return 1;
+    }
+    out(&format!("  opencode.json обновлён (бэкап .bak): {cfg_path}"));
+    0
+}
+
+/// Manage-OpenCode-Provider (native): merge-patch of opencode.json. apiKey: literal `key`, else
 /// `{env:env_key}`, else keep existing.
 #[tauri::command]
 async fn run_opencode_provider(
@@ -2981,41 +3162,28 @@ async fn run_opencode_provider(
     if !valid_profile_name(&provider_id) {
         return Err(format!("недопустимый provider id: {provider_id}"));
     }
-    let mut args: Vec<String> =
-        vec!["-Action".into(), action.clone(), "-ProviderId".into(), provider_id];
-    // A literal apiKey is fed via STDIN (never argv); set below when present.
-    let mut key_stdin: Option<String> = None;
-    if action == "set" {
-        let b = base_url.unwrap_or_default();
-        if b.is_empty() {
-            return Err("для set нужен base_url".into());
-        }
-        args.push("-BaseUrl".into());
-        args.push(b);
-        if let Some(n) = name.filter(|s| !s.is_empty()) {
-            args.push("-Name".into());
-            args.push(n);
-        }
-        if let Some(m) = model.filter(|s| !s.is_empty()) {
-            args.push("-Model".into());
-            args.push(m);
-        }
-        // apiKey precedence: literal key → {env:VAR} → keep existing. A literal key goes via STDIN
-        // (never argv); an env-var NAME isn't secret, so it stays a normal argument.
-        if keep_key.unwrap_or(false) {
-            args.push("-KeepKey".into());
-        } else if let Some(k) = key.filter(|s| !s.is_empty()) {
-            args.push("-KeyStdin".into());
-            key_stdin = Some(k);
-        } else if let Some(e) = env_key.filter(|s| !s.is_empty()) {
-            args.push("-EnvKey".into());
-            args.push(e);
-        } else {
-            args.push("-KeepKey".into());
-        }
+    let base_url = base_url.unwrap_or_default();
+    if action == "set" && base_url.is_empty() {
+        return Err("для set нужен base_url".into());
     }
-    let script = abs(OPENCODE_PROVIDER_SCRIPT_REL);
-    spawn_streamed_io(app, state, "provider".to_string(), script, args, key_stdin).await
+    let keep_key = keep_key.unwrap_or(false);
+    let cfg_path = opencode_config_path();
+    run_native_streamed(app, state, "provider".to_string(), move |out, err| {
+        opencode_provider_native(
+            &cfg_path,
+            &action,
+            &provider_id,
+            name.as_deref(),
+            &base_url,
+            model.as_deref(),
+            key.as_deref(),
+            env_key.as_deref(),
+            keep_key,
+            out,
+            err,
+        )
+    })
+    .await
 }
 
 const MCP_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\.mcp.json";
@@ -4592,6 +4760,56 @@ mod tests {
             let args = forks_action_args(a).unwrap();
             assert!(args.contains(&"-Unattended".to_string()), "{a} must be unattended");
         }
+    }
+
+    #[test]
+    fn opencode_merge_preserves_other_keys() {
+        // Core promise of Manage-OpenCode-Provider: set/clear one provider, leave everything else.
+        let path = std::env::temp_dir().join(format!("castellyn_oc_{}.json", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&p);
+        let seed = serde_json::json!({
+            "$schema": "https://opencode.ai/config.json",
+            "model": "other/keep-model",
+            "provider": {
+                "other": { "npm": "@ai-sdk/openai-compatible", "name": "Other",
+                           "options": { "baseURL": "http://keep", "apiKey": "sekret" } },
+                "tgt":   { "name": "Old", "options": { "baseURL": "http://old", "apiKey": "old" },
+                           "models": { "curated": { "name": "curated" } } }
+            },
+            "agent": { "build": { "model": "other/keep-model" } }
+        });
+        std::fs::write(&p, serde_json::to_string(&seed).unwrap()).unwrap();
+        let noop = |_: &str| {};
+
+        // set tgt → new baseURL + name + model + {env:VAR}; other provider & curated model preserved.
+        let code = opencode_provider_native(
+            &p, "set", "tgt", Some("New"), "http://new", Some("m1"), None, Some("MY_KEY"), false,
+            &noop, &noop,
+        );
+        assert_eq!(code, 0);
+        let v = parse_json_bom(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(v["provider"]["other"]["options"]["apiKey"], "sekret"); // untouched
+        assert_eq!(v["agent"]["build"]["model"], "other/keep-model"); // untouched
+        assert_eq!(v["provider"]["tgt"]["name"], "New");
+        assert_eq!(v["provider"]["tgt"]["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(v["provider"]["tgt"]["options"]["baseURL"], "http://new");
+        assert_eq!(v["provider"]["tgt"]["options"]["apiKey"], "{env:MY_KEY}");
+        assert_eq!(v["provider"]["tgt"]["models"]["curated"]["name"], "curated"); // preserved
+        assert_eq!(v["provider"]["tgt"]["models"]["m1"]["name"], "m1"); // added
+        assert_eq!(v["model"], "tgt/m1"); // active model switched
+
+        // clear tgt → removed; top-level model (now points at tgt) cleared; other provider intact.
+        let code = opencode_provider_native(
+            &p, "clear", "tgt", None, "", None, None, None, false, &noop, &noop,
+        );
+        assert_eq!(code, 0);
+        let v = parse_json_bom(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert!(v["provider"].get("tgt").is_none());
+        assert!(v.get("model").is_none()); // pointed at tgt → removed
+        assert_eq!(v["provider"]["other"]["options"]["baseURL"], "http://keep"); // intact
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(format!("{p}.bak"));
     }
 
     #[test]
