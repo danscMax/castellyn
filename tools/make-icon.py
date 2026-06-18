@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the AgentHub app icon master (1024x1024 PNG) with Pillow.
+"""Generate the Castellyn app icon master (1024x1024 PNG) with Pillow.
 
 Concept: a central hub node orbited by agent nodes — a control center for many AI agents,
 on the brand blue gradient (#3b82f6 -> #2563eb), rounded-square.

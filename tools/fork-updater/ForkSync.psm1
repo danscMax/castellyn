@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 # Stop-NamedProcess, Get-FileHashSHA256, Get-AppVersion. These become module
 # functions and are re-exported by `Export-ModuleMember -Function *-*` (harmless).
 # Prefer a sibling ScriptKit.ps1 (standalone external layout); fall back to the parent
-# folder's canonical copy (vendored under AgentHub\tools\fork-updater → AgentHub\tools).
+# folder's canonical copy (vendored under Castellyn\tools\fork-updater → Castellyn\tools).
 $skPath = Join-Path $PSScriptRoot 'ScriptKit.ps1'
 if (-not (Test-Path -LiteralPath $skPath)) {
     $skPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'ScriptKit.ps1'
@@ -789,7 +789,7 @@ function Invoke-ForkSync {
         [switch]$DryRun,
         [switch]$Yes,
         # Strict single-repo mode: process ONLY this path (ignore roots/own config) and write the
-        # result to -OutFile. Lets AgentHub run repos concurrently (per-repo lock + per-repo JSON).
+        # result to -OutFile. Lets Castellyn run repos concurrently (per-repo lock + per-repo JSON).
         [string]$Single,
         [string]$OutFile
     )

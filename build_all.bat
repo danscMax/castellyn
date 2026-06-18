@@ -1,5 +1,5 @@
 @echo off
-:: AgentHub -- сборка релизного exe + ярлык на рабочем столе.
+:: Castellyn -- сборка релизного exe + ярлык на рабочем столе.
 :: Аргументы пробрасываются в build_all.ps1:
 ::   build_all.bat              -- standalone exe + ярлык
 ::   build_all.bat -Bundle      -- + установщики NSIS/MSI

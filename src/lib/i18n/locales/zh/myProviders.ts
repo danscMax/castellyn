@@ -53,7 +53,7 @@ export default {
   keySet: '有密钥',
   noKeyShort: '无密钥',
   loginTitle: 'freellmapi 登录',
-  loginHint: '输入你的 freellmapi 邮箱+密码（推荐）— AgentHub 自动登录。或粘贴仪表盘会话令牌。',
+  loginHint: '输入你的 freellmapi 邮箱+密码（推荐）— Castellyn 自动登录。或粘贴仪表盘会话令牌。',
   loginEmail: 'freellmapi 邮箱',
   loginPassword: '密码',
   loginTokenOpt: '或会话令牌（可选）',

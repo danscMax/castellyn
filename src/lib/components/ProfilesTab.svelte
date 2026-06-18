@@ -20,6 +20,7 @@
   import DropdownMenu from './DropdownMenu.svelte';
   import Toggle from './Toggle.svelte';
   import ProfileUsageBadge from './ProfileUsageBadge.svelte';
+  import DataTable, { type DTColumn } from './DataTable.svelte';
 
   let {
     data,
@@ -171,9 +172,6 @@
     loadViewer();
   }
 
-  // Collapsible shared-folder matrix (progressive disclosure).
-  let expanded = $state<Record<string, boolean>>({});
-
   // Per-card shared-folder editor (set-links).
   let linksFor = $state<string | null>(null);
   let linkSel = $state<Record<string, boolean>>({});
@@ -263,12 +261,6 @@
     }
     items.push(
       {
-        label: t('profiles.menuSharedFolders'),
-        title: t('profiles.menuSharedFoldersTip'),
-        onClick: () => openLinks(p.name),
-        disabled: busy
-      },
-      {
         label: t('profiles.menuColor'),
         title: t('profiles.menuColorTip'),
         onClick: () => openDlg('recolor', p.name, p.color),
@@ -295,6 +287,27 @@
       }
     );
     return items;
+  }
+
+  type Prof = (typeof profiles)[number];
+  const COLS: DTColumn[] = [
+    { key: 'name', label: t('profiles.colName'), grow: true, sortable: true },
+    { key: 'status', label: t('profiles.colStatus'), width: '150px', sortable: true },
+    { key: 'usage', label: t('profiles.colUsage'), width: '170px' },
+    { key: 'provider', label: t('profiles.colProvider'), width: '200px', interactive: true, sortable: true },
+    { key: 'links', label: t('profiles.colLinks'), width: '92px', align: 'center', sortable: true },
+    { key: 'actions', label: t('profiles.colActions'), width: '160px', interactive: true }
+  ];
+  function linkedCount(p: Prof): number {
+    return Object.values(p.sharedLinks).filter(
+      (k) => k === 'Junction' || k === 'SymbolicLink' || k === 'HardLink'
+    ).length;
+  }
+  function profSort(p: Prof, key: string): string | number {
+    if (key === 'status') return p.exists ? (p.credentialsPresent ? 0 : 1) : 2;
+    if (key === 'provider') return providerLabel(p.name).toLowerCase();
+    if (key === 'links') return linkedCount(p);
+    return p.name.toLowerCase();
   }
 </script>
 
@@ -390,26 +403,33 @@
   {/if}
 
   {#if profiles.length}
-    <div class="card-grid">
-      {#each profiles as p (p.name)}
+    <DataTable
+      columns={COLS}
+      rows={profiles}
+      rowKey={(p) => p.name}
+      sortAccessor={profSort}
+      search
+      searchValue={(p) => `${p.name} ${p.description ?? ''}`}
+      searchPlaceholder={t('profiles.searchPlaceholder')}
+      defaultSort="name"
+      storageKey="profiles"
+      canExpand={(p) => p.exists}
+      rowMuted={(p) => !p.exists}
+    >
+      {#snippet cell(p, col)}
         {@const links = Object.entries(p.sharedLinks)}
-        {@const linked = links.filter(([, k]) => k === 'Junction' || k === 'SymbolicLink' || k === 'HardLink').length}
+        {@const linked = linkedCount(p)}
         {@const lc = launchByName.get(p.name)}
-        <div class="sw-card flex flex-col gap-sw-3">
-          <!-- Header: dot + name + role + menu -->
-          <div class="flex items-start justify-between gap-sw-2">
-            <div class="flex min-w-0 items-center gap-sw-2">
-              <span class="h-3 w-3 shrink-0 rounded-full" style="background:{dot(p.color)}" title={t('profiles.colorDot')}></span>
-              <div class="min-w-0">
-                <h3 class="truncate font-medium">{p.name}</h3>
-                {#if p.description}<p class="truncate text-sw-xs text-sw-text-muted">{p.description}</p>{/if}
-              </div>
-            </div>
-            <DropdownMenu title={t('profiles.menuTitle')} items={menuItems(p)} />
-          </div>
-
-          <!-- Status row -->
-          <div class="flex flex-wrap items-center gap-sw-2">
+        {#if col.key === 'name'}
+          <span class="namecell">
+            <span class="h-3 w-3 shrink-0 rounded-full" style="background:{dot(p.color)}" title={t('profiles.colorDot')}></span>
+            <span class="min-w-0">
+              <span class="block truncate font-medium" title={p.name}>{p.name}</span>
+              {#if p.description}<span class="block truncate text-sw-xs text-sw-text-muted" title={p.description}>{p.description}</span>{/if}
+            </span>
+          </span>
+        {:else if col.key === 'status'}
+          <span class="flex flex-wrap items-center gap-sw-1">
             {#if !p.exists}
               <span class="badge badge-err" title={t('profiles.noDirTip', { name: p.name })}>{t('profiles.noDir')}</span>
             {:else}
@@ -420,55 +440,59 @@
               {#if lc?.mode === 'lean'}
                 <span class="badge badge-info" title={t('profiles.leanTip', { flag: lc.tokenAuth ? '--bare' : '--safe-mode' })}>{t('profiles.lean')}</span>
               {/if}
-              <button type="button" class="badge {linked === links.length ? 'badge-ok' : 'badge-warn'} cursor-pointer"
-                onclick={() => (expanded[p.name] = !expanded[p.name])}
-                title={t('profiles.linksTip', { linked, total: links.length })}>
-                {t('profiles.links', { linked, total: links.length })} {expanded[p.name] ? '▴' : '▾'}
-              </button>
             {/if}
-          </div>
-
-          <!-- Claude Code usage limits (5h / weekly remaining) for this profile -->
+          </span>
+        {:else if col.key === 'usage'}
           {#if p.exists && p.credentialsPresent}
             <ProfileUsageBadge profile={p.name} />
+          {:else}
+            <span class="text-sw-text-muted">—</span>
           {/if}
-
-          <!-- Provider (single line: value truncates so every card keeps the same height) -->
+        {:else if col.key === 'provider'}
           {#if p.exists}
-            {@const prov = providerByName.get(p.name)}
-            <div class="flex min-w-0 items-center gap-sw-2 text-sw-xs">
-              <span class="shrink-0 text-sw-text-muted">{t('profiles.providerLabel')}</span>
+            <span class="flex min-w-0 items-center gap-sw-1 text-sw-xs">
               <button type="button" class="min-w-0 flex-1 truncate text-left font-medium text-sw-text-secondary hover:text-sw-text"
                 onclick={onOpenProviders} title={t('profiles.providerOpenTip')}>{providerLabel(p.name)}</button>
               <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => editProvider(p.name)}
                 title={t('profiles.providerEditTip')}>{t('profiles.providerEdit')}</button>
-            </div>
+            </span>
+          {:else}
+            <span class="text-sw-text-muted">—</span>
           {/if}
-
-          <!-- Expandable shared-folder matrix -->
-          {#if p.exists && expanded[p.name]}
-            <dl class="grid grid-cols-2 gap-x-sw-4 gap-y-1 rounded-sw-md border border-sw-border p-sw-2 text-sw-xs">
-              {#each links as [folder, kind] (folder)}
-                <div class="flex items-center justify-between gap-sw-2">
-                  <dt class="truncate text-sw-text-muted">{folder}</dt>
-                  <dd><span class="badge {linkCls(kind)}" title={linkTip(folder, kind)}>{linkLabel(kind)}</span></dd>
-                </div>
-              {/each}
-            </dl>
+        {:else if col.key === 'links'}
+          {#if p.exists}
+            <span class="badge {linked === links.length ? 'badge-ok' : 'badge-warn'}"
+              title={t('profiles.linksTip', { linked, total: links.length })}>{linked}/{links.length}</span>
+          {:else}
+            <span class="text-sw-text-muted">—</span>
           {/if}
+        {:else if col.key === 'actions'}
+          <span class="flex items-center justify-end gap-sw-1">
+            <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!p.exists} onclick={() => onLaunch(p.name, 'terminal')}
+              title={t('profiles.launchTip', { name: p.name })}>{t('profiles.launch')}</button>
+            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!p.exists} onclick={() => onOpen(p.name)}
+              title={t('profiles.folderTip', { name: p.name })}>{t('profiles.folder')}</button>
+            <DropdownMenu title={t('profiles.menuTitle')} items={menuItems(p)} />
+          </span>
+        {/if}
+      {/snippet}
 
-          <!-- Shared-folders editor (set-links) -->
+      {#snippet expand(p)}
+        {@const links = Object.entries(p.sharedLinks) as [string, string | null][]}
+        <div class="flex flex-col gap-sw-2">
+          <div class="flex items-center justify-between gap-sw-2">
+            <span class="text-sw-xs font-medium text-sw-text-secondary" title={t('profiles.sharedFoldersTip')}>{t('profiles.sharedFolders')}</span>
+            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => openLinks(p.name)}
+              title={t('profiles.menuSharedFoldersTip')}>{linksFor === p.name ? t('common.cancel') : t('profiles.menuSharedFolders')}</button>
+          </div>
           {#if linksFor === p.name}
             <div class="rounded-sw-md border border-sw-border p-sw-2">
-              <p class="mb-sw-2 text-sw-xs font-medium text-sw-text-secondary" title={t('profiles.sharedFoldersTip')}>
-                {t('profiles.sharedFolders')}
-              </p>
-              <div class="grid grid-cols-2 gap-1">
+              <div class="grid grid-cols-2 gap-1 sm:grid-cols-3">
                 {#each ALL_FOLDERS as f (f)}
-                  <div class="flex items-center gap-sw-2 text-sw-xs">
+                  <label class="flex items-center gap-sw-2 text-sw-xs">
                     <Toggle bind:checked={linkSel[f]} disabled={busy} title={f} />
                     <span class="font-mono">{f}</span>
-                  </div>
+                  </label>
                 {/each}
               </div>
               <div class="mt-sw-2 flex gap-sw-2">
@@ -478,20 +502,19 @@
                   title={t('profiles.linksCancelTip')}>{t('common.cancel')}</button>
               </div>
             </div>
+          {:else}
+            <dl class="grid grid-cols-2 gap-x-sw-4 gap-y-1 text-sw-xs sm:grid-cols-3">
+              {#each links as [folder, kind] (folder)}
+                <div class="flex items-center justify-between gap-sw-2">
+                  <dt class="truncate text-sw-text-muted">{folder}</dt>
+                  <dd><span class="badge {linkCls(kind)}" title={linkTip(folder, kind)}>{linkLabel(kind)}</span></dd>
+                </div>
+              {/each}
+            </dl>
           {/if}
-
-          <!-- Main action -->
-          <div class="mt-auto flex flex-wrap items-center gap-sw-2 border-t border-sw-border pt-sw-2">
-            <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!p.exists} onclick={() => onLaunch(p.name, 'terminal')}
-              title={t('profiles.launchTip', { name: p.name })}>
-              {t('profiles.launch')}
-            </button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!p.exists} onclick={() => onOpen(p.name)}
-              title={t('profiles.folderTip', { name: p.name })}>{t('profiles.folder')}</button>
-          </div>
         </div>
-      {/each}
-    </div>
+      {/snippet}
+    </DataTable>
   {:else}
     <div class="grid place-items-center py-sw-6 text-center text-sw-text-muted">
       <div>

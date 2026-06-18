@@ -1,14 +1,17 @@
-# CLAUDE.md — AgentHub
+# CLAUDE.md — Castellyn
 
 Project-specific guidance for Claude Code working in this repository. Supplements the
 user's global `~/.claude/CLAUDE.md` (security, PowerShell-Cyrillic, DRY, workflow rules).
 
-> Folder: `E:\Scripts\AgentHub`. npm/crate name `agenthub` (registries require lowercase);
-> display brand **AgentHub**; Tauri identifier `com.danscmax.agenthub`.
+> Display brand **Castellyn** (renamed from AgentHub 2026-06-18). Folder renamed too:
+> `E:\Scripts\Castellyn` (code/manifest path-literals now resolve `<SCRIPTS_ROOT>\Castellyn\tools\…`).
+> These internal identifiers are deliberately KEPT on the old `agenthub` name to preserve user
+> data: npm/crate name `agenthub` (registries require lowercase) + binary `agenthub.exe`, Tauri
+> identifier `com.danscmax.agenthub`, config dir `%APPDATA%\agenthub`, keyring keys `agenthub.*`.
 
 ## What this is
 
-**AgentHub** is a desktop control center for AI coding agents. Today it unifies the
+**Castellyn** is a desktop control center for a local AI-coding dev environment. Today it unifies the
 maintenance of a Claude Code stack (updates, GitHub forks, profiles, MCP servers, sync,
 providers/engines, plugins, schedules); it is growing toward **multiple agents** (Claude
 Code, Codex, opencode…) and **remote control of open sessions**.
@@ -64,7 +67,7 @@ counts:{changed,failed,total}, summary }`. Scripts emit it via `Write-StatusJson
   (enforced by `npm run check:i18n` + `src/lib/i18n/index.test.ts`). **Never** name an
   `{#each … as t}` loop var or a function param `t` — it shadows the translation function.
 - **JSON from PowerShell**: scripts may write UTF-8 **with BOM**; strip `\u{feff}` before
-  `serde_json` (helpers already do). AgentHub's own writers use UTF-8 **without** BOM.
+  `serde_json` (helpers already do). Castellyn's own writers use UTF-8 **without** BOM.
 - **Destructive actions**: gate behind a confirm dialog; scripts must run non-interactively
   (`-Yes -Unattended`, never `Read-Host`). Prefer a `-WhatIf`/preview path first.
 - **Don't click-test the GUI blind**: validate via builds/tests + reading `*.last.json`;
@@ -81,7 +84,7 @@ npm run check          # svelte-check (type + i18n shape gate) — keep 0/0
 npm test               # vitest (i18n parity, outcome, attention)
 npm run check:i18n     # ru/en/zh leaf-key parity (tsx)
 npm run build          # frontend → build/
-.\build_all.ps1        # release exe (agenthub.exe) + desktop shortcut (AgentHub.lnk)
+.\build_all.ps1        # release exe (agenthub.exe) + desktop shortcut (Castellyn.lnk)
 ```
 
 Green gates before declaring done: `npm run check` (0/0), `npm test`, `npm run build`, and a

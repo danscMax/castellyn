@@ -1,10 +1,10 @@
-# AgentHub
+# Castellyn
 
 **Control center for AI coding agents.** A native desktop app (Tauri + Svelte 5 + Rust) that
 unifies the upkeep and operation of a Claude Code stack today, and is growing toward managing
 **multiple agents** (Claude Code, Codex, opencode…) with **remote control of open sessions**.
 
-AgentHub is a thin native shell over the maintenance scripts under `SCRIPTS_ROOT` (default
+Castellyn is a thin native shell over the maintenance scripts under `SCRIPTS_ROOT` (default
 `E:\Scripts`): the Rust backend runs them and streams output; the UI renders their status.
 
 ## Features

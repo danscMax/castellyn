@@ -53,6 +53,10 @@ export default {
   ghPrivateTip: 'GitHub 上的私有仓库',
   ghOpen: '在 GitHub 上打开',
   ghOpenTip: '在 GitHub 上打开仓库页面',
+  ghColName: '仓库',
+  ghColRepo: 'owner/repo',
+  ghColKind: '类型',
+  ghColActions: '操作',
 
   // ── ForksTab: empty state ──
   emptyTitle: '暂无数据',

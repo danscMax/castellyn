@@ -1,13 +1,13 @@
-# AgentHub — Agent Binding Context
+# Castellyn — Agent Binding Context
 
-How AgentHub wires coding agents to the local LLM stack. This glossary fixes the
+How Castellyn wires coding agents to the local LLM stack. This glossary fixes the
 vocabulary for the "connect an agent to the stack" surface (Providers tab, profile
 provider env, router setup). It is a glossary, not a spec.
 
 ## Language
 
 **Harness**:
-A coding-agent CLI that AgentHub can launch and wire to a backend (Claude Code,
+A coding-agent CLI that Castellyn can launch and wire to a backend (Claude Code,
 later Codex / Gemini / OpenCode). In Russian conversation the user says "агент";
 in code/docs prefer "harness" to distinguish the CLI from the LLM behind it.
 _Avoid_: assistant, bot.

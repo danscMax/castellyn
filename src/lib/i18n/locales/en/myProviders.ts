@@ -55,7 +55,7 @@ export default {
   noKeyShort: 'no key',
   loginTitle: 'freellmapi login',
   loginHint:
-    'Enter your freellmapi email+password (preferred) — AgentHub logs in itself. Or paste a dashboard session token.',
+    'Enter your freellmapi email+password (preferred) — Castellyn logs in itself. Or paste a dashboard session token.',
   loginEmail: 'freellmapi email',
   loginPassword: 'password',
   loginTokenOpt: 'or session token (optional)',

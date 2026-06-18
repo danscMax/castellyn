@@ -26,6 +26,13 @@ export default {
 
   // Card header
   colorDot: '配置颜色',
+  colName: '配置',
+  colStatus: '状态',
+  colUsage: '限额',
+  colProvider: '提供商',
+  colLinks: '链接',
+  colActions: '操作',
+  searchPlaceholder: '搜索配置…',
 
   // Status row
   noDir: '无目录',

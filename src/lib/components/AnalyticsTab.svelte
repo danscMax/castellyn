@@ -88,7 +88,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `agenthub-analytics-${rangeHours}h.csv`;
+    a.download = `castellyn-analytics-${rangeHours}h.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }

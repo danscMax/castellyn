@@ -27,6 +27,13 @@ export default {
 
   // Card header
   colorDot: 'Цвет профиля',
+  colName: 'Профиль',
+  colStatus: 'Статус',
+  colUsage: 'Лимиты',
+  colProvider: 'Провайдер',
+  colLinks: 'Ссылки',
+  colActions: 'Действия',
+  searchPlaceholder: 'Поиск профиля…',
 
   // Status row
   noDir: 'нет каталога',

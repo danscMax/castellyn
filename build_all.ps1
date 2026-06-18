@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# AgentHub — сборка релиза + ярлык на рабочий стол
+# Castellyn — сборка релиза + ярлык на рабочий стол
 # ============================================================================
 # Простой однокомандный билд (по мотивам Sweet Whisper\build_all.ps1, но без
 # подписи/Vulkan/NSIS — у этого приложения нет нативных зависимостей):
@@ -7,7 +7,7 @@
 #   2. npm install (если нет node_modules)
 #   3. svelte-check (типовой гейт; пропуск -SkipCheck)
 #   4. tauri build  (standalone exe; -Bundle добавит установщики NSIS/MSI)
-#   5. (пере)создаёт ярлык «AgentHub» на рабочем столе
+#   5. (пере)создаёт ярлык «Castellyn» на рабочем столе
 #
 # Использование:
 #   .\build_all.ps1                 # exe + ярлык
@@ -40,9 +40,9 @@ function Assert-LastExit {
 }
 
 if (Get-Command Write-Banner -ErrorAction SilentlyContinue) {
-    Write-Banner 'AgentHub — сборка' 'release exe + ярлык на рабочий стол'
+    Write-Banner 'Castellyn — сборка' 'release exe + ярлык на рабочий стол'
 } else {
-    Write-Host '=== AgentHub — сборка ===' -ForegroundColor Cyan
+    Write-Host '=== Castellyn — сборка ===' -ForegroundColor Cyan
 }
 
 # 1. Pre-flight
@@ -90,7 +90,7 @@ if (-not $Bundle) { $buildArgs += @('--', '--no-bundle') }
 if ($LASTEXITCODE -ne 0) {
     Write-Host '  tauri build не удался.' -ForegroundColor Red
     if (Get-Command Show-Notification -ErrorAction SilentlyContinue) {
-        Show-Notification -Title 'AgentHub: сборка ПРОВАЛЕНА' -Body 'tauri build failed — см. терминал.' -IsError
+        Show-Notification -Title 'Castellyn: сборка ПРОВАЛЕНА' -Body 'tauri build failed — см. терминал.' -IsError
     }
     exit 1
 }
@@ -104,13 +104,13 @@ if (-not (Test-Path -LiteralPath $exe)) {
 # 5. Ярлык на рабочий стол
 if (-not $NoShortcut) {
     $desktop = [Environment]::GetFolderPath('Desktop')
-    $lnk = Join-Path $desktop 'AgentHub.lnk'
+    $lnk = Join-Path $desktop 'Castellyn.lnk'
     $ws = New-Object -ComObject WScript.Shell
     $sc = $ws.CreateShortcut($lnk)
     $sc.TargetPath = $exe
     $sc.WorkingDirectory = (Split-Path -Parent $exe)
     $sc.IconLocation = "$exe,0"
-    $sc.Description = 'AgentHub — центр управления ИИ-агентами'
+    $sc.Description = 'Castellyn — центр управления средой разработки'
     $sc.Save()
     Write-Host "  [OK] Ярлык: $lnk" -ForegroundColor Green
 }
@@ -133,7 +133,7 @@ Write-Host "  $exe" -ForegroundColor DarkGray
 if ($Bundle) { Write-Host '  Установщики: src-tauri\target\release\bundle\' -ForegroundColor DarkGray }
 
 if (Get-Command Show-Notification -ErrorAction SilentlyContinue) {
-    Show-Notification -Title 'AgentHub собран' -Body "v$version — $size — $time" -IconPath $exe
+    Show-Notification -Title 'Castellyn собран' -Body "v$version — $size — $time" -IconPath $exe
 }
 
 if (-not $NoOpen) {

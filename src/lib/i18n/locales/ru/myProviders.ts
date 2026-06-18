@@ -55,7 +55,7 @@ export default {
   noKeyShort: 'нет ключа',
   loginTitle: 'Вход в freellmapi',
   loginHint:
-    'Введите email+пароль от freellmapi (предпочтительно) — AgentHub войдёт сам. Или вставьте токен сессии дашборда.',
+    'Введите email+пароль от freellmapi (предпочтительно) — Castellyn войдёт сам. Или вставьте токен сессии дашборда.',
   loginEmail: 'email freellmapi',
   loginPassword: 'пароль',
   loginTokenOpt: 'или токен сессии (необязательно)',

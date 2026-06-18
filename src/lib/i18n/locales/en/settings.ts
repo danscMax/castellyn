@@ -41,7 +41,7 @@ export default {
   // Scripts root
   scriptsRoot: 'Scripts path (SCRIPTS_ROOT)',
   scriptsRootDesc:
-    'Folder holding the maintenance PowerShell scripts AgentHub runs (updates, forks, backup, etc.). This is NOT the sessions working folder — the Sessions "Default folder" is set separately. Empty = E:\\Scripts (or the SCRIPTS_ROOT environment variable).',
+    'Folder holding the maintenance PowerShell scripts Castellyn runs (updates, forks, backup, etc.). This is NOT the sessions working folder — the Sessions "Default folder" is set separately. Empty = E:\\Scripts (or the SCRIPTS_ROOT environment variable).',
   scriptsRootInputTip: 'Absolute path to the scripts root',
   savePathTip: 'Save path',
   currentlyUsed: 'Currently used: {path}',
@@ -81,11 +81,11 @@ export default {
   openScriptsFolder: 'Open scripts folder',
   openScriptsFolderTip: 'Open the scripts folder in Explorer',
   openConfigFile: 'Open config.json',
-  openConfigFileTip: 'Open the AgentHub settings file',
+  openConfigFileTip: 'Open the Castellyn settings file',
   openStackFile: 'Open stack.json',
   openStackFileTip: 'Open the LLM stack config',
   backupSection: 'Settings backup',
-  backupSectionDesc: 'Export/import AgentHub settings (config.json) — to move to another PC',
+  backupSectionDesc: 'Export/import Castellyn settings (config.json) — to move to another PC',
   exportConfig: 'Export settings',
   exportTip: 'Save the current settings to a file',
   importConfig: 'Import settings',

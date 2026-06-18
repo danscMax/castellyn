@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { McpStatus } from '$lib/ipc';
   import { t } from '$lib/i18n';
+  import DataTable, { type DTColumn } from './DataTable.svelte';
 
   let {
     data,
@@ -47,6 +48,18 @@
     return srv.deployedIn.length < ALL_PROFILES.length ? 0 : 1;
   }
   const sortedSource = $derived([...source].sort((a, b) => rank(a) - rank(b)));
+
+  const COLS: DTColumn[] = [
+    { key: 'name', label: t('mcp.colName'), grow: true, sortable: true },
+    { key: 'command', label: t('mcp.colCommand'), width: '300px' },
+    { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
+    { key: 'profiles', label: t('mcp.colProfiles'), width: '240px', interactive: true }
+  ];
+  type Srv = (typeof sortedSource)[number];
+  function sortVal(s: Srv, key: string): string | number {
+    if (key === 'deployed') return rank(s) * 100 + s.deployedIn.length;
+    return s.name.toLowerCase();
+  }
 </script>
 
 <div class="p-sw-6">
@@ -70,66 +83,61 @@
   </header>
 
   {#if source.length}
-    <div class="mb-sw-4 flex flex-wrap items-center gap-sw-2">
-      <span class="text-sw-xs text-sw-text-muted">{t('mcp.selectProfiles')}</span>
-      {#each ALL_PROFILES as p (p)}
-        <button class="badge {bulkSel[p] ? 'badge-info' : 'badge-muted'}" onclick={() => toggleBulk(p)}
-          title={t('mcp.selectProfileTip', { p })}>{p}</button>
-      {/each}
-      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !bulkCount} onclick={deployBulk}
-        title={t('mcp.bulkDeployTip')}>
-        {t('mcp.bulkDeploy')}{bulkCount ? ` (${bulkCount})` : ''}
-      </button>
-    </div>
-    <div class="overflow-x-auto rounded-sw-md border border-sw-border">
-      <table class="w-full text-sw-sm">
-        <thead>
-          <tr class="border-b border-sw-border text-left text-sw-xs uppercase tracking-wide text-sw-text-muted">
-            <th class="px-sw-2 py-sw-1 font-medium">{t('mcp.colName')}</th>
-            <th class="px-sw-2 py-sw-1 font-medium">{t('mcp.colCommand')}</th>
-            <th class="px-sw-2 py-sw-1 font-medium">{t('mcp.colDeployed')}</th>
-            <th class="px-sw-2 py-sw-1 font-medium">{t('mcp.colProfiles')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each sortedSource as srv (srv.name)}
-            <tr class="border-b border-sw-border/40 align-top hover:bg-sw-bg-secondary/40">
-              <td class="whitespace-nowrap px-sw-2 py-sw-1 font-medium">{srv.name}</td>
-              <td class="max-w-[280px] px-sw-2 py-sw-1 font-mono text-sw-xs text-sw-text-muted">
-                <span class="line-clamp-1" title={srv.command}>{srv.command}</span>
-              </td>
-              <td class="whitespace-nowrap px-sw-2 py-sw-1">
-                {#if isPlugin(srv.name)}
-                  <span class="badge badge-info" title={t('mcp.pluginBadgeTitle')}>{t('mcp.pluginBadge')}</span>
+    <DataTable
+      columns={COLS}
+      rows={sortedSource}
+      rowKey={(s) => s.name}
+      sortAccessor={sortVal}
+      search
+      searchValue={(s) => `${s.name} ${s.command}`}
+      searchPlaceholder={t('mcp.colName')}
+      storageKey="mcp"
+    >
+      {#snippet toolbar()}
+        <span class="text-sw-xs text-sw-text-muted">{t('mcp.selectProfiles')}</span>
+        {#each ALL_PROFILES as p (p)}
+          <button class="badge {bulkSel[p] ? 'badge-info' : 'badge-muted'}" onclick={() => toggleBulk(p)}
+            title={t('mcp.selectProfileTip', { p })}>{p}</button>
+        {/each}
+        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !bulkCount} onclick={deployBulk}
+          title={t('mcp.bulkDeployTip')}>
+          {t('mcp.bulkDeploy')}{bulkCount ? ` (${bulkCount})` : ''}
+        </button>
+      {/snippet}
+
+      {#snippet cell(srv, col)}
+        {#if col.key === 'name'}
+          <span class="font-medium truncate" title={srv.name}>{srv.name}</span>
+        {:else if col.key === 'command'}
+          <span class="font-mono text-sw-xs text-sw-text-muted truncate block" title={srv.command}>{srv.command}</span>
+        {:else if col.key === 'deployed'}
+          {#if isPlugin(srv.name)}
+            <span class="badge badge-info" title={t('mcp.pluginBadgeTitle')}>{t('mcp.pluginBadge')}</span>
+          {:else}
+            <span class="badge {srv.deployedIn.length === ALL_PROFILES.length ? 'badge-ok' : srv.deployedIn.length > 0 ? 'badge-warn' : 'badge-err'}"
+              title={t('mcp.deployedCountTitle', { n: srv.deployedIn.length, total: ALL_PROFILES.length })}>
+              {srv.deployedIn.length}/{ALL_PROFILES.length}
+            </span>
+          {/if}
+        {:else if col.key === 'profiles'}
+          {#if isPlugin(srv.name)}
+            <span class="text-sw-xs text-sw-text-muted">{t('mcp.pluginNote')}</span>
+          {:else}
+            <div class="flex flex-wrap gap-sw-1">
+              {#each ALL_PROFILES as p (p)}
+                {@const ok = srv.deployedIn.includes(p)}
+                {#if ok}
+                  <span class="badge badge-ok" title={t('mcp.profileDeployedTitle', { p })}>{p}</span>
                 {:else}
-                  <span class="badge {srv.deployedIn.length === ALL_PROFILES.length ? 'badge-ok' : srv.deployedIn.length > 0 ? 'badge-warn' : 'badge-err'}"
-                    title={t('mcp.deployedCountTitle', { n: srv.deployedIn.length, total: ALL_PROFILES.length })}>
-                    {srv.deployedIn.length}/{ALL_PROFILES.length}
-                  </span>
+                  <button class="badge badge-muted" disabled={busy} onclick={() => onDeploy(p)}
+                    title={t('mcp.deployToProfileTip', { p })}>{p}</button>
                 {/if}
-              </td>
-              <td class="px-sw-2 py-sw-1">
-                {#if isPlugin(srv.name)}
-                  <span class="text-sw-xs text-sw-text-muted">{t('mcp.pluginNote')}</span>
-                {:else}
-                  <div class="flex flex-wrap gap-sw-1">
-                    {#each ALL_PROFILES as p (p)}
-                      {@const ok = srv.deployedIn.includes(p)}
-                      {#if ok}
-                        <span class="badge badge-ok" title={t('mcp.profileDeployedTitle', { p })}>{p}</span>
-                      {:else}
-                        <button class="badge badge-muted" disabled={busy} onclick={() => onDeploy(p)}
-                          title={t('mcp.deployToProfileTip', { p })}>{p}</button>
-                      {/if}
-                    {/each}
-                  </div>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      {/snippet}
+    </DataTable>
   {:else}
     <div class="grid place-items-center py-sw-6 text-center text-sw-text-muted">
       <div>

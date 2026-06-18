@@ -1,4 +1,4 @@
-// AgentHub — Tauri backend.
+// Castellyn — Tauri backend.
 //   * Component manifest (embedded) → run a component's PowerShell script in -Check or -Apply
 //     mode, streaming stdout/stderr to the UI.
 //   * Single-run guard + cancel.
@@ -95,7 +95,7 @@ fn expand_placeholders(s: &str) -> String {
 /// file is missing or unreadable (e.g. relocated exe without the repo).
 fn manifest_text() -> String {
     let path = format!(
-        "{}\\AgentHub\\manifest\\maintenance-manifest.json",
+        "{}\\Castellyn\\manifest\\maintenance-manifest.json",
         scripts_root()
     );
     std::fs::read_to_string(&path).unwrap_or_else(|_| MANIFEST_FALLBACK.to_string())
@@ -145,7 +145,7 @@ fn abs(rel: &str) -> String {
     format!("{}\\{}", scripts_root(), rel)
 }
 
-// fork-updater is now vendored under AgentHub\tools\; these are the pre-rename external
+// fork-updater is now vendored under Castellyn\tools\; these are the pre-rename external
 // locations, used as a fallback if the vendored copy is absent (e.g. a relocated exe).
 const FORKS_SCRIPT_FALLBACK: &str = "fork-updater\\update-forks.ps1";
 const FORKS_LASTJSON_FALLBACK: &str = "fork-updater\\fork-sync.last.json";
@@ -1028,7 +1028,7 @@ async fn run_stack(
     spawn_streamed(app, state, "engine".to_string(), script, args).await
 }
 
-const STACK_PROCS_SCRIPT_REL: &str = "AgentHub\\tools\\stack\\Stack-Procs.ps1";
+const STACK_PROCS_SCRIPT_REL: &str = "Castellyn\\tools\\stack\\Stack-Procs.ps1";
 
 /// Listening-process info for one stack port: PID + uptime. Frontend joins this onto service cards
 /// by port to show "PID 1234 · 2h" without an extra per-service probe.
@@ -1150,7 +1150,7 @@ async fn read_freellmapi_analytics(range_hours: u32) -> FreellmapiAnalytics {
         Some(p) if std::path::Path::new(&p).exists() => p,
         _ => return FreellmapiAnalytics::default(),
     };
-    let helper = abs("AgentHub\\tools\\analytics\\query.cjs");
+    let helper = abs("Castellyn\\tools\\analytics\\query.cjs");
     let out = tokio::process::Command::new("node")
         .args([&helper, &db, &hours.to_string()])
         .creation_flags(CREATE_NO_WINDOW)
@@ -2946,7 +2946,46 @@ async fn run_mcp(
 
 const PLUGIN_MGR_SCRIPT_REL: &str = "claude-plugin-updater\\Manage-Plugin.ps1";
 
-/// List installed plugins via `claude plugin list --json`.
+/// Map plugin id → description, read from each installed plugin's .claude-plugin/plugin.json
+/// (the `claude plugin list --json` output has no description).
+fn plugin_descriptions() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(home) = std::env::var("USERPROFILE") else { return map };
+    let plugins_dir = format!("{home}\\.claude\\plugins");
+    let installed = std::fs::read_to_string(format!("{plugins_dir}\\installed_plugins.json"))
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok());
+    let markets = std::fs::read_to_string(format!("{plugins_dir}\\known_marketplaces.json"))
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let Some(po) = installed.as_ref().and_then(|v| v.get("plugins")).and_then(|v| v.as_object())
+    else {
+        return map;
+    };
+    for (id, arr) in po {
+        let install_path = arr
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("installPath"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if let Some(dir) = plugin_content_dir(id, install_path, &markets) {
+            let pj = std::path::Path::new(&dir).join(".claude-plugin").join("plugin.json");
+            if let Some(d) = std::fs::read_to_string(pj)
+                .ok()
+                .and_then(|c| parse_json_bom(&c).ok())
+                .and_then(|m| m.get("description").and_then(|v| v.as_str()).map(String::from))
+                .filter(|s| !s.is_empty())
+            {
+                map.insert(id.clone(), d);
+            }
+        }
+    }
+    map
+}
+
+/// List installed plugins via `claude plugin list --json`, enriched with descriptions from disk.
 #[tauri::command]
 async fn list_plugins() -> Result<serde_json::Value, String> {
     let out = tokio::process::Command::new("pwsh")
@@ -2956,7 +2995,22 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| format!("запуск claude: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
-    parse_json_bom(stdout.trim()).map_err(|e| format!("parse plugins: {e}"))
+    let mut v = parse_json_bom(stdout.trim()).map_err(|e| format!("parse plugins: {e}"))?;
+    let desc = plugin_descriptions();
+    let own = own_marketplaces();
+    if let Some(arr) = v.as_array_mut() {
+        for item in arr.iter_mut() {
+            let id = item.get("id").and_then(|x| x.as_str()).map(String::from);
+            if let (Some(id), Some(obj)) = (id, item.as_object_mut()) {
+                if let Some(d) = desc.get(&id) {
+                    obj.insert("description".into(), serde_json::json!(d));
+                }
+                let mp = id.rsplit('@').next().unwrap_or("");
+                obj.insert("mine".into(), serde_json::json!(own.contains(mp)));
+            }
+        }
+    }
+    Ok(v)
 }
 
 #[derive(Serialize)]
@@ -2965,6 +3019,36 @@ struct SkillInfo {
     description: String,
     version: String,
     dir: String,
+    /// "own" (your symlinked skills), "default" (plain dir in ~/.claude/skills),
+    /// or "plugin:<id>" (bundled inside a plugin).
+    source: String,
+    /// True when authored by you: a symlinked skill OR from a local (directory-source) marketplace
+    /// you maintain (e.g. max-marketplace), as opposed to third-party github marketplaces.
+    mine: bool,
+}
+
+/// Names of marketplaces whose source is a local directory (i.e. authored/maintained by the user),
+/// e.g. "max-marketplace". Plugins/skills from these count as "mine".
+fn own_marketplaces() -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let Ok(home) = std::env::var("USERPROFILE") else { return set };
+    let p = format!("{home}\\.claude\\plugins\\known_marketplaces.json");
+    if let Some(v) = std::fs::read_to_string(p).ok().and_then(|c| parse_json_bom(&c).ok()) {
+        let obj = v.get("marketplaces").and_then(|m| m.as_object()).or_else(|| v.as_object());
+        if let Some(obj) = obj {
+            for (name, m) in obj {
+                let stype = m
+                    .get("source")
+                    .and_then(|s| s.get("source"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("");
+                if stype == "directory" {
+                    set.insert(name.clone());
+                }
+            }
+        }
+    }
+    set
 }
 
 /// First-block YAML frontmatter (between the first `---` pair) of a SKILL.md.
@@ -2991,7 +3075,90 @@ fn fm_value(fm: &str, key: &str) -> Option<String> {
     None
 }
 
-/// List skills under ~/.claude/skills with name/description/version from SKILL.md.
+/// Parse one skill directory (name/description/version from SKILL.md, dir name as fallback).
+fn read_skill_info(skill_dir: &std::path::Path, source: String, mine: bool) -> SkillInfo {
+    let dir_name = skill_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut name = dir_name;
+    let mut description = String::new();
+    let mut version = String::new();
+    if let Ok(content) = std::fs::read_to_string(skill_dir.join("SKILL.md")) {
+        let fm = extract_frontmatter(&content);
+        if let Some(v) = fm_value(&fm, "name") {
+            name = v;
+        }
+        if let Some(v) = fm_value(&fm, "description") {
+            description = v;
+        }
+        if let Some(v) = fm_value(&fm, "version") {
+            version = v;
+        }
+    }
+    SkillInfo { name, description, version, dir: skill_dir.display().to_string(), source, mine }
+}
+
+/// Skills bundled inside installed plugins (source = "plugin:<id>").
+fn plugin_bundled_skills() -> Vec<SkillInfo> {
+    let home = match std::env::var("USERPROFILE") {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let plugins_dir = format!("{home}\\.claude\\plugins");
+    let installed = match std::fs::read_to_string(format!("{plugins_dir}\\installed_plugins.json"))
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok())
+    {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    let markets = std::fs::read_to_string(format!("{plugins_dir}\\known_marketplaces.json"))
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let own = own_marketplaces();
+    let mut out: Vec<SkillInfo> = Vec::new();
+    let Some(po) = installed.get("plugins").and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for (id, arr) in po {
+        let install_path = arr
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("installPath"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let Some(dir) = plugin_content_dir(id, install_path, &markets) else {
+            continue;
+        };
+        let mp = id.rsplit('@').next().unwrap_or("");
+        let mine = own.contains(mp);
+        if let Ok(entries) = std::fs::read_dir(std::path::Path::new(&dir).join("skills")) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    out.push(read_skill_info(&p, format!("plugin:{id}"), mine));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn skill_rank(s: &SkillInfo) -> u8 {
+    if s.mine {
+        0
+    } else if s.source == "default" {
+        1
+    } else {
+        2
+    }
+}
+
+/// All skills: standalone in ~/.claude/skills (own = symlink to your collection, default = plain
+/// dir) PLUS skills bundled in installed plugins. `is_dir()` follows symlinks so your symlinked
+/// "own" skills are no longer dropped. Sorted by source (own → default → plugin) then name.
 #[tauri::command]
 fn list_skills() -> Vec<SkillInfo> {
     let home = match std::env::var("USERPROFILE") {
@@ -3002,29 +3169,26 @@ fn list_skills() -> Vec<SkillInfo> {
     let mut out: Vec<SkillInfo> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&root) {
         for e in entries.flatten() {
-            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
+            let p = e.path();
+            if !p.is_dir() {
+                continue; // follows symlinks → includes symlinked "own" skills
             }
-            let dir_name = e.file_name().to_string_lossy().to_string();
-            let mut name = dir_name.clone();
-            let mut description = String::new();
-            let mut version = String::new();
-            if let Ok(content) = std::fs::read_to_string(e.path().join("SKILL.md")) {
-                let fm = extract_frontmatter(&content);
-                if let Some(v) = fm_value(&fm, "name") {
-                    name = v;
-                }
-                if let Some(v) = fm_value(&fm, "description") {
-                    description = v;
-                }
-                if let Some(v) = fm_value(&fm, "version") {
-                    version = v;
-                }
-            }
-            out.push(SkillInfo { name, description, version, dir: e.path().display().to_string() });
+            let is_link = std::fs::symlink_metadata(&p)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+            out.push(read_skill_info(
+                &p,
+                if is_link { "own".into() } else { "default".into() },
+                is_link,
+            ));
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.extend(plugin_bundled_skills());
+    out.sort_by(|a, b| {
+        skill_rank(a)
+            .cmp(&skill_rank(b))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     out
 }
 
@@ -3269,17 +3433,29 @@ async fn run_plugin(
     .await
 }
 
-/// Delete a skill directory. Guarded: the resolved path must live inside ~/.claude/skills.
+/// Delete a standalone skill from ~/.claude/skills. Guard uses the entry's PARENT (not the
+/// resolved target) so a symlinked "own" skill only has its LINK removed — the real collection in
+/// ~/.agents stays intact. Plugin-bundled skills (parent ≠ ~/.claude/skills) are refused.
 #[tauri::command]
 fn delete_skill(dir: String) -> Result<(), String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
     let skills_root = std::path::Path::new(&home).join(".claude").join("skills");
+    let target = std::path::Path::new(&dir);
+    let parent = target.parent().ok_or("неверный путь")?;
     let canon_root = std::fs::canonicalize(&skills_root).map_err(|e| format!("папка скиллов: {e}"))?;
-    let canon_target = std::fs::canonicalize(&dir).map_err(|e| format!("скилл не найден: {e}"))?;
-    if canon_target == canon_root || !canon_target.starts_with(&canon_root) {
-        return Err("путь вне папки скиллов".into());
+    let canon_parent = std::fs::canonicalize(parent).map_err(|e| format!("скилл не найден: {e}"))?;
+    if canon_parent != canon_root {
+        return Err("скилл не в ~/.claude/skills (скиллы из плагинов удаляются вместе с плагином)".into());
     }
-    std::fs::remove_dir_all(&canon_target).map_err(|e| format!("удаление: {e}"))
+    let meta = std::fs::symlink_metadata(target).map_err(|e| format!("скилл не найден: {e}"))?;
+    if meta.file_type().is_symlink() {
+        // Remove only the symlink, never the linked-to source collection.
+        std::fs::remove_dir(target)
+            .or_else(|_| std::fs::remove_file(target))
+            .map_err(|e| format!("удаление ссылки: {e}"))
+    } else {
+        std::fs::remove_dir_all(target).map_err(|e| format!("удаление: {e}"))
+    }
 }
 
 #[tauri::command]
@@ -3730,7 +3906,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("AgentHub")
+        .tooltip("Castellyn")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -3787,9 +3963,9 @@ fn update_tray_tooltip(app: &AppHandle) {
         .map(|m| m.len())
         .unwrap_or(0);
     let label = if n == 0 {
-        "AgentHub".to_string()
+        "Castellyn".to_string()
     } else {
-        format!("AgentHub — активных сессий: {n}")
+        format!("Castellyn — активных сессий: {n}")
     };
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_tooltip(Some(&label));

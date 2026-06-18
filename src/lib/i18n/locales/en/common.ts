@@ -10,6 +10,8 @@ export default {
   typeToConfirm: 'Type “{text}” to confirm',
   open: 'Open',
   refresh: 'Refresh',
+  search: 'Search…',
+  toggle: 'Expand/collapse',
   delete: 'Delete',
   remove: 'Remove',
   apply: 'Apply',

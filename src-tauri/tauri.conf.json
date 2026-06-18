@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AgentHub",
+  "productName": "Castellyn",
   "version": "0.2.1",
   "identifier": "com.danscmax.agenthub",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "AgentHub",
+        "title": "Castellyn",
         "width": 1100,
         "height": 720,
         "minWidth": 920,

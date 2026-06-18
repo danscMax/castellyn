@@ -146,6 +146,7 @@ export default {
   confirm_plugin_remove_title: '删除插件？',
   confirm_plugin_remove_msg: '「{id}」将被卸载（claude plugin remove）。是否继续？',
   confirm_plugin_remove_btn: '删除',
+  confirm_plugin_bulk_remove_msg: '将卸载 {count} 个插件（claude plugin remove）。是否继续？',
   confirm_skill_delete_title: '删除技能？',
   confirm_skill_delete_msg: '技能文件夹「{name}」将被永久删除。是否继续？',
   confirm_skill_delete_btn: '删除',

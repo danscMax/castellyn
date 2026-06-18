@@ -25,11 +25,11 @@
       "id": "forks",
       "name": "Форки (fork-sync)",
       "group": "Git",
-      "scriptRel": "AgentHub\\tools\\fork-updater\\update-forks.ps1",
+      "scriptRel": "Castellyn\\tools\\fork-updater\\update-forks.ps1",
       "checkArgs": ["-Unattended"],
       "applyArgs": [],
       "supportsApply": false,
-      "lastJsonRel": "AgentHub\\tools\\fork-updater\\fork-sync.last.json"
+      "lastJsonRel": "Castellyn\\tools\\fork-updater\\fork-sync.last.json"
     },
     {
       "id": "rtk",

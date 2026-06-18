@@ -27,6 +27,13 @@ export default {
 
   // Card header
   colorDot: 'Profile color',
+  colName: 'Profile',
+  colStatus: 'Status',
+  colUsage: 'Limits',
+  colProvider: 'Provider',
+  colLinks: 'Links',
+  colActions: 'Actions',
+  searchPlaceholder: 'Search profile…',
 
   // Status row
   noDir: 'no directory',

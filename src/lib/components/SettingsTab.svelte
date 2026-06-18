@@ -92,7 +92,7 @@
   // #117: export current config to a file / import a config file back.
   async function doExport() {
     try {
-      const dest = await pickSaveFile('agenthub-config.json');
+      const dest = await pickSaveFile('castellyn-config.json');
       if (!dest) return;
       await exportConfig(dest);
       flash(t('settings.configExported'));

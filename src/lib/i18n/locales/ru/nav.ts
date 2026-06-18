@@ -1,5 +1,5 @@
 export default {
-  brand: 'AgentHub',
+  brand: 'Castellyn',
   updates: 'Обновления',
   forks: 'Форки',
   backup: 'Бэкап',

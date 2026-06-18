@@ -30,15 +30,15 @@ npm run check:i18n     # ru/en/zh leaf-key parity (needs tsx, a devDependency)
 ```
 
 `build_all.ps1` does: pre-flight (node/npm/cargo) → `npm install` (if needed) → `svelte-check`
-→ `tauri build` (`--no-bundle` by default) → (re)create the desktop shortcut **AgentHub.lnk**.
+→ `tauri build` (`--no-bundle` by default) → (re)create the desktop shortcut **Castellyn.lnk**.
 
 - Output exe: `src-tauri\target\release\agenthub.exe` (the binary follows the lowercase crate
-  name; the display product name is **AgentHub**).
+  name; the display product name is **Castellyn**).
 - The exe is standalone (~9 MB); it reads `SCRIPTS_ROOT` (env → Settings → default `E:\Scripts`),
   so it runs from anywhere as long as the scripts are reachable.
 
 Under the hood: `npm run tauri build` (`@tauri-apps/cli`). Config in `src-tauri/tauri.conf.json`
-(`productName: AgentHub`, `identifier: com.danscmax.agenthub`, window `title: AgentHub`).
+(`productName: Castellyn`, `identifier: com.danscmax.agenthub`, window `title: Castellyn`).
 
 ## App icon
 

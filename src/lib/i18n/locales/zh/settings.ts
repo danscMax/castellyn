@@ -41,7 +41,7 @@ export default {
   // Scripts root
   scriptsRoot: '脚本路径（SCRIPTS_ROOT）',
   scriptsRootDesc:
-    'AgentHub 运行的维护 PowerShell 脚本所在文件夹（更新、分叉、备份等）。这不是会话工作目录——会话的「默认文件夹」单独设置。留空 = E:\\Scripts（或环境变量 SCRIPTS_ROOT）。',
+    'Castellyn 运行的维护 PowerShell 脚本所在文件夹（更新、分叉、备份等）。这不是会话工作目录——会话的「默认文件夹」单独设置。留空 = E:\\Scripts（或环境变量 SCRIPTS_ROOT）。',
   scriptsRootInputTip: '脚本根目录的绝对路径',
   savePathTip: '保存路径',
   currentlyUsed: '当前使用：{path}',
@@ -81,11 +81,11 @@ export default {
   openScriptsFolder: '打开脚本文件夹',
   openScriptsFolderTip: '在资源管理器中打开脚本文件夹',
   openConfigFile: '打开 config.json',
-  openConfigFileTip: '打开 AgentHub 设置文件',
+  openConfigFileTip: '打开 Castellyn 设置文件',
   openStackFile: '打开 stack.json',
   openStackFileTip: '打开 LLM 技术栈配置',
   backupSection: '设置备份',
-  backupSectionDesc: '导出/导入 AgentHub 设置（config.json）——用于迁移到其他电脑',
+  backupSectionDesc: '导出/导入 Castellyn 设置（config.json）——用于迁移到其他电脑',
   exportConfig: '导出设置',
   exportTip: '将当前设置保存到文件',
   importConfig: '导入设置',

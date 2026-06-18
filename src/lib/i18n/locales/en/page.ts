@@ -151,6 +151,7 @@ export default {
   confirm_plugin_remove_title: 'Remove plugin?',
   confirm_plugin_remove_msg: '“{id}” will be uninstalled (claude plugin remove). Continue?',
   confirm_plugin_remove_btn: 'Remove',
+  confirm_plugin_bulk_remove_msg: '{count} plugins will be uninstalled (claude plugin remove). Continue?',
   confirm_skill_delete_title: 'Delete skill?',
   confirm_skill_delete_msg: 'The skill folder “{name}” will be permanently deleted. Continue?',
   confirm_skill_delete_btn: 'Delete',

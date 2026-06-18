@@ -1,5 +1,5 @@
 export default {
-  title: 'AgentHub',
+  title: 'Castellyn',
   minimize: '最小化',
   maximize: '最大化',
   restore: '还原',

@@ -41,7 +41,7 @@ export default {
   // Scripts root
   scriptsRoot: 'Путь к скриптам (SCRIPTS_ROOT)',
   scriptsRootDesc:
-    'Папка с обслуживающими PowerShell-скриптами, которые запускает AgentHub (обновления, форки, бэкап и т.п.). Это НЕ рабочая папка сессий — «Папка по умолчанию» в Сессиях задаётся отдельно. Пусто = E:\\Scripts (или переменная окружения SCRIPTS_ROOT).',
+    'Папка с обслуживающими PowerShell-скриптами, которые запускает Castellyn (обновления, форки, бэкап и т.п.). Это НЕ рабочая папка сессий — «Папка по умолчанию» в Сессиях задаётся отдельно. Пусто = E:\\Scripts (или переменная окружения SCRIPTS_ROOT).',
   scriptsRootInputTip: 'Абсолютный путь к корню скриптов',
   savePathTip: 'Сохранить путь',
   currentlyUsed: 'Сейчас используется: {path}',
@@ -81,11 +81,11 @@ export default {
   openScriptsFolder: 'Открыть папку скриптов',
   openScriptsFolderTip: 'Открыть папку скриптов в Проводнике',
   openConfigFile: 'Открыть config.json',
-  openConfigFileTip: 'Открыть файл настроек AgentHub',
+  openConfigFileTip: 'Открыть файл настроек Castellyn',
   openStackFile: 'Открыть stack.json',
   openStackFileTip: 'Открыть конфиг LLM-стека',
   backupSection: 'Резервная копия настроек',
-  backupSectionDesc: 'Экспорт/импорт настроек AgentHub (config.json) — для переноса на другой ПК',
+  backupSectionDesc: 'Экспорт/импорт настроек Castellyn (config.json) — для переноса на другой ПК',
   exportConfig: 'Экспорт настроек',
   exportTip: 'Сохранить текущие настройки в файл',
   importConfig: 'Импорт настроек',

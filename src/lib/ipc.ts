@@ -524,8 +524,11 @@ export type PluginInfo = {
   enabled: boolean;
   installedAt?: string;
   lastUpdated?: string;
+  description?: string;
+  mine?: boolean; // from your own local (directory) marketplace
 };
-export type SkillInfo = { name: string; description: string; version: string; dir: string };
+// source: 'own' (symlinked) | 'default' | 'plugin:<id>'; mine = authored by you (symlink or local marketplace)
+export type SkillInfo = { name: string; description: string; version: string; dir: string; source: string; mine: boolean };
 export type PluginAction = 'enable' | 'disable' | 'update' | 'remove';
 
 export type PluginUpdate = { id: string; installed: string; available: string };

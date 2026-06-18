@@ -3,7 +3,7 @@
     Roll out the canonical ScriptKit.ps1 to every vendored copy under a root.
 
 .DESCRIPTION
-    CANON = <this folder>\ScriptKit.ps1 (AgentHub\tools).
+    CANON = <this folder>\ScriptKit.ps1 (Castellyn\tools).
     Scans -Root (default E:\Scripts) for every other ScriptKit.ps1, compares each
     against the canon by SHA-256 and by the $script:SK_Version drift marker, and:
       -Check  (default)  report drift only, change nothing.

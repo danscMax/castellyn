@@ -5,9 +5,9 @@
 # a script:
 #     . (Join-Path $PSScriptRoot 'ScriptKit.ps1')
 #
-# CANON: E:\Scripts\AgentHub\tools\ScriptKit.ps1 is the source of
+# CANON: E:\Scripts\Castellyn\tools\ScriptKit.ps1 is the source of
 # truth. Edit it there, bump $script:SK_Version, then roll out to every vendored
-# copy with: AgentHub\tools\Sync-ScriptKit.ps1 -Apply
+# copy with: Castellyn\tools\Sync-ScriptKit.ps1 -Apply
 #
 # Design rules (keep them when editing):
 #   * Pure presentation / small utilities -- NO Set-StrictMode (this dot-sources
@@ -216,7 +216,7 @@ function Get-AppVersion {
 }
 
 # ============================================================================
-# Status JSON (unified component status envelope for AgentHub)
+# Status JSON (unified component status envelope for Castellyn)
 # ============================================================================
 
 # Write a unified "<component>.last.json" envelope under <Root>. This is the

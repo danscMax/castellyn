@@ -1,12 +1,12 @@
 @echo off
-:: AgentHub -- launch DEV build (Vite HMR + Tauri debug window).
-:: Invoked by the "AgentHub (dev)" desktop shortcut. Keeps a console open so you
+:: Castellyn -- launch DEV build (Vite HMR + Tauri debug window).
+:: Invoked by the "Castellyn (dev)" desktop shortcut. Keeps a console open so you
 :: see HMR / build logs; close it (or Ctrl+C) to stop the dev server.
 chcp 65001 >nul
 :: rustup puts cargo here but it's not always on the system PATH -> add it back.
 set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 cd /d "%~dp0"
-echo === AgentHub dev :: npm run tauri dev ===
+echo === Castellyn dev :: npm run tauri dev ===
 echo (close this window or press Ctrl+C to stop)
 echo.
 :: A stale vite dev server (node) may still hold port 1420 from a previous run and

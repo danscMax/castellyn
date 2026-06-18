@@ -3,6 +3,7 @@
   import { forkMode, t, locale, plural, pRepo, pConflict } from '$lib/i18n';
   import { relTime } from '$lib/relativeTime';
   import ForkRepoCard from './ForkRepoCard.svelte';
+  import DataTable, { type DTColumn } from './DataTable.svelte';
 
   let {
     status,
@@ -122,6 +123,18 @@
   });
   function clickKpi(filter: 'conflict' | 'needHands' | null) {
     statusFilter = filter && statusFilter !== filter ? filter : null;
+  }
+
+  type Gh = GithubRepo;
+  const GH_COLS: DTColumn[] = [
+    { key: 'name', label: t('forks.ghColName'), grow: true, sortable: true },
+    { key: 'full', label: t('forks.ghColRepo'), width: '300px', sortable: true },
+    { key: 'kind', label: t('forks.ghColKind'), width: '150px' },
+    { key: 'actions', label: t('forks.ghColActions'), width: '100px', align: 'right', interactive: true }
+  ];
+  function ghSort(g: Gh, key: string): string | number {
+    if (key === 'full') return g.nameWithOwner.toLowerCase();
+    return g.name.toLowerCase();
   }
 </script>
 
@@ -245,23 +258,31 @@
       </button>
       {#if ghOpen}
         {#if filteredGithubOnly.length}
-          <div class="card-grid">
-            {#each filteredGithubOnly as g (g.nameWithOwner)}
-              <div class="sw-card flex flex-col gap-sw-2">
-                <div class="flex items-start justify-between gap-sw-2">
-                  <h3 class="truncate font-medium">{g.name}</h3>
-                  <div class="flex shrink-0 flex-wrap justify-end gap-sw-2">
-                    {#if g.isPrivate}<span class="badge badge-warn" title={t('forks.ghPrivateTip')}>{t('forks.ghPrivate')}</span>{/if}
-                    <span class="badge badge-muted">{g.isFork ? t('forks.badgeFork') : t('forks.badgeOwn')}</span>
-                  </div>
-                </div>
-                <p class="truncate font-mono text-sw-xs text-sw-text-muted" title={g.nameWithOwner}>{g.nameWithOwner}</p>
-                <div class="mt-auto flex gap-sw-2 border-t border-sw-border pt-sw-2">
-                  <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => onOpenUrl?.(g.url)} title={t('forks.ghOpenTip')}>{t('forks.ghOpen')}</button>
-                </div>
-              </div>
-            {/each}
-          </div>
+          <DataTable
+            columns={GH_COLS}
+            rows={filteredGithubOnly}
+            rowKey={(g) => g.nameWithOwner}
+            sortAccessor={ghSort}
+            search
+            searchValue={(g) => g.nameWithOwner}
+            searchPlaceholder={t('forks.ghColName')}
+            storageKey="forks-gh"
+          >
+            {#snippet cell(g, col)}
+              {#if col.key === 'name'}
+                <span class="font-medium truncate" title={g.name}>{g.name}</span>
+              {:else if col.key === 'full'}
+                <span class="font-mono text-sw-xs text-sw-text-muted truncate block" title={g.nameWithOwner}>{g.nameWithOwner}</span>
+              {:else if col.key === 'kind'}
+                <span class="flex flex-wrap gap-sw-1">
+                  {#if g.isPrivate}<span class="badge badge-warn" title={t('forks.ghPrivateTip')}>{t('forks.ghPrivate')}</span>{/if}
+                  <span class="badge badge-muted">{g.isFork ? t('forks.badgeFork') : t('forks.badgeOwn')}</span>
+                </span>
+              {:else if col.key === 'actions'}
+                <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => onOpenUrl?.(g.url)} title={t('forks.ghOpenTip')}>{t('forks.ghOpen')}</button>
+              {/if}
+            {/snippet}
+          </DataTable>
         {:else}
           <p class="text-sw-xs text-sw-text-muted">{t('forks.githubOnlyEmptyFilter')}</p>
         {/if}

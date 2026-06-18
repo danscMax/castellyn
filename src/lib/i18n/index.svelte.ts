@@ -1,5 +1,5 @@
 /**
- * Internationalization (i18n) for AgentHub.
+ * Internationalization (i18n) for Castellyn.
  *
  * Svelte 5 runes: t() reads $state(_locale) internally, so it is automatically
  * reactive in component templates and $derived contexts — no store subscription,

@@ -1,6 +1,6 @@
 # Architecture
 
-AgentHub is a **Tauri v2** desktop app: a Svelte 5 frontend talking to a Rust backend over
+Castellyn is a **Tauri v2** desktop app: a Svelte 5 frontend talking to a Rust backend over
 Tauri IPC. The backend mostly orchestrates the user's PowerShell maintenance scripts under
 `SCRIPTS_ROOT` (default `E:\Scripts`) and exposes their state to the UI. No database, no
 sidecar process, single binary.
@@ -94,7 +94,7 @@ the envelope in `ComponentCard`/`outcome.ts`/`attention.ts`.
 
 Claude Code "profiles" are isolated config dirs `~/.claude-<name>` with junction/symlink links
 to shared content (`skills`, `commands`, `agents`, `plugins`, `projects`, `history.jsonl`)
-under `~/.claude`. AgentHub reads health via a read-only `Get-ProfilesStatus.ps1`
+under `~/.claude`. Castellyn reads health via a read-only `Get-ProfilesStatus.ps1`
 (`profiles.last.json`) and mutates via data-driven scripts that read `config/profiles.json`
 (install/repair/add/remove/rename/recolor/set-links). Symlinking *folders* needs admin (UAC);
 junctions/file-links don't.
@@ -105,4 +105,4 @@ junctions/file-links don't.
 - Syncthing folder IDs are per-machine — resolve folders **by path**, never by a hardcoded ID.
 - Hidden `.stignore` can't be `CREATE_ALWAYS`-written while Hidden — clear the attribute first.
 - claude-code-router (ccr) may fail to start on some Node versions — that's a ccr issue, not
-  AgentHub's.
+  Castellyn's.

@@ -19,9 +19,9 @@ the auth check) — that assumption is now outdated.
 
 - **OS-level user env vars** (`setx ANTHROPIC_BASE_URL ...`): would also work for a
   bare launch but is **global**, so it cannot give each profile a different provider
-  — it breaks AgentHub's multi-profile model. Rejected.
+  — it breaks Castellyn's multi-profile model. Rejected.
 - **Keep the launch-time process-env injection** as the auth mechanism: works only
-  when the harness is launched *through AgentHub*, not from a plain terminal — the
+  when the harness is launched *through Castellyn*, not from a plain terminal — the
   exact fragility we set out to remove. Kept only as harmless redundancy, not relied on.
 
 ## Consequences

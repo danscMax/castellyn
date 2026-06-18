@@ -10,6 +10,8 @@ export default {
   typeToConfirm: '输入「{text}」以确认',
   open: '打开',
   refresh: '刷新',
+  search: '搜索…',
+  toggle: '展开/折叠',
   delete: '删除',
   remove: '移除',
   apply: '应用',

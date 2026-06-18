@@ -151,6 +151,7 @@ export default {
   confirm_plugin_remove_title: 'Удалить плагин?',
   confirm_plugin_remove_msg: '«{id}» будет удалён (claude plugin remove). Продолжить?',
   confirm_plugin_remove_btn: 'Удалить',
+  confirm_plugin_bulk_remove_msg: 'Будет удалено плагинов: {count} (claude plugin remove). Продолжить?',
   confirm_skill_delete_title: 'Удалить скилл?',
   confirm_skill_delete_msg: 'Папка скилла «{name}» будет удалена безвозвратно. Продолжить?',
   confirm_skill_delete_btn: 'Удалить',

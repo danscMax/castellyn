@@ -10,6 +10,8 @@ export default {
   typeToConfirm: 'Для подтверждения введите «{text}»',
   open: 'Открыть',
   refresh: 'Обновить',
+  search: 'Поиск…',
+  toggle: 'Развернуть/свернуть',
   delete: 'Удалить',
   remove: 'Удалить',
   apply: 'Применить',

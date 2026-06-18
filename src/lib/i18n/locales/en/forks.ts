@@ -56,6 +56,10 @@ export default {
   ghPrivateTip: 'Private repository on GitHub',
   ghOpen: 'Open on GitHub',
   ghOpenTip: 'Open the repository page on GitHub',
+  ghColName: 'Repository',
+  ghColRepo: 'owner/repo',
+  ghColKind: 'Kind',
+  ghColActions: 'Actions',
 
   // ── ForksTab: empty state ──
   emptyTitle: 'No data',

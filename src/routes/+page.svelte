@@ -999,6 +999,44 @@
     }
   }
 
+  // Bulk plugin ops run sequentially through the single run slot (one op at a time).
+  async function runBulkPlugins(action: PluginAction, ids: string[]) {
+    if (!ids.length || running) return;
+    const verb =
+      action === 'update'
+        ? t('page.plugin_verb_update')
+        : action === 'enable'
+          ? t('page.plugin_verb_enable')
+          : action === 'remove'
+            ? t('page.plugin_verb_remove')
+            : t('page.plugin_verb_disable');
+    running = 'plugin-mgr';
+    for (const id of ids) {
+      log = [...log, t('page.plugin_log', { id, verb })];
+      try {
+        await runPlugin(action, id);
+      } catch (e) {
+        log = [...log, t('page.log_error', { e: String(e) })];
+      }
+    }
+    running = null;
+    reloadExtensions();
+  }
+  function onBulkPlugin(action: PluginAction, ids: string[]) {
+    if (!ids.length) return;
+    if (action === 'remove') {
+      askConfirm(
+        t('page.confirm_plugin_remove_title'),
+        t('page.confirm_plugin_bulk_remove_msg', { count: ids.length }),
+        t('page.confirm_plugin_remove_btn'),
+        () => runBulkPlugins('remove', ids),
+        { danger: true }
+      );
+    } else {
+      runBulkPlugins(action, ids);
+    }
+  }
+
   function onOpenSkills() {
     const d = skillsData?.[0]?.dir;
     if (!d) return;
@@ -1378,6 +1416,7 @@
           contents={pluginContents}
           {running}
           onAction={onPluginAction}
+          {onBulkPlugin}
           onRefresh={reloadExtensions}
           {onOpenSkills}
           {onOpenSkill}
