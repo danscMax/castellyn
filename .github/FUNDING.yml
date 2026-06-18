@@ -1,0 +1,5 @@
+# GitHub "Sponsor" button for Castellyn.
+# Only URL-based platforms are supported here; `custom` takes up to 4 URLs.
+# Crypto wallets (TON / USDT-TRC20) have no field in FUNDING.yml — they live in
+# the README "Support" section instead.
+custom: ['https://pay.cloudtips.ru/p/9b14d4f1']

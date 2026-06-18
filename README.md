@@ -251,6 +251,16 @@ Tauri v2 · SvelteKit（static/SPA）· Svelte 5 runes · TypeScript · Tailwind
 
 ---
 
+## Support · Поддержать · 支持
+
+If Castellyn saves you time, you can support development — спасибо! · 谢谢！
+
+- ☕ **Cards / Карты (RU)** — [CloudTips](https://pay.cloudtips.ru/p/9b14d4f1)
+- 💎 **TON** — `UQBMEMUpZZmrnnZoFseXuewWD1RkyVYw5EuBqTAOIl-AuOgM`
+- ₮ **USDT (TRC20)** — `TLuHigjqe8gjwfidfi2F7SZ4z27e4uShS6`
+
+---
+
 <div align="center">
 <sub>Castellyn · made for people who run a lot of AI coding · ⭐ star it if it saves you a terminal</sub>
 </div>
