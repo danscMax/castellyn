@@ -2225,6 +2225,33 @@ const PROVIDER_ENV_KEYS: [&str; 7] = [
     "ANTHROPIC_SMALL_FAST_MODEL",
 ];
 
+/// Best-effort check: were any of a profile dir's hot session paths written within `recent_secs`?
+/// A running `claude` constantly rewrites .claude.json / sessions / shell-snapshots, so fresh
+/// activity ≈ an open session. Pure (takes the dir) so it is unit-testable.
+fn dir_recently_written(base: &std::path::Path, recent_secs: u64) -> bool {
+    let now = std::time::SystemTime::now();
+    [".claude.json", "sessions", "shell-snapshots", "session-env", "todos", "projects"]
+        .iter()
+        .any(|p| {
+            std::fs::metadata(base.join(p))
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .map(|age| age.as_secs() <= recent_secs)
+                .unwrap_or(false)
+        })
+}
+
+/// Guard for the cc3-class footgun: rebinding a profile whose `claude` session is live rewrites a
+/// settings.json the running session reads, which can break it (the cc3→ccr 429 incident).
+/// ponytail: mtime heuristic, not a lock — may briefly false-positive just after a session closes,
+/// or when Syncthing just pulled the profile from the other machine (itself a "don't rebind now"
+/// case). Upgrade to real process-env inspection only if the false positives ever annoy.
+fn profile_session_active(name: &str) -> bool {
+    let Ok(home) = std::env::var("USERPROFILE") else { return false };
+    dir_recently_written(&std::path::Path::new(&home).join(format!(".claude-{name}")), 120)
+}
+
 /// Native port of Manage-Provider.ps1: merge the provider env block of ONE profile's
 /// `~/.claude-<name>/settings.json` (preserving every other setting). `model`/`small_model`:
 /// `None` = leave untouched, `Some("")` = remove the override, `Some(v)` = set it. Token: `keep_token`
@@ -2246,6 +2273,16 @@ fn manage_provider_native(
     let known = profile_names();
     if !known.iter().any(|n| n == name) {
         err(&format!("ОШИБКА: профиль '{name}' не найден ({}).", known.join(", ")));
+        return 1;
+    }
+    // cc3-class guard: never rewrite a settings.json a live session is reading (see
+    // profile_session_active). All provider-bind paths funnel here, so one check covers them all.
+    if profile_session_active(name) {
+        err(&format!(
+            "⚠️ Профиль '{name}' похоже сейчас запущен (недавняя активность сессии). Закрой его \
+             сессию Claude и повтори — смена привязки провайдера у живой сессии может её сломать \
+             (как было с cc3). Если профиль не запущен, подожди ~2 минуты и повтори."
+        ));
         return 1;
     }
     let home = match std::env::var("USERPROFILE") {
@@ -5326,6 +5363,19 @@ mod tests {
         let plan = forks_action_args("plan").unwrap();
         assert!(plan.contains(&"-DryRun".to_string()));
         assert!(!plan.contains(&"-Yes".to_string()));
+    }
+
+    #[test]
+    fn session_guard_detects_recent_activity() {
+        // The cc3-class guard: an idle profile dir reads as not-active; a freshly-written hot file
+        // reads as active (so a rebind is refused while a session is likely open).
+        let dir = std::env::temp_dir().join(format!("castellyn_sess_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!dir_recently_written(&dir, 120)); // empty → idle
+        std::fs::write(dir.join(".claude.json"), "{}").unwrap();
+        assert!(dir_recently_written(&dir, 120)); // fresh hot file → looks live
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
