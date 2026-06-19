@@ -1,4 +1,7 @@
 export default {
+  // Home/Overview tab keys
+  home: 'Home',
+  homeTip: 'At-a-glance health of the whole setup',
   brand: 'Castellyn',
   updates: 'Updates',
   forks: 'Forks',

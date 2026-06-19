@@ -19,3 +19,6 @@ plans/ui-review/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Windows Explorer folder-view turds
+desktop.ini

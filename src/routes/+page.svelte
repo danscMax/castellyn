@@ -15,6 +15,8 @@
     runProfiles,
     readProfilesConfig,
     runProfileMgmt,
+    repairProfileElevated,
+    relaunchAsAdmin,
     openProfileDir,
     launchProfile,
     readLaunchConfig,
@@ -24,6 +26,8 @@
     runMcp,
     readSync,
     runSync,
+    readConfigDrift,
+    runConfigDrift,
     readEngines,
     runEngine,
     runRouter,
@@ -63,6 +67,8 @@
     type BackupList,
     type RestoreOpts,
     type ProfileAction,
+    type ConfigDriftStatus,
+    type ConfigDriftAction,
     type ProfilesStatus,
     type ProfilesConfig,
     type ProfileMgmtArgs,
@@ -101,6 +107,7 @@
   import ProfilesTab from '$lib/components/ProfilesTab.svelte';
   import McpTab from '$lib/components/McpTab.svelte';
   import SyncTab from '$lib/components/SyncTab.svelte';
+  import HomeTab from '$lib/components/HomeTab.svelte';
   import ProvidersTab from '$lib/components/ProvidersTab.svelte';
   import SessionsTab from '$lib/components/SessionsTab.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -129,6 +136,7 @@
   let launchConfig = $state<LaunchConfigStatus | null>(null);
   let mcpData = $state<McpStatus | null>(null);
   let syncData = $state<SyncStatus | null>(null);
+  let driftData = $state<ConfigDriftStatus | null>(null);
   let syncLoaded = $state(false);
   let enginesData = $state<EngineStatus[] | null>(null);
   let providersData = $state<ProfileProvider[] | null>(null);
@@ -501,6 +509,24 @@
     }
   }
 
+  // Finish a half-built profile's folder symlinks with a one-off elevated repair (UAC).
+  // Routes through the 'profiles' run slot, so run-done reloads the tab like any repair.
+  function onRepairElevated(name: string) {
+    if (running) return;
+    running = 'profiles';
+    log = [t('page.prof_log', { verb: t('page.prof_verb_repair', { name }) })];
+    repairProfileElevated(name).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  // Relaunch the whole app elevated. On UAC-decline the Rust command returns an error
+  // (the app stays open) → surface it as a toast.
+  function onRelaunchAdmin() {
+    relaunchAsAdmin().catch(toastErr);
+  }
+
   function onProfileOpen(name: string) {
     openProfileDir(name).catch(toastErr);
   }
@@ -551,6 +577,27 @@
     }
   }
 
+  async function reloadConfigDrift() {
+    try {
+      driftData = await readConfigDrift();
+    } catch {
+      driftData = null;
+    }
+  }
+
+  // --- Home / Overview tab (USE-1): aggregates the other tabs' data ---
+  let homeLoaded = $state(false);
+  async function reloadHome() {
+    await Promise.all([reloadProfiles(), reloadConfigDrift(), reloadSync(), reloadSchedules()]);
+  }
+  $effect(() => {
+    if (active === 'home' && !homeLoaded) {
+      homeLoaded = true;
+      setLoading('home', true);
+      reloadHome().finally(() => setLoading('home', false));
+    }
+  });
+
   function startSync(action: 'query' | 'set', enabled?: string[]) {
     if (running) return;
     running = 'sync';
@@ -566,7 +613,7 @@
     if (active === 'sync' && !syncLoaded) {
       syncLoaded = true;
       setLoading('sync', true);
-      reloadSync()
+      Promise.all([reloadSync(), reloadConfigDrift(), reloadProfiles()])
         .then(() => startSync('query'))
         .finally(() => setLoading('sync', false));
     }
@@ -585,6 +632,35 @@
     askConfirm(t('page.confirm_sync_title'), detail, t('page.confirm_sync_btn'), () =>
       startSync('set', enabled)
     );
+  }
+
+  // --- Config drift (FUN-7): shares the 'sync' run slot + outcome/toast ---
+  function startConfigDrift(action: ConfigDriftAction) {
+    if (running) return;
+    running = 'sync';
+    const verb =
+      action === 'relink'
+        ? t('page.drift_verb_relink')
+        : action === 'sync-now'
+          ? t('page.drift_verb_sync')
+          : t('page.drift_verb_check');
+    log = [t('page.drift_log', { verb })];
+    runConfigDrift(action).catch((e) => {
+      log = [...log, t('page.log_error', { e })];
+      running = null;
+    });
+  }
+
+  function onSyncDrift(action: ConfigDriftAction) {
+    if (action === 'check') {
+      startConfigDrift('check');
+    } else if (action === 'relink') {
+      askConfirm(t('page.confirm_relink_title'), t('page.confirm_relink_msg'),
+        t('page.confirm_relink_btn'), () => startConfigDrift('relink'));
+    } else {
+      askConfirm(t('page.confirm_driftsync_title'), t('page.confirm_driftsync_msg'),
+        t('page.confirm_driftsync_btn'), () => startConfigDrift('sync-now'));
+    }
   }
 
   // --- Providers / engines tab ---
@@ -1105,7 +1181,7 @@
   }
 
   // Command palette (Ctrl+K): jump to any tab + a few quick actions.
-  const NAV_IDS = ['updates', 'forks', 'backup', 'profiles', 'mcp', 'sync', 'providers', 'sessions', 'analytics', 'extensions', 'schedule', 'settings'];
+  const NAV_IDS = ['home', 'updates', 'forks', 'backup', 'profiles', 'mcp', 'sync', 'providers', 'sessions', 'analytics', 'extensions', 'schedule', 'settings'];
   let paletteOpen = $state(false);
   let hotkeyHelpOpen = $state(false);
   const paletteCommands = $derived([
@@ -1190,7 +1266,11 @@
         if (id === 'backup') await reloadBackup();
         if (id === 'profiles') await reloadProfiles();
         if (id === 'mcp') await reloadMcp();
-        if (id === 'sync') await reloadSync();
+        if (id === 'sync') {
+          await reloadSync();
+          await reloadConfigDrift();
+          await reloadProfiles();
+        }
         if (id === 'engine' || id === 'provider') await reloadProviders();
         if (id === 'engine') await reloadStack();
         if (id === 'provider') await reloadOpencode();
@@ -1349,7 +1429,10 @@
         class:opacity-40={blockingRefresh}
         class:pointer-events-none={blockingRefresh}
       >
-      {#if active === 'updates'}
+      {#if active === 'home'}
+        <HomeTab profiles={profilesData} sync={syncData} drift={driftData} schedules={schedulesData}
+          onOpen={(id) => (active = id)} onRefresh={reloadHome} />
+      {:else if active === 'updates'}
         <UpdatesTab {components} {statuses} {running} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
       {:else if active === 'forks'}
         <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} />
@@ -1372,11 +1455,15 @@
           {onProviderSet}
           {onProviderClear}
           onOpenProviders={() => (active = 'providers')}
+          {onRepairElevated}
+          {onRelaunchAdmin}
         />
       {:else if active === 'mcp'}
         <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy} />
       {:else if active === 'sync'}
-        <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply} />
+        <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}
+          driftData={driftData} conflictCount={profilesData?.syncConflicts?.count ?? 0}
+          onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} />
       {:else if active === 'providers'}
         <ProvidersTab
           engines={enginesData}

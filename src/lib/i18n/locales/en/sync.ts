@@ -1,4 +1,21 @@
 export default {
+  // Wave-4 config-drift / time keys
+  configDrift: 'Config files',
+  configDriftDesc: 'Shared config (statusline, CLAUDE.md, RTK.md, hooks…) linked to the deploy source synced across machines.',
+  driftedBadge: '{n} drifted',
+  unlinkedBadge: '{n} not linked',
+  configOk: 'in sync',
+  checkedAt: 'checked {time}',
+  driftCheckBtn: 'Re-check',
+  driftCheckTip: 'Re-scan shared config files for drift',
+  syncNowBtn: 'Sync now',
+  syncNowTip: 'Mirror live config to the deploy source (backup)',
+  relinkBtn: 'Repair links',
+  relinkTip: 'Re-establish shared config symlinks (needs admin)',
+  conflictsBadge: '{n} conflicts',
+  conflictsDesc: 'Syncthing conflict files detected.',
+  cleanConflictsBtn: 'Clean',
+  cleanConflictsTip: 'Delete the *.sync-conflict-* files',
   // Header
   title: 'Sync across machines',
   subtitle:

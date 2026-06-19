@@ -139,13 +139,21 @@ export type ProfileInfo = {
 
 export type ProfilesStatus = {
   generatedAt?: string;
+  isAdmin?: boolean;
   profiles?: ProfileInfo[];
   syncConflicts?: { count: number; files: string[] };
+  // REL-4: backup freshness canary written by Get-ProfilesStatus.ps1.
+  backup?: { lastRun?: string; lastSnapshot?: string; ageHours?: number; stale?: boolean };
 };
 
 export const readProfiles = () => invoke<ProfilesStatus | null>('read_profiles');
 export const runProfiles = (action: ProfileAction, name?: string) =>
   invoke<number>('run_profiles', { action, name });
+// Finish a half-built profile's folder symlinks with admin rights (one-off UAC).
+export const repairProfileElevated = (name: string) =>
+  invoke<number>('repair_profile_elevated', { name });
+// Relaunch the whole app elevated (so inline symlink creation works).
+export const relaunchAsAdmin = () => invoke<void>('relaunch_as_admin');
 export const openProfileDir = (name: string) => invoke('open_profile_dir', { name });
 export const openTerminal = (path: string) => invoke('open_terminal', { path });
 export const launchProfile = (name: string, mode: 'terminal' | 'vscode') =>
@@ -487,6 +495,21 @@ export const readSync = () => invoke<SyncStatus | null>('read_sync');
 export const runSync = (action: SyncAction, enabled?: string[]) =>
   invoke<number>('run_sync', { action, enabled });
 
+// --- Config drift (shared-config file links; FUN-7) ---
+export type ConfigDriftItem = { name: string; state: string };
+export type ConfigDriftStatus = {
+  generatedAt?: string;
+  drifted?: number; // content out of sync (needs Sync now)
+  unlinked?: number; // real files instead of symlinks (needs Repair)
+  ok?: boolean;
+  items?: ConfigDriftItem[];
+};
+export type ConfigDriftAction = 'check' | 'relink' | 'sync-now';
+
+export const readConfigDrift = () => invoke<ConfigDriftStatus | null>('read_config_drift');
+export const runConfigDrift = (action: ConfigDriftAction) =>
+  invoke<number>('run_config_drift', { action });
+
 // --- MCP tab ---
 export type McpServer = { name: string; command: string; deployedIn: string[] };
 export type McpExtra = { name: string; presentIn: string[] };
@@ -507,6 +530,8 @@ export type ScheduleTask = {
   nextRun: string | null;
   lastRun: string | null;
   lastResult: number | null;
+  status?: string; // REL-6: decoded HRESULT (ok/running/never-run/failed(0x..))
+  ok?: boolean | null; // REL-6: true when lastResult is 0 or "running"
   defaultTime: string;
 };
 export type SchedulesStatus = { generatedAt?: string; tasks?: ScheduleTask[] };

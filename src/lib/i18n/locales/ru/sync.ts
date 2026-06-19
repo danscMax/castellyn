@@ -1,4 +1,21 @@
 export default {
+  // Wave-4 config-drift / time keys
+  configDrift: 'Файлы конфига',
+  configDriftDesc: 'Общий конфиг (statusline, CLAUDE.md, RTK.md, hooks…), связанный с источником деплоя, синкается между машинами.',
+  driftedBadge: '{n} разошлось',
+  unlinkedBadge: '{n} без ссылки',
+  configOk: 'в синхроне',
+  checkedAt: 'проверено {time}',
+  driftCheckBtn: 'Перепроверить',
+  driftCheckTip: 'Пересканировать общие файлы конфига на дрейф',
+  syncNowBtn: 'Синхронизировать',
+  syncNowTip: 'Отзеркалить живой конфиг в источник деплоя (бэкап)',
+  relinkBtn: 'Починить связи',
+  relinkTip: 'Заново установить symlink общего конфига (нужен админ)',
+  conflictsBadge: '{n} конфликтов',
+  conflictsDesc: 'Обнаружены конфликт-файлы Syncthing.',
+  cleanConflictsBtn: 'Очистить',
+  cleanConflictsTip: 'Удалить файлы *.sync-conflict-*',
   // Header
   title: 'Синхронизация между компьютерами',
   subtitle:

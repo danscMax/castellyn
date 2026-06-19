@@ -1,6 +1,11 @@
 // Shared UI strings reused across many components. Other namespaces reference
 // these via `common.*` keys; keep additions here truly generic.
 export default {
+  // Wave-4 config-drift / time keys
+  justNow: '刚刚',
+  minutesAgo: '{n} 分钟前',
+  hoursAgo: '{n} 小时前',
+  daysAgo: '{n} 天前',
   // Actions / buttons
   save: '保存',
   cancel: '取消',

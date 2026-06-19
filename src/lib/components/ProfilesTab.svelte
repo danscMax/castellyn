@@ -37,7 +37,9 @@
     onMeasure,
     onProviderSet,
     onProviderClear,
-    onOpenProviders
+    onOpenProviders,
+    onRepairElevated,
+    onRelaunchAdmin
   }: {
     data: ProfilesStatus | null;
     config: ProfilesConfig | null;
@@ -54,11 +56,40 @@
     onProviderSet: (args: ProviderArgs) => void;
     onProviderClear: (name: string) => void;
     onOpenProviders: () => void;
+    onRepairElevated: (name: string) => void;
+    onRelaunchAdmin: () => void;
   } = $props();
 
   const busy = $derived(!!running);
   const profiles = $derived(data?.profiles ?? []);
   const conflicts = $derived(data?.syncConflicts);
+  const isAdmin = $derived(data?.isAdmin ?? false);
+
+  // USE-7: ISO timestamp (Get-ProfilesStatus generatedAt) -> "checked N ago" label so a stale
+  // snapshot is obvious rather than read as live.
+  function fmtAgo(ms?: string) {
+    if (!ms) return '';
+    const then = Date.parse(ms);
+    if (isNaN(then)) return '';
+    const ago = Math.round((Date.now() - then) / 1000);
+    if (ago < 60) return t('common.justNow');
+    if (ago < 3600) return t('common.minutesAgo', { n: Math.floor(ago / 60) });
+    if (ago < 86400) return t('common.hoursAgo', { n: Math.floor(ago / 3600) });
+    return t('common.daysAgo', { n: Math.floor(ago / 86400) });
+  }
+
+  // Folder symlinks need admin. When elevated, repair inline (streamed); otherwise offer the
+  // elevate dialog (one-off UAC repair or relaunch the whole app as admin).
+  let elevOpen = $state(false);
+  let elevProfile = $state('');
+  function finishProfile(name: string) {
+    if (isAdmin) {
+      onAction('repair', name);
+    } else {
+      elevProfile = name;
+      elevOpen = true;
+    }
+  }
 
   // Configured (not just observed) linked folders, per profile.
   const ALL_FOLDERS = ['agents', 'commands', 'hooks', 'plugins', 'skills', 'projects', 'history.jsonl'];
@@ -245,7 +276,7 @@
       items.push({
         label: t('profiles.menuRepair'),
         title: t('profiles.menuRepairTip'),
-        onClick: () => onAction('repair', p.name),
+        onClick: () => finishProfile(p.name),
         disabled: busy
       });
     }
@@ -316,6 +347,7 @@
     <div>
       <h1 class="text-lg font-semibold">{t('profiles.title')}</h1>
       <p class="text-sw-sm text-sw-text-secondary">{t('profiles.health', { n: profiles.length, profiles: pProfile(profiles.length) })}</p>
+      {#if data?.generatedAt}<p class="text-sw-xs text-sw-text-muted mt-0.5">{t('profiles.checkedAt', { time: fmtAgo(data.generatedAt) })}</p>{/if}
     </div>
     <div class="flex shrink-0 gap-sw-2">
       <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => onAction('check')}
@@ -361,6 +393,20 @@
     onCancel={() => (pvOpen = false)}
   />
 
+  <ModalShell open={elevOpen} onClose={() => (elevOpen = false)} size="sm" role="alertdialog">
+    <div class="flex flex-col gap-sw-3 p-sw-1">
+      <h2 class="text-base font-semibold">{t('profiles.elevateTitle', { name: elevProfile })}</h2>
+      <p class="text-sw-sm text-sw-text-secondary">{t('profiles.elevateMsg')}</p>
+      <div class="mt-sw-2 flex flex-col gap-sw-2">
+        <button class="sw-btn sw-btn-primary" onclick={() => { elevOpen = false; onRepairElevated(elevProfile); }}
+          title={t('profiles.elevateRepairOnceTip')}>{t('profiles.elevateRepairOnce')}</button>
+        <button class="sw-btn" onclick={() => { elevOpen = false; onRelaunchAdmin(); }}
+          title={t('profiles.elevateRelaunchTip')}>{t('profiles.elevateRelaunch')}</button>
+        <button class="sw-btn sw-btn-ghost" onclick={() => (elevOpen = false)}>{t('common.cancel')}</button>
+      </div>
+    </div>
+  </ModalShell>
+
   <!-- Recommendations -->
   {#if data}
     {#if hasIssues}
@@ -372,8 +418,9 @@
               <span>{t('profiles.brokenLinks', { n: brokenLinks.length, profiles: pProfile(brokenLinks.length) })}</span>
               <div class="flex flex-wrap gap-sw-2">
                 {#each brokenLinks as p (p.name)}
-                  <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => onAction('repair', p.name)}
-                    title={t('profiles.repairNameTip', { name: p.name })}>{t('profiles.repairName', { name: p.name })}</button>
+                  <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => finishProfile(p.name)}
+                    title={isAdmin ? t('profiles.repairNameTip', { name: p.name }) : t('profiles.finishAdminTip', { name: p.name })}>
+                    {isAdmin ? t('profiles.repairName', { name: p.name }) : t('profiles.finishAdmin', { name: p.name })}</button>
                 {/each}
               </div>
             </li>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { openPath, type SyncStatus, type SyncItem } from '$lib/ipc';
+  import { openPath, type SyncStatus, type SyncItem, type ConfigDriftStatus, type ConfigDriftAction } from '$lib/ipc';
   import Toggle from './Toggle.svelte';
   import { t } from '$lib/i18n';
 
@@ -7,15 +7,35 @@
     data,
     running,
     onRefresh,
-    onApply
+    onApply,
+    driftData = null,
+    conflictCount = 0,
+    onDriftApply,
+    onCleanConflicts
   }: {
     data: SyncStatus | null;
     running: string | null;
     onRefresh: () => void;
     onApply: (enabled: string[]) => void;
+    driftData?: ConfigDriftStatus | null;
+    conflictCount?: number;
+    onDriftApply?: (action: ConfigDriftAction) => void;
+    onCleanConflicts?: () => void;
   } = $props();
 
   const busy = $derived(!!running);
+
+  // ISO timestamp (PowerShell Get-Date -Format 'o') -> "N min ago" style label.
+  function fmtAgo(ms?: string) {
+    if (!ms) return '';
+    const then = Date.parse(ms);
+    if (isNaN(then)) return '';
+    const ago = Math.round((Date.now() - then) / 1000);
+    if (ago < 60) return t('common.justNow');
+    if (ago < 3600) return t('common.minutesAgo', { n: Math.floor(ago / 60) });
+    if (ago < 86400) return t('common.hoursAgo', { n: Math.floor(ago / 3600) });
+    return t('common.daysAgo', { n: Math.floor(ago / 86400) });
+  }
 
   // Static descriptors; user-facing label/desc are resolved reactively via t() in markup.
   const ITEMS: { key: SyncItem; labelKey: string; path: string; descKey: string }[] = [
@@ -128,6 +148,50 @@
         </p>
       {/if}
     </div>
+
+    <!-- Config-file drift (shared config: statusline.py, CLAUDE.md, RTK.md, hooks, ...) -->
+    {#if driftData}
+      {@const drifted = driftData.drifted ?? 0}
+      {@const unlinked = driftData.unlinked ?? 0}
+      <div class="sw-card mb-sw-4 {drifted > 0 || unlinked > 0 ? 'border border-amber-500/40' : ''}">
+        <div class="mb-sw-2 flex items-center gap-sw-2">
+          <span class="font-medium">{t('sync.configDrift')}</span>
+          {#if drifted > 0}
+            <span class="badge badge-warn">{t('sync.driftedBadge', { n: drifted })}</span>
+          {:else if unlinked > 0}
+            <span class="badge badge-warn">{t('sync.unlinkedBadge', { n: unlinked })}</span>
+          {:else}
+            <span class="badge badge-ok">{t('sync.configOk')}</span>
+          {/if}
+          {#if driftData.generatedAt}<span class="text-sw-xs text-sw-text-muted">{t('sync.checkedAt', { time: fmtAgo(driftData.generatedAt) })}</span>{/if}
+        </div>
+        <p class="text-sw-sm text-sw-text-secondary mb-sw-3">{t('sync.configDriftDesc')}</p>
+        <div class="flex flex-wrap gap-sw-2">
+          <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => onDriftApply?.('check')}
+            title={t('sync.driftCheckTip')}>{t('sync.driftCheckBtn')}</button>
+          {#if drifted > 0}
+            <button class="sw-btn" disabled={busy} onclick={() => onDriftApply?.('sync-now')}
+              title={t('sync.syncNowTip')}>{t('sync.syncNowBtn')}</button>
+          {/if}
+          {#if drifted > 0 || unlinked > 0}
+            <button class="sw-btn" disabled={busy} onclick={() => onDriftApply?.('relink')}
+              title={t('sync.relinkTip')}>{t('sync.relinkBtn')}</button>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Sync conflicts (USE-8) -->
+    {#if conflictCount > 0}
+      <div class="sw-card mb-sw-4 flex items-center gap-sw-2 border border-amber-500/40 text-sw-sm">
+        <span class="badge badge-warn">{t('sync.conflictsBadge', { n: conflictCount })}</span>
+        <span class="text-sw-text-secondary">{t('sync.conflictsDesc')}</span>
+        {#if onCleanConflicts}
+          <button class="sw-btn sw-btn-ghost ml-auto" disabled={busy} onclick={onCleanConflicts}
+            title={t('sync.cleanConflictsTip')}>{t('sync.cleanConflictsBtn')}</button>
+        {/if}
+      </div>
+    {/if}
 
     <!-- Drift warning -->
     {#if data.stignoreExists && data.stignoreMatches === false}

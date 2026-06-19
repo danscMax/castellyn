@@ -1,9 +1,11 @@
 # Architecture
 
 Castellyn is a **Tauri v2** desktop app: a Svelte 5 frontend talking to a Rust backend over
-Tauri IPC. The backend mostly orchestrates the user's PowerShell maintenance scripts under
-`SCRIPTS_ROOT` (default `E:\Scripts`) and exposes their state to the UI. No database, no
-sidecar process, single binary.
+Tauri IPC. The backend orchestrates the user's PowerShell maintenance scripts under
+`SCRIPTS_ROOT` (default `E:\Scripts`) and exposes their state to the UI — but increasingly does
+the work **natively in Rust**: many former PS surfaces (sync, providers, router, opencode,
+plugins, engine, config-drift) are now native commands. No database, no sidecar process,
+single binary.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -32,7 +34,8 @@ One file holds all commands. Key pieces:
   `run_engine`, `run_provider`, `run_router`, `run_schedule`, `run_plugin`, …).
 - **Native readers** (no script, pure Rust) where it's cheaper/safer: `read_mcp`,
   `read_providers` (reads each profile's `settings.json` env, never returns tokens — only
-  `hasToken`), `read_engines` (+ TCP `port_listening`), `list_skills`, `list_plugin_contents`.
+  `hasToken`), `read_engines` (+ TCP `port_listening`), `read_config_drift` (shared-config link
+  health), `list_skills`, `list_plugin_contents`.
 - **`CREATE_NO_WINDOW`** is set on every `Command` (pwsh/reg/taskkill/explorer) so no console
   window flashes. Required.
 - **Config** — `HubConfig { scriptsRoot, startHidden, fetchTimeoutSec, ghTimeoutSec }` at
@@ -43,15 +46,23 @@ One file holds all commands. Key pieces:
 - **Tray / window** — `build_tray` (Show / Check-all / Quit), close-to-tray, autostart via
   HKCU\…\Run value `AgentHub`. Tray menu strings are hardcoded Russian (not i18n'd).
 
-Registered commands (frontend calls these via `lib/ipc.ts`): `list_components`, `read_status`,
-`run_component`, `run_forks`, `list_backups`, `run_backup`, `read_profiles`, `run_profiles`,
-`read_profiles_config`, `run_profile_mgmt`, `open_profile_dir`, `launch_profile`,
-`read_launch_config`, `set_launch_config`, `measure_context`, `read_sync`, `run_sync`,
-`read_engines`, `update_engine`, `run_engine`, `run_router`, `run_connect_router`,
-`read_engine_models`, `read_providers`, `run_provider`, `read_mcp`, `run_mcp`, `list_plugins`,
-`list_skills`, `list_plugin_updates`, `list_plugin_contents`, `run_plugin`, `read_schedules`,
-`run_schedule`, `read_config`, `write_config`, `app_paths`, `open_path`, `open_terminal`,
-`get_autostart`, `set_autostart`, `cancel_run`.
+**Registered commands** — the canonical, authoritative list is the `tauri::generate_handler![…]`
+block at the bottom of `lib.rs` (~80 commands; frontend calls them via typed wrappers in
+`lib/ipc.ts`). Don't maintain a copy here — it rots. They group roughly as:
+
+- **components / updates** — `list_components`, `read_status`, `run_component`, `cancel_run`
+- **forks** — `run_forks`, `run_fork_repo`, `cancel_fork_repo`, `read_fork_repo_status`, `list_github_repos`
+- **backup / restore** — `list_backups`, `run_backup`
+- **profiles** — `read_profiles`, `run_profiles`, `run_profile_mgmt`, `repair_profile_elevated`,
+  `relaunch_as_admin` (UAC for folder symlinks), `open_profile_dir`, `launch_profile`, `read_profile_usage`
+- **sync + config-drift** — `read_sync`, `run_sync`, `read_config_drift`, `run_config_drift`
+- **providers / engines / router / opencode** — `read_providers`, `run_provider`, `read_engines`,
+  `run_engine`, `run_router`, `run_connect_router`, `read_stack`, `run_stack`, my-provider CRUD, key rotation
+- **MCP / plugins / skills** — `read_mcp`, `run_mcp`, `list_plugins`, `run_plugin`, `list_skills`, `delete_skill`
+- **schedules** — `read_schedules`, `run_schedule`
+- **sessions** (PTY) — `session_spawn`, `session_write`, `session_resize`, `session_kill`
+- **config / shell** — `read_config`, `write_config`, `export_config`, `import_config`, `app_paths`,
+  `open_path`, `open_terminal`, `get_autostart`, `set_autostart`, `set_toggle_hotkey`
 
 ## Frontend (`src/`)
 
@@ -60,14 +71,21 @@ Registered commands (frontend calls these via `lib/ipc.ts`): `list_components`, 
   (`$effect`), and centralizes the **confirm dialog** (`askConfirm`/`doConfirm`) and the
   **run lifecycle** (`run-log` appends to the console log; `run-done` reloads the relevant
   tab's data and surfaces a toast via `lib/outcome.ts`).
-- **Components** (`lib/components/`): one per tab (`UpdatesTab`, `ForksTab`, `BackupTab`,
-  `ProfilesTab`, `McpTab`, `SyncTab`, `ProvidersTab`, `PluginsTab`, `ScheduleTab`,
-  `SettingsTab`) + dialogs (`ConfirmDialog`, `RestoreDialog`, `ProfileEditDialog`,
-  `LaunchConfigDialog`, `ProviderEditDialog`, `RouterConnectDialog`) + shell (`Sidebar`,
-  `Console`, `WindowTitleBar`, `ToastHost`, `Toggle`, `DropdownMenu`, `ComponentCard`).
+- **Components** (`lib/components/`, ~42 files): one per tab — `HomeTab` (USE-1 health overview),
+  `UpdatesTab`, `ForksTab`, `BackupTab`, `ProfilesTab`, `McpTab`, `SyncTab`, `ProvidersTab`,
+  `PluginsTab`, `ScheduleTab`, `SessionsTab`, `AnalyticsTab`, `SettingsTab` — plus dialogs (all
+  built on `ModalShell`: `ConfirmDialog`, `RestoreDialog`, `ProfileEditDialog`, `LaunchConfigDialog`,
+  `SessionLaunchDialog`, `ProviderEditDialog`, `MyProviderEditDialog`, `RouterConnectDialog`,
+  `HotkeyHelp`), shell (`Sidebar`, `Console`, `WindowTitleBar`, `ToastHost`, `CommandPalette`),
+  and shared widgets (`Toggle`, `Select`, `FolderField`, `DropdownMenu`, `DataTable`, `StatusDot`,
+  `Sparkline`, `Spinner`, `SecretInput`, `TerminalPane`, `ComponentCard`, `StackHealthCard`).
+  Popovers (`DropdownMenu`/`Select`/`FolderField`) pin to their anchor via `lib/floating.ts`
+  (`use:anchored`, `position: fixed`) so they escape overflow-clipping tables/modals.
 - **Support modules**: `lib/ipc.ts` (typed invoke + types), `lib/i18n/` (localization),
   `lib/outcome.ts` (run → toast), `lib/attention.ts` (sidebar badges), `lib/glossary.ts`
-  (per-component help), `lib/theme.ts` (dark/light), `lib/toast.svelte.ts` (toast store).
+  (per-component help), `lib/theme.ts` (dark/light), `lib/toast.svelte.ts` (toast store),
+  `lib/floating.ts` (anchored popovers), `lib/relativeTime.ts` (locale-aware “N ago”),
+  `lib/running.svelte.ts` (run-state store).
 - **Persistence** is `localStorage` (`cmh-theme`, `cmh-language`, `cmh-console-*`). Init runs
   in `routes/+layout.svelte` (`initTheme()`, `initLocale()`).
 
@@ -95,9 +113,13 @@ the envelope in `ComponentCard`/`outcome.ts`/`attention.ts`.
 Claude Code "profiles" are isolated config dirs `~/.claude-<name>` with junction/symlink links
 to shared content (`skills`, `commands`, `agents`, `plugins`, `projects`, `history.jsonl`)
 under `~/.claude`. Castellyn reads health via a read-only `Get-ProfilesStatus.ps1`
-(`profiles.last.json`) and mutates via data-driven scripts that read `config/profiles.json`
-(install/repair/add/remove/rename/recolor/set-links). Symlinking *folders* needs admin (UAC);
-junctions/file-links don't.
+(`profiles.last.json`, incl. a backup-freshness canary) and mutates via data-driven scripts that
+read `config/profiles.json` (install/repair/add/remove/rename/recolor/set-links). Symlinking
+*folders* needs admin (UAC); junctions/file-links don't — so a half-built profile can be finished
+with a one-off elevated repair (`repair_profile_elevated`, or `relaunch_as_admin` to elevate the
+whole app). Separately, **shared-config file links** (settings/keybindings/etc.) have their own
+drift check: `Check-Integrity.ps1` → `links.last.json`, surfaced via `read_config_drift` and fixed
+with `run_config_drift` (`relink` / `sync-now`).
 
 ## Gotchas
 

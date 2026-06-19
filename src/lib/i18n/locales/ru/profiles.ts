@@ -1,4 +1,6 @@
 export default {
+  // Wave-4 config-drift / time keys
+  checkedAt: 'проверено {time}',
   // Header
   title: 'Профили',
   health: 'Здоровье {n} {profiles} Claude Code',
@@ -15,6 +17,14 @@ export default {
   brokenLinks: 'Нарушены общие связи: {n} {profiles}.',
   repairName: 'Починить {name}',
   repairNameTip: 'Починить связи профиля «{name}» без полной переустановки',
+  finishAdmin: 'Завершить {name} (админ)',
+  finishAdminTip: 'У профиля «{name}» не хватает общих папок — их создание требует прав администратора',
+  elevateTitle: 'Завершить профиль «{name}»',
+  elevateMsg: 'Общие папки (agents, commands, hooks, plugins, skills) создаются как symlink и требуют прав администратора. Выберите способ.',
+  elevateRepairOnce: 'Разово починить от администратора',
+  elevateRepairOnceTip: 'Запросить права (UAC) и создать недостающие ссылки только для этого профиля',
+  elevateRelaunch: 'Перезапустить приложение от администратора',
+  elevateRelaunchTip: 'Перезапустить Castellyn с правами администратора — дальше всё работает без отдельных запросов UAC',
   missingDirs: 'Отсутствуют каталоги профилей: {names}.',
   create: 'Создать',
   createTip: 'Переустановить профили — создаст недостающие',

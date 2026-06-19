@@ -1,4 +1,7 @@
 export default {
+  // Home/Overview tab keys
+  home: '主页',
+  homeTip: '一览整个设置的健康状况',
   brand: 'Castellyn',
   updates: '更新',
   forks: '分叉',

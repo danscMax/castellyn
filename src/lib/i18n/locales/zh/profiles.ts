@@ -1,4 +1,6 @@
 export default {
+  // Wave-4 config-drift / time keys
+  checkedAt: '检查于 {time}',
   // Header
   title: '配置',
   health: '{n} 个 Claude Code {profiles}的健康状况',
@@ -15,6 +17,14 @@ export default {
   brokenLinks: '有 {n} 个{profiles}的共享链接已损坏。',
   repairName: '修复 {name}',
   repairNameTip: '修复配置「{name}」的链接，无需完全重新安装',
+  finishAdmin: '完成 {name}（管理员）',
+  finishAdminTip: '配置「{name}」缺少共享文件夹 — 创建它们需要管理员权限',
+  elevateTitle: '完成配置「{name}」',
+  elevateMsg: '共享文件夹（agents、commands、hooks、plugins、skills）以符号链接方式创建，需要管理员权限。请选择方式。',
+  elevateRepairOnce: '以管理员身份修复一次',
+  elevateRepairOnceTip: '请求提权（UAC）并仅为此配置创建缺失的链接',
+  elevateRelaunch: '以管理员身份重启应用',
+  elevateRelaunchTip: '以管理员权限重启 Castellyn — 之后所有操作无需单独的 UAC 提示',
   missingDirs: '缺少配置目录：{names}。',
   create: '创建',
   createTip: '重新安装配置——将创建缺少的目录',

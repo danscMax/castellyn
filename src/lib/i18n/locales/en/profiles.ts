@@ -1,4 +1,6 @@
 export default {
+  // Wave-4 config-drift / time keys
+  checkedAt: 'health checked {time}',
   // Header
   title: 'Profiles',
   health: 'Health of {n} Claude Code {profiles}',
@@ -15,6 +17,14 @@ export default {
   brokenLinks: '{n} {profiles} have broken shared links.',
   repairName: 'Repair {name}',
   repairNameTip: 'Repair the “{name}” profile links without a full reinstall',
+  finishAdmin: 'Finish {name} (admin)',
+  finishAdminTip: 'The “{name}” profile is missing shared folders — creating them needs administrator rights',
+  elevateTitle: 'Finish profile “{name}”',
+  elevateMsg: 'Shared folders (agents, commands, hooks, plugins, skills) are created as symlinks and require administrator rights. Choose how to proceed.',
+  elevateRepairOnce: 'Repair once as administrator',
+  elevateRepairOnceTip: 'Request elevation (UAC) and create the missing links for this profile only',
+  elevateRelaunch: 'Relaunch the app as administrator',
+  elevateRelaunchTip: 'Restart Castellyn elevated — afterwards everything works without separate UAC prompts',
   missingDirs: 'Missing profile directories: {names}.',
   create: 'Create',
   createTip: 'Reinstall profiles — will create the missing ones',

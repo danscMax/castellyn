@@ -1,4 +1,21 @@
 export default {
+  // Wave-4 config-drift / time keys
+  configDrift: '配置文件',
+  configDriftDesc: '共享配置（statusline、CLAUDE.md、RTK.md、hooks…）链接到跨机器同步的部署源。',
+  driftedBadge: '{n} 个漂移',
+  unlinkedBadge: '{n} 个未链接',
+  configOk: '已同步',
+  checkedAt: '检查于 {time}',
+  driftCheckBtn: '重新检查',
+  driftCheckTip: '重新扫描共享配置文件的漂移',
+  syncNowBtn: '立即同步',
+  syncNowTip: '将实时配置镜像到部署源（备份）',
+  relinkBtn: '修复链接',
+  relinkTip: '重新建立共享配置符号链接（需要管理员）',
+  conflictsBadge: '{n} 个冲突',
+  conflictsDesc: '检测到 Syncthing 冲突文件。',
+  cleanConflictsBtn: '清理',
+  cleanConflictsTip: '删除 *.sync-conflict-* 文件',
   // Header
   title: '跨设备同步',
   subtitle:

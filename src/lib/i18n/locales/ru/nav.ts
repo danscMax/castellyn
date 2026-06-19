@@ -1,4 +1,7 @@
 export default {
+  // Home/Overview tab keys
+  home: 'Главная',
+  homeTip: 'Здоровье всей системы одним взглядом',
   brand: 'Castellyn',
   updates: 'Обновления',
   forks: 'Форки',

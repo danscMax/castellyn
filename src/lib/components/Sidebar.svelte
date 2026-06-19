@@ -22,6 +22,7 @@
   // backup) → settings last. Users can drag to reorder; that custom order is persisted and
   // re-seeded from this default whenever ORD_VER below is bumped.
   const items = [
+    { id: 'home', labelKey: 'nav.home', tipKey: 'nav.homeTip', icon: '⌂', enabled: true },
     { id: 'sessions', labelKey: 'nav.sessions', tipKey: 'nav.sessionsTip', icon: '▦', enabled: true },
     { id: 'profiles', labelKey: 'nav.profiles', tipKey: 'nav.profilesTip', icon: '☰', enabled: true },
     { id: 'providers', labelKey: 'nav.providers', tipKey: 'nav.providersTip', icon: '⚡', enabled: true },
@@ -42,7 +43,7 @@
   const ORD_VER_KEY = 'cmh-sidebar-order-ver';
   // Bump whenever the default `items` order above changes — re-seeds everyone to the new default
   // once (overriding a stale saved order), while still letting later manual reorders persist.
-  const ORD_VER = '2';
+  const ORD_VER = '3';
   let collapsed = $state(false);
   let order = $state<string[]>(items.map((i) => i.id));
   const orderedItems = $derived(

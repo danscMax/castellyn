@@ -688,6 +688,11 @@ const PROFILES_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\G
 const INSTALL_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Install-ClaudeProfiles.ps1";
 const REPAIR_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Repair-ProfileLinks.ps1";
 const PROFILES_JSON_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\profiles.last.json";
+// Config-drift (FUN-7): shared-config FILE link health. links.last.json is written by
+// Check-Integrity.ps1; Relink self-elevates; sync-now reuses the Backup mirror.
+const RELINK_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Relink-SharedConfig.ps1";
+const INTEGRITY_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Check-Integrity.ps1";
+const CONFIG_DRIFT_JSON_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\links.last.json";
 
 /// Read the cached profiles health snapshot (profiles.last.json). Null until first check.
 #[tauri::command]
@@ -716,7 +721,7 @@ async fn run_profiles(
         "reinstall" => (INSTALL_SCRIPT_REL, vec!["-Force".to_string()]),
         "repair" => {
             let n = name.unwrap_or_default();
-            if !PROFILE_NAMES.contains(&n.as_str()) {
+            if !profile_names().iter().any(|x| x == &n) {
                 return Err(format!("неизвестный профиль: {n}"));
             }
             (REPAIR_SCRIPT_REL, vec!["-Name".to_string(), n])
@@ -725,6 +730,39 @@ async fn run_profiles(
     };
     let script = abs(script_rel);
     spawn_streamed(app, state, "profiles".to_string(), script, args).await
+}
+
+/// Read the cached shared-config link-drift snapshot (links.last.json from Check-Integrity.ps1).
+/// Null until the first integrity check has run. Shape: {generatedAt, drifted, unlinked, ok, items}.
+#[tauri::command]
+fn read_config_drift() -> Result<Option<serde_json::Value>, String> {
+    match std::fs::read_to_string(abs(CONFIG_DRIFT_JSON_REL)) {
+        Ok(content) => parse_json_bom(&content)
+            .map(Some)
+            .map_err(|e| format!("parse links.last.json: {e}")),
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("read links.last.json: {e}")),
+    }
+}
+
+/// Run a config-drift action: `check` (refresh links.last.json), `relink` (re-establish the shared
+/// config-file symlinks; the script self-elevates via UAC and returns a real exit code), or
+/// `sync-now` (Backup mirror live -> config). Uses the "sync" run slot so the existing outcome/
+/// toast + run-done reload apply.
+#[tauri::command]
+async fn run_config_drift(
+    app: AppHandle,
+    state: State<'_, RunState>,
+    action: String,
+) -> Result<i32, String> {
+    let (script_rel, args): (&str, Vec<String>) = match action.as_str() {
+        "check" => (INTEGRITY_SCRIPT_REL, Vec::new()),
+        "relink" => (RELINK_SCRIPT_REL, vec!["-NonInteractive".to_string()]),
+        "sync-now" => (BACKUP_SCRIPT_REL, vec!["-Force".to_string()]),
+        _ => return Err(format!("неизвестное действие config-drift: {action}")),
+    };
+    let script = abs(script_rel);
+    spawn_streamed(app, state, "sync".to_string(), script, args).await
 }
 
 const PROFILES_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\profiles.json";
@@ -801,6 +839,58 @@ async fn run_profile_mgmt(
     }
     let script = abs(PROFILE_MGMT_SCRIPT_REL);
     spawn_streamed(app, state, "profiles".to_string(), script, args).await
+}
+
+/// Repair ONE profile's shared-folder links with admin rights (folder symlinks need UAC).
+/// Launches Repair-ProfileLinks.ps1 elevated via `Start-Process -Verb RunAs` and waits.
+/// The elevated child's output isn't piped back (UAC severs inherited pipes); the repair
+/// script refreshes profiles.last.json itself, so the UI reloads on `run-done`.
+#[tauri::command]
+async fn repair_profile_elevated(
+    app: AppHandle,
+    state: State<'_, RunState>,
+    name: String,
+) -> Result<i32, String> {
+    if !profile_names().iter().any(|x| x == &name) {
+        return Err(format!("неизвестный профиль: {name}"));
+    }
+    let repair = abs(REPAIR_SCRIPT_REL);
+    // name is validated ([A-Za-z0-9_-]); repair path carries no single quotes — safe in 'literals'.
+    // NB: Start-Process does NOT quote -ArgumentList elements, so a `-File <path with spaces/!>`
+    // silently breaks (elevated pwsh can't find the script) while `-Wait` swallows the child's
+    // exit code → false success. Pass the script via `-Command "& '<path>' -Name '<n>'"` (single-
+    // quoted path survives) and check the real ExitCode via -PassThru.
+    let inner = format!(
+        "Write-Host 'Запуск починки связей от администратора (подтвердите UAC)…'; \
+         try {{ $p = Start-Process -FilePath pwsh -Verb RunAs -PassThru -Wait -ArgumentList \
+         @('-NoProfile','-ExecutionPolicy','Bypass','-Command',\"& '{repair}' -Name '{name}'\") \
+         -ErrorAction Stop; \
+         if ($p.ExitCode -eq 0) {{ Write-Host 'Готово.' }} else {{ Write-Host ('Ошибка починки, код ' + $p.ExitCode); exit 1 }} }} \
+         catch {{ Write-Host 'Повышение прав отменено или не удалось.'; exit 1 }}"
+    );
+    let args = vec!["-NoProfile".to_string(), "-Command".to_string(), inner];
+    spawn_streamed_prog(app, state, "profiles".to_string(), "pwsh".to_string(), args, None).await
+}
+
+/// Relaunch the whole app elevated (so inline symlink creation works). Launches a new
+/// elevated instance via `Start-Process -Verb RunAs`; on success quits this instance, on
+/// UAC-decline leaves it running (so the user isn't left with nothing).
+#[tauri::command]
+fn relaunch_as_admin(app: AppHandle) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    let exe_q = exe.display().to_string().replace('\'', "''");
+    let inner = format!("try {{ Start-Process -FilePath '{exe_q}' -Verb RunAs -ErrorAction Stop }} catch {{ exit 1 }}");
+    let status = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-Command", &inner])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|e| format!("не удалось запустить pwsh: {e}"))?;
+    if status.success() {
+        app.exit(0);
+        Ok(())
+    } else {
+        Err("Повышение прав отменено.".into())
+    }
 }
 
 // --- Sync tab (native; was Manage-Sync.ps1) ---
@@ -3804,10 +3894,10 @@ fn read_mcp() -> Result<McpStatus, String> {
     // Per-profile deployed sets.
     let mut existing_profiles: Vec<String> = Vec::new();
     let mut per_profile: Vec<(String, Vec<String>)> = Vec::new();
-    for p in PROFILE_NAMES {
-        if let Some(servers) = profile_mcp_servers(p) {
-            existing_profiles.push(p.to_string());
-            per_profile.push((p.to_string(), servers));
+    for p in profile_names() {
+        if let Some(servers) = profile_mcp_servers(&p) {
+            existing_profiles.push(p.clone());
+            per_profile.push((p, servers));
         }
     }
 
@@ -5236,6 +5326,8 @@ pub fn run() {
             run_profiles,
             read_profiles_config,
             run_profile_mgmt,
+            repair_profile_elevated,
+            relaunch_as_admin,
             open_profile_dir,
             launch_profile,
             read_launch_config,
@@ -5243,6 +5335,8 @@ pub fn run() {
             measure_context,
             read_sync,
             run_sync,
+            read_config_drift,
+            run_config_drift,
             read_engines,
             update_engine,
             run_engine,
