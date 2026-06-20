@@ -884,13 +884,20 @@ async fn repair_profile_elevated(
     // silently breaks (elevated pwsh can't find the script) while `-Wait` swallows the child's
     // exit code → false success. Pass the script via `-Command "& '<path>' -Name '<n>'"` (single-
     // quoted path survives) and check the real ExitCode via -PassThru.
+    // Write-Host args are localized; the translations are deliberately apostrophe-free so they stay
+    // safe inside PowerShell single-quoted strings.
+    let lang = cur_lang();
+    let s_start = tr("log.relink_start", lang);
+    let s_done = tr("log.done", lang);
+    let s_err = tr("log.relink_error_code", lang);
+    let s_cancel = tr("log.relink_cancelled", lang);
     let inner = format!(
-        "Write-Host 'Запуск починки связей от администратора (подтвердите UAC)…'; \
+        "Write-Host '{s_start}'; \
          try {{ $p = Start-Process -FilePath pwsh -Verb RunAs -PassThru -Wait -ArgumentList \
          @('-NoProfile','-ExecutionPolicy','Bypass','-Command',\"& '{repair}' -Name '{name}'\") \
          -ErrorAction Stop; \
-         if ($p.ExitCode -eq 0) {{ Write-Host 'Готово.' }} else {{ Write-Host ('Ошибка починки, код ' + $p.ExitCode); exit 1 }} }} \
-         catch {{ Write-Host 'Повышение прав отменено или не удалось.'; exit 1 }}"
+         if ($p.ExitCode -eq 0) {{ Write-Host '{s_done}' }} else {{ Write-Host ('{s_err}' + $p.ExitCode); exit 1 }} }} \
+         catch {{ Write-Host '{s_cancel}'; exit 1 }}"
     );
     let args = vec!["-NoProfile".to_string(), "-Command".to_string(), inner];
     spawn_streamed_prog(app, state, "profiles".to_string(), "pwsh".to_string(), args, None).await
@@ -1849,7 +1856,7 @@ fn emit_engine_started(app: &AppHandle) {
         LogLine {
             component: "engine".into(),
             stream: "out".into(),
-            line: "Запрошен запуск в отдельном окне. Статус обновится по проверке порта.".into(),
+            line: tr("log.detached_launch", cur_lang()).into(),
         },
     );
     let _ = app.emit("run-done", RunDone { component: "engine".into(), code: 0 });
@@ -1942,7 +1949,7 @@ fn stream_output(
             o.status.code()
         }
         Err(e) => {
-            err(&format!("    не удалось запустить: {e}"));
+            err(&trv("log.spawn_failed_indent", cur_lang(), &[("e", &e)]));
             None
         }
     }
@@ -1961,11 +1968,11 @@ fn apply_router_config(
 ) -> i32 {
     use serde_json::{json, Value};
     if backend.is_empty() {
-        err("ОШИБКА: для configure нужен -Backend (URL движка).");
+        err(tr("log.cfg_need_backend", cur_lang()));
         return 1;
     }
     if model.is_empty() {
-        err("ОШИБКА: для configure нужен -Model (например, из «Загрузить модели»).");
+        err(tr("log.cfg_need_model", cur_lang()));
         return 1;
     }
     // ccr wants the full chat-completions URL.
@@ -1983,9 +1990,7 @@ fn apply_router_config(
     if !obj.get("Providers").map(|p| p.is_array()).unwrap_or(false) {
         obj.insert("Providers".into(), json!([]));
     }
-    out(&format!(
-        "  Провайдер '{name}' -> {api_base}  (модель {model}); Router.default = {name},{model}"
-    ));
+    out(&trv("log.provider_line", cur_lang(), &[("name", &name), ("api_base", &api_base), ("model", &model)]));
     let provider =
         json!({ "name": name, "api_base_url": api_base, "api_key": "not-needed", "models": [model] });
     {
@@ -2020,15 +2025,15 @@ fn apply_router_config(
     let serialized = match serde_json::to_string_pretty(&cfg) {
         Ok(s) => s,
         Err(e) => {
-            err(&format!("ОШИБКА сериализации config.json: {e}"));
+            err(&trv("log.ser_config", cur_lang(), &[("e", &e)]));
             return 1;
         }
     };
     if let Err(e) = write_file_no_bom(cfg_path, &serialized) {
-        err(&format!("ОШИБКА записи config.json: {e}"));
+        err(&trv("log.write_config_err", cur_lang(), &[("e", &e)]));
         return 1;
     }
-    out("  config.json записан (бэкап .bak).");
+    out(tr("log.config_written", cur_lang()));
     0
 }
 
@@ -2049,20 +2054,20 @@ fn setup_router_native(
 
     if action == "install" {
         if exe_on_path("ccr").is_some() {
-            out("  ccr уже установлен.");
+            out(tr("log.ccr_already", cur_lang()));
             return 0;
         }
         let Some(npm) = exe_on_path("npm") else {
-            err("  ОШИБКА: npm не найден на PATH (нужен Node.js).");
+            err(tr("log.npm_missing", cur_lang()));
             return 1;
         };
         out("  npm install -g @musistudio/claude-code-router …");
         stream_output(&npm, &["install", "-g", "@musistudio/claude-code-router"], out, err);
         if exe_on_path("ccr").is_some() {
-            out("  ccr установлен.");
+            out(tr("log.ccr_installed", cur_lang()));
             0
         } else {
-            out("  Не удалось подтвердить установку ccr.");
+            out(tr("log.ccr_unconfirmed", cur_lang()));
             1
         }
     } else {
@@ -2074,7 +2079,7 @@ fn setup_router_native(
             out("  ccr restart …");
             stream_output(&ccr, &["restart"], out, err);
         }
-        out("  Готово. Навесь на профиль пресет «Claude Code Router» (http://127.0.0.1:3456).");
+        out(tr("log.ccr_done_hint", cur_lang()));
         0
     }
 }
@@ -2092,12 +2097,12 @@ fn connect_router_native(
     err: &dyn Fn(&str),
 ) -> i32 {
     let ccr_base = "http://127.0.0.1:3456";
-    out(&format!("=== Подключение через роутер: {name} → профиль {profile} ==="));
+    out(&trv("log.router_connect_header", cur_lang(), &[("name", &name), ("profile", &profile)]));
 
     // 1. Configure ccr for this backend/model (+ ccr restart inside Setup-Router).
     let code = setup_router_native("configure", backend, model, name, out, err);
     if code != 0 {
-        err("Прервано: не удалось настроить ccr.");
+        err(tr("log.aborted_ccr_setup", cur_lang()));
         return code;
     }
 
@@ -2107,10 +2112,10 @@ fn connect_router_native(
         stream_output(&ccr, &["start"], out, err);
         std::thread::sleep(std::time::Duration::from_secs(4));
         if port_listening(3456) {
-            out("  ccr слушает :3456 ✓");
+            out(tr("log.ccr_listening", cur_lang()));
         } else {
-            out("  [ВНИМАНИЕ] ccr не поднял порт :3456. Конфиг и привязка сделаны, но сервер не запущен.");
-            out("            Попробуй обновить ccr (вкладка «Обновления») или запусти «ccr code» в терминале.");
+            out(tr("log.ccr_port_warn", cur_lang()));
+            out(tr("log.ccr_port_hint", cur_lang()));
         }
     }
 
@@ -2130,12 +2135,10 @@ fn connect_router_native(
         profile, "set", ccr_base, false, token_opt, Some(model), None, out, err,
     );
     if code != 0 {
-        err("Прервано: не удалось привязать профиль.");
+        err(tr("log.aborted_bind", cur_lang()));
         return code;
     }
-    out(&format!(
-        "Готово. Профиль '{profile}' → {ccr_base} (ccr) → {name} ({model}). Перезапусти профиль."
-    ));
+    out(&trv("log.router_done", cur_lang(), &[("profile", &profile), ("ccr_base", &ccr_base), ("name", &name), ("model", &model)]));
     0
 }
 
@@ -2386,23 +2389,19 @@ fn manage_provider_native(
     // Validate against the canonical profile list (mirrors the script's Get-ClaudeProfiles check).
     let known = profile_names();
     if !known.iter().any(|n| n == name) {
-        err(&format!("ОШИБКА: профиль '{name}' не найден ({}).", known.join(", ")));
+        err(&trv("log.profile_not_found", cur_lang(), &[("name", &name), ("known", &known.join(", "))]));
         return 1;
     }
     // cc3-class guard: never rewrite a settings.json a live session is reading (see
     // profile_session_active). All provider-bind paths funnel here, so one check covers them all.
     if profile_session_active(name) {
-        err(&format!(
-            "⚠️ Профиль '{name}' похоже сейчас запущен (недавняя активность сессии). Закрой его \
-             сессию Claude и повтори — смена привязки провайдера у живой сессии может её сломать \
-             (как было с cc3). Если профиль не запущен, подожди ~2 минуты и повтори."
-        ));
+        err(&trv("log.profile_running_warn", cur_lang(), &[("name", &name)]));
         return 1;
     }
     let home = match std::env::var("USERPROFILE") {
         Ok(h) => h,
         Err(_) => {
-            err("USERPROFILE не задан");
+            err(tr("log.no_userprofile", cur_lang()));
             return 1;
         }
     };
@@ -2441,7 +2440,7 @@ fn apply_provider_env(
         Ok(ref c) if !c.trim().is_empty() => match parse_json_bom(c) {
             Ok(v) => v,
             Err(e) => {
-                err(&format!("ОШИБКА: не удалось прочитать settings.json ({e})."));
+                err(&trv("log.read_settings", cur_lang(), &[("e", &e)]));
                 return 1;
             }
         },
@@ -2489,9 +2488,9 @@ fn apply_provider_env(
                 }
             }
             let token_shown = if keep_token {
-                "(без изменений)"
+                tr("log.unchanged", cur_lang())
             } else if token.filter(|s| !s.is_empty()).is_some() {
-                "(задан)"
+                tr("log.set_value", cur_lang())
             } else {
                 "(dummy: agenthub-local)"
             };
@@ -2504,7 +2503,7 @@ fn apply_provider_env(
             for k in PROVIDER_ENV_KEYS {
                 env.remove(k);
             }
-            out("  Провайдер сброшен на стандартный Anthropic-логин.");
+            out(tr("log.provider_reset", cur_lang()));
         }
         env.is_empty()
     };
@@ -2522,17 +2521,15 @@ fn apply_provider_env(
     let serialized = match serde_json::to_string_pretty(&settings) {
         Ok(s) => s,
         Err(e) => {
-            err(&format!("ОШИБКА сериализации settings.json: {e}"));
+            err(&trv("log.ser_settings", cur_lang(), &[("e", &e)]));
             return 1;
         }
     };
     if let Err(e) = write_file_no_bom(settings_path, &serialized) {
-        err(&format!("ОШИБКА записи settings.json: {e}"));
+        err(&trv("log.write_settings", cur_lang(), &[("e", &e)]));
         return 1;
     }
-    out(&format!(
-        "  settings.json обновлён (бэкап .bak). Перезапустите профиль '{name}', чтобы провайдер применился."
-    ));
+    out(&trv("log.settings_updated", cur_lang(), &[("name", &name)]));
     0
 }
 
@@ -3052,10 +3049,10 @@ fn connect_custom_native(
     // Authenticate: reuse the token, else log in with email+password.
     let token = if token.is_empty() {
         if email.is_empty() || password.is_empty() {
-            err("ОШИБКА: нет токена и неполные email/пароль freellmapi.");
+            err(tr("log.freellmapi_no_creds", cur_lang()));
             return 1;
         }
-        out("  Вход в freellmapi (email+пароль)…");
+        out(tr("log.freellmapi_login", cur_lang()));
         let body = json!({ "email": email, "password": password }).to_string();
         match agent
             .post(&format!("{base}/api/auth/login"))
@@ -3071,21 +3068,21 @@ fn connect_custom_native(
                 match parsed.as_ref().and_then(|v| v["token"].as_str()).filter(|t| !t.is_empty()) {
                     Some(t) => t.to_string(),
                     None => {
-                        err("  ОШИБКА входа в freellmapi: login не вернул токен");
+                        err(tr("log.freellmapi_no_token", cur_lang()));
                         return 1;
                     }
                 }
             }
             Err(ureq::Error::StatusCode(401)) => {
-                err("  ОШИБКА входа (401): неверный email или пароль freellmapi.");
+                err(tr("log.freellmapi_401", cur_lang()));
                 return 1;
             }
             Err(ureq::Error::StatusCode(429)) => {
-                err("  ОШИБКА входа (429): слишком много попыток, подождите ~15 мин.");
+                err(tr("log.freellmapi_429", cur_lang()));
                 return 1;
             }
             Err(e) => {
-                err(&format!("  ОШИБКА входа в freellmapi: {e}"));
+                err(&trv("log.freellmapi_login_err", cur_lang(), &[("e", &e)]));
                 return 1;
             }
         }
@@ -3112,7 +3109,7 @@ fn connect_custom_native(
     let payload = Value::Object(payload).to_string();
 
     let uri = format!("{base}/api/keys/custom");
-    out("=== freellmapi: регистрация custom-провайдера ===");
+    out(tr("log.freellmapi_register_header", cur_lang()));
     out(&format!(
         "  POST {uri}  (baseUrl={base_url}, model={})",
         if model.is_empty() { "—" } else { model }
@@ -3133,29 +3130,27 @@ fn connect_custom_native(
                 .unwrap_or(Value::Null);
             let key_id = v["keyId"].as_str().unwrap_or("");
             let platform = v["platform"].as_str().unwrap_or("");
-            out(&format!("  OK: провайдер зарегистрирован (keyId={key_id}, platform={platform})."));
+            out(&trv("log.provider_registered", cur_lang(), &[("key_id", &key_id), ("platform", &platform)]));
             if let Some(models) = v["models"].as_array() {
                 let names: Vec<String> =
                     models.iter().filter_map(|m| m.as_str().map(String::from)).collect();
                 if !names.is_empty() {
-                    out(&format!("  Модели: {}", names.join(", ")));
+                    out(&trv("log.models_list", cur_lang(), &[("names", &names.join(", "))]));
                 }
             }
-            out("  Готово. Провайдер доступен через freellmapi (:13001) для Claude Code (ccr) и opencode.");
+            out(tr("log.freellmapi_done", cur_lang()));
             0
         }
         Err(ureq::Error::StatusCode(code @ (401 | 403))) => {
-            err(&format!(
-                "  ОШИБКА авторизации ({code}): сессия freellmapi недействительна — переавторизуйтесь (Вход freellmapi)."
-            ));
+            err(&trv("log.freellmapi_auth_invalid", cur_lang(), &[("code", &code)]));
             1
         }
         Err(ureq::Error::StatusCode(400)) => {
-            err("  ОШИБКА (400): freellmapi отклонил baseUrl или тело запроса.");
+            err(tr("log.freellmapi_400", cur_lang()));
             1
         }
         Err(e) => {
-            err(&format!("  ОШИБКА запроса к freellmapi: {e}"));
+            err(&trv("log.freellmapi_req_err", cur_lang(), &[("e", &e)]));
             1
         }
     }
@@ -3321,19 +3316,19 @@ fn probe_provider(base_url: &str, protocol: &str, api_key: &str) -> serde_json::
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                 .map(|v| count_models(&v))
                 .unwrap_or(0);
-            serde_json::json!({ "ok": true, "detail": format!("ответил (моделей: {n})"), "count": n })
+            serde_json::json!({ "ok": true, "detail": trv("det.responded_models", cur_lang(), &[("n", &n)]), "count": n })
         }
         Err(ureq::Error::StatusCode(code)) => {
             // An HTTP status means the server is ALIVE (it answered). Only auth failure is a real
             // problem; any other status (e.g. 404 — routers/bridges like ccr have no /v1/models)
             // still means "responding".
             if code == 401 || code == 403 {
-                serde_json::json!({ "ok": false, "detail": format!("ключ отклонён ({code})") })
+                serde_json::json!({ "ok": false, "detail": trv("det.key_rejected", cur_lang(), &[("code", &code)]) })
             } else {
-                serde_json::json!({ "ok": true, "detail": format!("отвечает (HTTP {code})") })
+                serde_json::json!({ "ok": true, "detail": trv("det.responds_http", cur_lang(), &[("code", &code)]) })
             }
         }
-        Err(e) => serde_json::json!({ "ok": false, "detail": format!("не отвечает: {e}") }),
+        Err(e) => serde_json::json!({ "ok": false, "detail": trv("det.no_response", cur_lang(), &[("e", &e)]) }),
     }
 }
 
@@ -3393,7 +3388,7 @@ async fn check_my_provider(id: String) -> serde_json::Value {
         .find(|e| e.get("id").and_then(|x| x.as_str()) == Some(id.as_str()))
         .cloned();
     let Some(e) = entry else {
-        return serde_json::json!({ "ok": false, "detail": "провайдер не найден" });
+        return serde_json::json!({ "ok": false, "detail": tr("err.provider_not_found", cur_lang()) });
     };
     let base_url = e.get("baseUrl").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let protocol = e.get("protocol").and_then(|x| x.as_str()).unwrap_or("openai").to_string();
@@ -3467,7 +3462,7 @@ fn extract_balance(v: &serde_json::Value) -> Option<(f64, String)> {
 fn fetch_provider_balance(id: &str) -> serde_json::Value {
     let list = read_myproviders_raw();
     let Some(e) = list.iter().find(|e| e.get("id").and_then(|x| x.as_str()) == Some(id)) else {
-        return serde_json::json!({ "ok": false, "detail": "провайдер не найден" });
+        return serde_json::json!({ "ok": false, "detail": tr("err.provider_not_found", cur_lang()) });
     };
     let base = e.get("baseUrl").and_then(|x| x.as_str()).unwrap_or("");
     let protocol = e.get("protocol").and_then(|x| x.as_str()).unwrap_or("openai");
@@ -3485,9 +3480,9 @@ fn fetch_provider_balance(id: &str) -> serde_json::Value {
         return match balance_get(&agent, balance_url, protocol, &key) {
             Some(v) => match extract_balance(&v) {
                 Some((amt, cur)) => serde_json::json!({ "ok": true, "amount": amt, "currency": cur, "detail": "" }),
-                None => serde_json::json!({ "ok": false, "detail": "не нашёл число баланса в ответе" }),
+                None => serde_json::json!({ "ok": false, "detail": tr("det.no_balance_number", cur_lang()) }),
             },
-            None => serde_json::json!({ "ok": false, "detail": "balance-URL не ответил" }),
+            None => serde_json::json!({ "ok": false, "detail": tr("det.balance_no_response", cur_lang()) }),
         };
     }
     // 2) DeepSeek-style.
@@ -3501,10 +3496,10 @@ fn fetch_provider_balance(id: &str) -> serde_json::Value {
     // 3) OpenAI-billing style (one-api / new-api gateways).
     if let Some(v) = balance_get(&agent, &format!("{root}/dashboard/billing/subscription"), protocol, &key) {
         if let Some(amt) = json_f64(&v, "hard_limit_usd").or_else(|| json_f64(&v, "system_hard_limit_usd")) {
-            return serde_json::json!({ "ok": true, "amount": amt, "currency": "USD", "detail": "лимит" });
+            return serde_json::json!({ "ok": true, "amount": amt, "currency": "USD", "detail": tr("det.limit", cur_lang()) });
         }
     }
-    serde_json::json!({ "ok": false, "detail": "баланс недоступен — задайте balance-URL в настройках провайдера" })
+    serde_json::json!({ "ok": false, "detail": tr("det.balance_unavailable", cur_lang()) })
 }
 
 /// Best-effort balance/credits for a custom provider (#B4). `{ ok, amount?, currency?, detail }`.
@@ -3718,7 +3713,7 @@ fn opencode_provider_native(
         Ok(ref c) if !c.trim().is_empty() => match parse_json_bom(c) {
             Ok(v) => v,
             Err(e) => {
-                err(&format!("ОШИБКА: не удалось прочитать opencode.json ({e})."));
+                err(&trv("log.read_opencode", cur_lang(), &[("e", &e)]));
                 return 1;
             }
         },
@@ -3783,13 +3778,13 @@ fn opencode_provider_native(
             obj.insert("model".into(), json!(am));
         }
         let key_shown = if keep_key {
-            "(без изменений)".to_string()
+            tr("log.unchanged", cur_lang()).to_string()
         } else if key.filter(|s| !s.is_empty()).is_some() {
-            "(литерал)".to_string()
+            tr("log.literal", cur_lang()).to_string()
         } else if let Some(e) = env_key.filter(|s| !s.is_empty()) {
             format!("{{env:{e}}}")
         } else {
-            "(без изменений)".to_string()
+            tr("log.unchanged", cur_lang()).to_string()
         };
         out(&format!(
             "  baseURL={base_url}  model={}  apiKey={key_shown}",
@@ -3808,7 +3803,7 @@ fn opencode_provider_native(
         if points_here {
             obj.remove("model");
         }
-        out(&format!("  Провайдер '{provider_id}' удалён из opencode.json."));
+        out(&trv("log.provider_removed", cur_lang(), &[("provider_id", &provider_id)]));
     }
 
     // Backup then write (UTF-8 no BOM).
@@ -3821,15 +3816,15 @@ fn opencode_provider_native(
     let serialized = match serde_json::to_string_pretty(&cfg) {
         Ok(s) => s,
         Err(e) => {
-            err(&format!("ОШИБКА сериализации opencode.json: {e}"));
+            err(&trv("log.ser_opencode", cur_lang(), &[("e", &e)]));
             return 1;
         }
     };
     if let Err(e) = write_file_no_bom(cfg_path, &serialized) {
-        err(&format!("ОШИБКА записи opencode.json: {e}"));
+        err(&trv("log.write_opencode", cur_lang(), &[("e", &e)]));
         return 1;
     }
-    out(&format!("  opencode.json обновлён (бэкап .bak): {cfg_path}"));
+    out(&trv("log.opencode_updated", cur_lang(), &[("cfg_path", &cfg_path)]));
     0
 }
 
@@ -4531,7 +4526,7 @@ fn run_claude_plugin(
                 err(&format!("    {line}"));
             }
         }
-        Err(e) => err(&format!("    не удалось запустить claude: {e}")),
+        Err(e) => err(&trv("log.claude_spawn", cur_lang(), &[("e", &e)])),
     }
 }
 
@@ -4542,10 +4537,10 @@ fn run_claude_plugin(
 /// Returns the exit code; streams via out/err.
 fn manage_plugin_native(action: &str, id: &str, out: &dyn Fn(&str), err: &dyn Fn(&str)) -> i32 {
     let Some(claude) = exe_on_path("claude") else {
-        err("claude CLI не найден на PATH.");
+        err(tr("log.claude_not_found", cur_lang()));
         return 1;
     };
-    out(&format!("=== Плагин: {action} {id} ==="));
+    out(&trv("log.plugin_header", cur_lang(), &[("action", &action), ("id", &id)]));
     if action == "update" {
         run_claude_plugin(&claude, None, action, id, out, err);
     } else {
@@ -4553,14 +4548,14 @@ fn manage_plugin_native(action: &str, id: &str, out: &dyn Fn(&str), err: &dyn Fn
         for p in profile_names() {
             let dir = format!("{home}\\.claude-{p}");
             if !std::path::Path::new(&dir).exists() {
-                out(&format!("  [skip] {p} (нет каталога)"));
+                out(&trv("log.plugin_skip", cur_lang(), &[("p", &p)]));
                 continue;
             }
             out(&format!("  [{p}] claude plugin {action} {id}"));
             run_claude_plugin(&claude, Some(&dir), action, id, out, err);
         }
     }
-    out("Готово.");
+    out(tr("log.done", cur_lang()));
     0
 }
 
