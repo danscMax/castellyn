@@ -582,6 +582,7 @@ export type HubConfig = {
   fetchTimeoutSec?: number | null;
   ghTimeoutSec?: number | null;
   toggleHotkey?: string | null;
+  language?: string | null;
 };
 export type AppPaths = {
   scriptsRoot: string;
@@ -592,6 +593,8 @@ export type AppPaths = {
 
 export const readConfig = () => invoke<HubConfig>('read_config');
 export const writeConfig = (config: HubConfig) => invoke('write_config', { config });
+// Mirror the UI locale into the backend (errors/run-log/tray localize + persist to config).
+export const setLanguage = (lang: string) => invoke('set_language', { lang });
 export const appPaths = () => invoke<AppPaths>('app_paths');
 export const openPath = (path: string) => invoke('open_path', { path });
 // Export/import all settings (#117) — file dialogs from the dialog plugin; backend (de)serializes.

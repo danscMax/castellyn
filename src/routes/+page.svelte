@@ -120,7 +120,8 @@
   import { pushToast } from '$lib/toast.svelte';
   import { runningStore, opName } from '$lib/running.svelte';
   import { deriveOutcome } from '$lib/outcome';
-  import { t } from '$lib/i18n';
+  import { t, locale } from '$lib/i18n';
+  import { setLanguage } from '$lib/ipc';
 
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
@@ -1223,6 +1224,9 @@
 
   onMount(async () => {
     theme = getTheme();
+    // Mirror the resolved UI locale into the backend so errors/run-log/tray match, even before
+    // the user ever opens the language switcher.
+    setLanguage(locale.current).catch(() => {});
     try {
       if (localStorage.getItem('cmh-density') === 'compact') density = 'compact';
       fullWidth = localStorage.getItem('cmh-fullwidth') !== '0';

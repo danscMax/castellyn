@@ -15,9 +15,23 @@ use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+mod i18n;
+use i18n::{tr, trv, Lang};
+
 /// Windows CREATE_NO_WINDOW — keep spawned console apps (pwsh/reg/taskkill) from flashing
 /// a black console window in front of the GUI.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Current UI locale, mirrored from the frontend via `set_language` and read by `tr`/`trv`
+/// when the backend produces user-facing text (command errors, run-log, tray).
+// ponytail: one process-global lock; locale changes are rare so contention is a non-issue.
+static CUR_LANG: std::sync::RwLock<Lang> = std::sync::RwLock::new(Lang::Ru);
+fn cur_lang() -> Lang {
+    *CUR_LANG.read().unwrap_or_else(|e| e.into_inner())
+}
+fn set_cur_lang(l: Lang) {
+    *CUR_LANG.write().unwrap_or_else(|e| e.into_inner()) = l;
+}
 
 // Canonical manifest, embedded as a fallback. The live source of truth is the
 // same file on disk (read at runtime by `manifest_text`) so the dashboard and
@@ -41,6 +55,10 @@ struct HubConfig {
     // OS-level accelerator (e.g. "CommandOrControl+Shift+H") that toggles the window. None/empty = off.
     #[serde(rename = "toggleHotkey", default, skip_serializing_if = "Option::is_none")]
     toggle_hotkey: Option<String>,
+    // UI locale ("ru"/"en"/"zh") mirrored from the frontend so the backend (errors, log, tray) can
+    // localize too. Owned by set_language; write_config preserves it (never clobbered by a settings save).
+    #[serde(rename = "language", default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
 }
 
 fn config_path() -> Option<String> {
@@ -4617,14 +4635,36 @@ fn read_config() -> HubConfig {
     read_config_file()
 }
 
-#[tauri::command]
-fn write_config(config: HubConfig) -> Result<(), String> {
-    let p = config_path().ok_or("APPDATA не найден")?;
+/// Serialize a config to disk verbatim (no field preservation). The single file-write primitive.
+fn write_config_file(config: &HubConfig) -> Result<(), String> {
+    let p = config_path().ok_or_else(|| tr("err.no_appdata", cur_lang()).to_string())?;
     if let Some(dir) = std::path::Path::new(&p).parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(&p, json).map_err(|e| format!("запись config: {e}"))?;
+    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(&p, json)
+        .map_err(|e| trv("err.write_config", cur_lang(), &[("e", &e.to_string())]))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn write_config(mut config: HubConfig) -> Result<(), String> {
+    // language is owned by set_language — a generic settings save must never clobber it.
+    config.language = read_config_file().language;
+    write_config_file(&config)
+}
+
+/// Mirror the UI locale into the backend: update the in-process Lang (so errors/log localize),
+/// persist it in config (so the tray is correct at next startup too), and relabel the tray now.
+#[tauri::command]
+fn set_language(app: AppHandle, lang: String) -> Result<(), String> {
+    let l = Lang::parse(&lang);
+    set_cur_lang(l);
+    let mut cfg = read_config_file();
+    cfg.language = Some(lang);
+    write_config_file(&cfg)?;
+    rebuild_tray_menu(&app, l);
+    update_tray_tooltip(&app);
     Ok(())
 }
 
@@ -5089,11 +5129,23 @@ fn cancel_run(state: State<'_, RunState>) -> Result<(), String> {
     }
 }
 
+/// Build the tray menu with labels in the given locale. Shared by initial build + relabel-on-switch.
+fn tray_menu(app: &AppHandle, lang: Lang) -> tauri::Result<Menu<tauri::Wry>> {
+    let show = MenuItem::with_id(app, "show", tr("tray.show", lang), true, None::<&str>)?;
+    let check_all = MenuItem::with_id(app, "check_all", tr("tray.check_all", lang), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr("tray.quit", lang), true, None::<&str>)?;
+    Menu::with_items(app, &[&show, &check_all, &quit])
+}
+
+/// Relabel the tray menu in-place after a language switch (no app restart needed).
+fn rebuild_tray_menu(app: &AppHandle, lang: Lang) {
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main-tray"), tray_menu(app, lang)) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Показать окно", true, None::<&str>)?;
-    let check_all = MenuItem::with_id(app, "check_all", "Проверить всё", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &check_all, &quit])?;
+    let menu = tray_menu(app, cur_lang())?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -5156,7 +5208,7 @@ fn update_tray_tooltip(app: &AppHandle) {
     let label = if n == 0 {
         "Castellyn".to_string()
     } else {
-        format!("Castellyn — активных сессий: {n}")
+        trv("tray.tooltip_sessions", cur_lang(), &[("n", &n.to_string())])
     };
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_tooltip(Some(&label));
@@ -5452,9 +5504,15 @@ pub fn run() {
             get_autostart,
             set_autostart,
             set_toggle_hotkey,
+            set_language,
             cancel_run
         ])
         .setup(|app| {
+            // Seed the backend locale from config so the tray builds in the right language. The
+            // frontend also re-syncs on mount (covers a fresh config with no language yet).
+            if let Some(lang) = read_config_file().language {
+                set_cur_lang(Lang::parse(&lang));
+            }
             build_tray(app.handle())?;
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();

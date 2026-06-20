@@ -14,6 +14,7 @@
     exportConfig,
     importConfig,
     setToggleHotkey,
+    setLanguage,
     type HubConfig,
     type AppPaths
   } from '$lib/ipc';
@@ -261,7 +262,7 @@
         {#each locale.supported as loc (loc)}
           <button
             class="sw-btn {locale.current === loc ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-            onclick={() => locale.set(loc as Locale)}
+            onclick={() => { locale.set(loc as Locale); setLanguage(loc).catch(() => {}); }}
             title={t('settings.languageTip')}
           >
             {getLocaleName(loc as Locale)}
