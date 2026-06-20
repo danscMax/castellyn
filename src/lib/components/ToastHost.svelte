@@ -43,10 +43,10 @@
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
     animation: slidein 0.16s ease;
   }
-  .toast.success { border-left-color: #34d399; }
+  .toast.success { border-left-color: var(--sw-success); }
   .toast.info { border-left-color: #38bdf8; }
-  .toast.warn { border-left-color: #f59e0b; }
-  .toast.error { border-left-color: #f87171; }
+  .toast.warn { border-left-color: var(--sw-warn); }
+  .toast.error { border-left-color: var(--sw-danger); }
   .body { min-width: 0; flex: 1; }
   .title {
     font-size: var(--sw-text-sm);

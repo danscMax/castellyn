@@ -162,7 +162,7 @@
   }
   .err {
     margin-top: 4px;
-    color: #f59e0b;
+    color: var(--sw-warn);
     font-size: var(--sw-text-xs);
   }
   .colors {

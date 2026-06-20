@@ -467,8 +467,8 @@
     border-color: var(--sw-text-muted);
   }
   .iconbtn.danger:hover {
-    color: #f87171;
-    border-color: #f87171;
+    color: var(--sw-danger);
+    border-color: var(--sw-danger);
   }
   .iconbtn:disabled {
     opacity: 0.45;
