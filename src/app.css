@@ -1,6 +1,67 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Tailwind v4 theme (migrated from tailwind.config.js). These map the project's `sw-*`
+   utility names onto the design tokens defined in :root / .light below, so every existing
+   class (text-sw-text-muted, p-sw-6, bg-sw-bg-card, rounded-sw-md, w-sw-sidebar,
+   h-sw-titlebar, text-sw-sm, …) keeps generating exactly as it did under v3.
+   The values are CSS-var references, so the .light / .dense overrides re-theme them live.
+   Colors: with no opacity modifier a `--color-sw-*` resolves to the raw var() (preserving any
+   baked-in alpha, e.g. rgba card bg); with a `/NN` modifier v4 wraps it in color-mix()
+   automatically — same capability the old withAlpha() helper provided. */
+@theme {
+  /* Colors → text-/bg-/border-sw-* */
+  --color-sw-bg: var(--sw-bg-primary);
+  --color-sw-bg-secondary: var(--sw-bg-secondary);
+  --color-sw-bg-card: var(--sw-bg-card);
+  --color-sw-bg-hover: var(--sw-bg-hover);
+  --color-sw-border: var(--sw-border);
+  --color-sw-border-focus: var(--sw-border-focus);
+  --color-sw-text: var(--sw-text-primary);
+  --color-sw-text-secondary: var(--sw-text-secondary);
+  --color-sw-text-muted: var(--sw-text-muted);
+  --color-sw-text-dimmed: var(--sw-text-dimmed);
+  --color-sw-accent: var(--sw-accent);
+  --color-sw-accent-hover: var(--sw-accent-hover);
+  --color-sw-accent-glow: var(--sw-accent-glow);
+
+  /* Spacing → p-/m-/gap-/space-sw-* */
+  --spacing-sw-1: var(--sw-space-1);
+  --spacing-sw-2: var(--sw-space-2);
+  --spacing-sw-3: var(--sw-space-3);
+  --spacing-sw-4: var(--sw-space-4);
+  --spacing-sw-6: var(--sw-space-6);
+  --spacing-sw-8: var(--sw-space-8);
+
+  /* Font sizes → text-sw-* */
+  --text-sw-xs: var(--sw-text-xs);
+  --text-sw-sm: var(--sw-text-sm);
+  --text-sw-base: var(--sw-text-base);
+
+  /* Sizing → w-sw-sidebar / h-sw-titlebar */
+  --width-sw-sidebar: var(--sw-sidebar-width);
+  --height-sw-titlebar: var(--sw-titlebar-height);
+
+  /* Border radius → rounded-sw-* */
+  --radius-sw-sm: var(--sw-radius-sm);
+  --radius-sw-md: var(--sw-radius-md);
+  --radius-sw-lg: var(--sw-radius-lg);
+
+  /* Custom box shadows → shadow-glow / shadow-glow-sm */
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
+  --shadow-glow-sm: 0 0 10px rgba(59, 130, 246, 0.1);
+
+  /* backdrop-blur-xs / blur-xs — v4 defaults --blur-xs to 4px; pin to the v3 value (2px). */
+  --blur-xs: 2px;
+
+  /* Custom animation → animate-pulse-slow (uses Tailwind's built-in `pulse` keyframe). */
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* backgroundImage.gradient-radial had no theme namespace in v4 — re-express as a utility so
+   `bg-gradient-radial` still exists. Uses v4's --tw-gradient-stops (set by from-/via-/to-*). */
+@utility bg-gradient-radial {
+  background-image: radial-gradient(var(--tw-gradient-stops));
+}
 
 /* Design tokens ported from Sweet Whisper (tauri-ui/src/lib/styles/global.css). */
 :root {
