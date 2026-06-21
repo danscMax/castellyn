@@ -15,6 +15,7 @@
   import { copyText } from '$lib/clipboard';
   import { relTime } from '$lib/relativeTime';
   import { profileDotColor } from '$lib/statusColor';
+  import { profileHasMissingLink } from '$lib/attention';
   import ProfileEditDialog from './ProfileEditDialog.svelte';
   import LaunchConfigDialog from './LaunchConfigDialog.svelte';
   import ProviderEditDialog from './ProviderEditDialog.svelte';
@@ -210,16 +211,11 @@
     linksFor = null;
   }
 
-  // Problems → recommendations. "Repairable-broken" = a folder the profile is CONFIGURED to share is
-  // MISSING its link (status null). A folder holding real data ("none") is NOT broken — repair skips
-  // it for data safety, so relying on the script's `linksIntact` (which counts "none" too) left a
-  // stuck, no-op "Repair" nag after a clean repair. Sharing such a folder is managed via the
-  // per-profile shared-folders toggles below (or a full reinstall to merge).
-  function hasMissingLink(p: Prof): boolean {
-    const cfg = new Set(configuredLinks(p.name));
-    return Object.entries(p.sharedLinks).some(([folder, status]) => cfg.has(folder) && status === null);
-  }
-  const brokenLinks = $derived(profiles.filter((p) => p.exists && hasMissingLink(p)));
+  // Problems → recommendations. A profile is broken only when a shared folder is MISSING its link
+  // (status null); real data ("none") or a present link is fine — so a clean repair clears it and a
+  // folder kept as real data no longer nags. Shared with the sidebar badge (profileHasMissingLink)
+  // so the card and the badge can never disagree.
+  const brokenLinks = $derived(profiles.filter((p) => p.exists && profileHasMissingLink(p)));
   const missing = $derived(profiles.filter((p) => !p.exists));
   const conflictCount = $derived(conflicts?.count ?? 0);
   const hasIssues = $derived(brokenLinks.length > 0 || missing.length > 0 || conflictCount > 0);

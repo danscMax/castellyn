@@ -33,10 +33,17 @@ export function backupAttention(data: BackupList | null | undefined): Attention 
   return days > 2 ? { level: 'warn' } : null;
 }
 
+/** A profile has a broken shared link when a folder it shares is MISSING its link (status null).
+ *  A folder holding real data ("none") or a present link is NOT broken. Single source of truth,
+ *  shared with the Profiles tab so the sidebar badge and the recommendations card never disagree. */
+export function profileHasMissingLink(p: { sharedLinks?: Record<string, string | null> | null }): boolean {
+  return !!p.sharedLinks && Object.values(p.sharedLinks).some((s) => s === null);
+}
+
 /** Profiles with broken links / missing dirs / sync conflicts. */
 export function profilesAttention(data: ProfilesStatus | null | undefined): Attention | null {
   if (!data?.profiles) return null;
-  const broken = data.profiles.filter((p) => p.exists && !p.linksIntact).length;
+  const broken = data.profiles.filter((p) => p.exists && profileHasMissingLink(p)).length;
   const missing = data.profiles.filter((p) => !p.exists).length;
   const conflicts = (data.syncConflicts?.count ?? 0) > 0 ? 1 : 0;
   const total = broken + missing + conflicts;

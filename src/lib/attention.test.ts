@@ -30,15 +30,22 @@ describe('attention', () => {
   });
 
   it('profiles flag broken links', () => {
-    expect(profilesAttention({ profiles: [{ exists: true, linksIntact: true }] } as any)).toBeNull();
-    expect(profilesAttention({ profiles: [{ exists: true, linksIntact: false }] } as any)).toEqual({
-      level: 'warn',
-      count: 1
-    });
+    // A present link is not broken.
+    expect(
+      profilesAttention({ profiles: [{ exists: true, sharedLinks: { agents: 'SymbolicLink' } }] } as any)
+    ).toBeNull();
+    // A missing link (null) is broken.
+    expect(
+      profilesAttention({ profiles: [{ exists: true, sharedLinks: { agents: null } }] } as any)
+    ).toEqual({ level: 'warn', count: 1 });
+    // Real data ("none") is NOT broken — regression guard for the false "1" badge on ccfree.
+    expect(
+      profilesAttention({ profiles: [{ exists: true, sharedLinks: { plugins: 'none' } }] } as any)
+    ).toBeNull();
     // sync conflicts alone must still count (regression: count used to drop conflicts → "0").
     expect(
       profilesAttention({
-        profiles: [{ exists: true, linksIntact: true }],
+        profiles: [{ exists: true, sharedLinks: { agents: 'SymbolicLink' } }],
         syncConflicts: { count: 2 }
       } as any)
     ).toEqual({ level: 'warn', count: 1 });
