@@ -774,10 +774,33 @@ const RELINK_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Rel
 const INTEGRITY_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Check-Integrity.ps1";
 const CONFIG_DRIFT_JSON_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\links.last.json";
 
+/// Whether THIS process is running elevated (admin). Cached — elevation can't change at runtime.
+/// Uses the canonical .NET WindowsPrincipal check via pwsh (no extra crate); CREATE_NO_WINDOW.
+fn is_elevated() -> bool {
+    static ELEVATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ELEVATED.get_or_init(|| {
+        let script = "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)";
+        std::process::Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Read the cached profiles health snapshot (profiles.last.json). Null until first check.
 #[tauri::command]
 fn read_profiles() -> Result<Option<serde_json::Value>, String> {
-    read_json_opt(abs(PROFILES_JSON_REL), "profiles.last.json")
+    let mut out = read_json_opt(abs(PROFILES_JSON_REL), "profiles.last.json")?;
+    // The external status script's `isAdmin` goes stale after an elevated relaunch (it reflects the
+    // run that LAST wrote the file). Override it with a live native check so the UI sees the current
+    // process's real privileges immediately — no need to re-run the status script first.
+    if let Some(serde_json::Value::Object(map)) = out.as_mut() {
+        map.insert("isAdmin".into(), serde_json::json!(is_elevated()));
+    }
+    Ok(out)
 }
 
 /// Run a Profiles-tab action: refresh status, clean sync-conflict files, reinstall all profiles,
