@@ -210,8 +210,16 @@
     linksFor = null;
   }
 
-  // Problems → recommendations.
-  const brokenLinks = $derived(profiles.filter((p) => p.exists && !p.linksIntact));
+  // Problems → recommendations. "Repairable-broken" = a folder the profile is CONFIGURED to share is
+  // MISSING its link (status null). A folder holding real data ("none") is NOT broken — repair skips
+  // it for data safety, so relying on the script's `linksIntact` (which counts "none" too) left a
+  // stuck, no-op "Repair" nag after a clean repair. Sharing such a folder is managed via the
+  // per-profile shared-folders toggles below (or a full reinstall to merge).
+  function hasMissingLink(p: Prof): boolean {
+    const cfg = new Set(configuredLinks(p.name));
+    return Object.entries(p.sharedLinks).some(([folder, status]) => cfg.has(folder) && status === null);
+  }
+  const brokenLinks = $derived(profiles.filter((p) => p.exists && hasMissingLink(p)));
   const missing = $derived(profiles.filter((p) => !p.exists));
   const conflictCount = $derived(conflicts?.count ?? 0);
   const hasIssues = $derived(brokenLinks.length > 0 || missing.length > 0 || conflictCount > 0);
