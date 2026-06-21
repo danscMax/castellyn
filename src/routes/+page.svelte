@@ -58,6 +58,7 @@
     readSchedules,
     runSchedule,
     cancelRun,
+    readConfig,
     type Component,
     type ForkAction,
     type GithubRepo,
@@ -115,6 +116,7 @@
   import PluginsTab from '$lib/components/PluginsTab.svelte';
   import ScheduleTab from '$lib/components/ScheduleTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
+  import OnboardingWizard from '$lib/components/OnboardingWizard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ToastHost from '$lib/components/ToastHost.svelte';
   import { pushToast } from '$lib/toast.svelte';
@@ -153,6 +155,13 @@
   let pluginContents = $state<PluginContents[]>([]);
   let extensionsLoaded = $state(false);
   let loadError = $state<string | null>(null);
+  // OU-04 first-run onboarding wizard. Shown once when a fresh user has neither a configured
+  // Scripts root NOR any profiles. Dismissal persists in localStorage (the app's existing
+  // UI-state store) — not HubConfig, since the typed write_config round-trip would drop an
+  // unknown field, and we must not touch src-tauri.
+  const ONBOARDED_KEY = 'cmh-onboarded';
+  let onboardingOpen = $state(false);
+  let onboardingChecked = false;
   // Per-tab "fetching fresh data" flags → drive the refresh overlay + sidebar spinner.
   let loading = $state<Record<string, boolean>>({});
   const setLoading = (id: string, v: boolean) => {
@@ -213,6 +222,46 @@
   function onSpawnErr(e: unknown) {
     running = null;
     log = [...log, t('page.log_error', { e: String(e) })].slice(-MAX_LOG);
+  }
+
+  // --- First-run onboarding (OU-04) ---
+  // Decide whether to show the wizard from REAL state: never onboarded before AND the setup is
+  // empty (no Scripts root configured AND no profiles). A configured user is never nagged.
+  async function maybeShowOnboarding() {
+    if (onboardingChecked) return;
+    onboardingChecked = true;
+    try {
+      if (localStorage.getItem(ONBOARDED_KEY) === '1') return;
+    } catch {
+      /* ignore */
+    }
+    let hasScriptsRoot = false;
+    try {
+      const cfg = await readConfig();
+      hasScriptsRoot = !!cfg.scriptsRoot && cfg.scriptsRoot.trim().length > 0;
+    } catch {
+      /* treat an unreadable config as "not configured" */
+    }
+    const hasProfiles = (profilesData?.profiles?.length ?? 0) > 0;
+    if (!hasScriptsRoot && !hasProfiles) onboardingOpen = true;
+  }
+
+  // Finish/skip: mark onboarded (persist the flag), close, refresh the data the setup touched,
+  // and optionally kick off a first "check all".
+  function finishOnboarding(runCheck: boolean) {
+    onboardingOpen = false;
+    try {
+      localStorage.setItem(ONBOARDED_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+    // The wizard may have set a Scripts root / created a profile — reload so the tabs reflect it.
+    reloadProfiles();
+    components.forEach(loadStatus);
+    if (runCheck && !running) {
+      active = 'updates';
+      startRun('all', 'check');
+    }
   }
 
   // Bumped to force-expand the console (toast "Open log" action).
@@ -1207,9 +1256,12 @@
       loadError = String(e);
     }
     reloadBackup();
-    reloadProfiles();
+    // Await profiles so the first-run check sees real data (no profiles → empty-setup signal).
+    await reloadProfiles();
     reloadMcp();
     reloadPluginUpdates();
+    // First-run onboarding: decide once, after config + profiles are known.
+    maybeShowOnboarding();
 
     unlisten.push(
       await listen<{ component: string; stream: string; line: string }>('run-log', (e) => {
@@ -1516,6 +1568,23 @@
 
 <ToastHost />
 <HotkeyHelp open={hotkeyHelpOpen} onClose={() => (hotkeyHelpOpen = false)} />
+
+<OnboardingWizard
+  open={onboardingOpen}
+  profileCount={profilesData?.profiles?.length ?? 0}
+  busy={running === 'profiles'}
+  onCreateProfile={onProfileMgmt}
+  onOpenProfiles={() => {
+    onboardingOpen = false;
+    try {
+      localStorage.setItem(ONBOARDED_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+    active = 'profiles';
+  }}
+  onFinish={finishOnboarding}
+/>
 
 <ConfirmDialog
   open={confirm.open}

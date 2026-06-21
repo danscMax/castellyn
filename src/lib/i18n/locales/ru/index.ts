@@ -2,6 +2,7 @@
 // is the source of truth for TranslationDict (see ../types.ts).
 import common from './common';
 import nav from './nav';
+import onboarding from './onboarding';
 import titlebar from './titlebar';
 import console from './console';
 import page from './page';
@@ -24,6 +25,7 @@ import schedule from './schedule';
 const ru = {
   common,
   nav,
+  onboarding,
   titlebar,
   console,
   page,

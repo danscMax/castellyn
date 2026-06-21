@@ -3,6 +3,7 @@
 import type { TranslationDict } from '../../types';
 import common from './common';
 import nav from './nav';
+import onboarding from './onboarding';
 import titlebar from './titlebar';
 import console from './console';
 import page from './page';
@@ -25,6 +26,7 @@ import schedule from './schedule';
 const en: TranslationDict = {
   common,
   nav,
+  onboarding,
   titlebar,
   console,
   page,
