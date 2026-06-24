@@ -1,0 +1,66 @@
+name: Release
+
+# Build the Windows binaries and attach them to the GitHub Release.
+#
+# Triggers on `release: published` (NOT on tag push) so it never races with — or
+# overwrites — the release notes you write by hand: you publish the release, this
+# fans out the build and uploads the assets to it a few minutes later.
+# `workflow_dispatch` lets you (re)build against an existing tag to validate the
+# pipeline without cutting a new release (`--clobber` just replaces the assets).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and (re)attach assets to (e.g. v0.5.0)
+        required: true
+
+permissions:
+  contents: write   # upload assets to the release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      # tauri build runs `npm run build` (beforeBuildCommand) then bundles every
+      # target — standalone exe + NSIS setup + WiX MSI (bundle.targets = "all").
+      - run: npm run tauri build
+
+      - name: Collect and version the artifacts
+        shell: pwsh
+        run: |
+          $v   = "$env:TAG".TrimStart('v')
+          $rel = "src-tauri/target/release"
+          $out = "dist-release"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          # Standalone exe — rename to the published convention.
+          Copy-Item "$rel/castellyn.exe" "$out/Castellyn-$v-windows-x64.exe"
+          # Installers already carry the right name (Castellyn_<v>_x64-setup.exe / _x64_en-US.msi);
+          # glob so a tauri naming tweak doesn't silently drop an asset.
+          Copy-Item (Get-ChildItem "$rel/bundle/nsis/*-setup.exe" | Select-Object -First 1) $out
+          Copy-Item (Get-ChildItem "$rel/bundle/msi/*.msi"        | Select-Object -First 1) $out
+          $files = Get-ChildItem $out
+          $files | Format-Table Name, @{n='MB';e={'{0:0.0}' -f ($_.Length/1MB)}}
+          # Fail loudly rather than upload a partial set.
+          if ($files.Count -ne 3) { throw "expected 3 artifacts, found $($files.Count)" }
+
+      - name: Upload to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$env:TAG" (Get-ChildItem dist-release | ForEach-Object FullName) --clobber
