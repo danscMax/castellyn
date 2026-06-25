@@ -1468,7 +1468,7 @@
       {:else if active === 'forks'}
         <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} />
       {:else if active === 'backup'}
-        <BackupTab data={backupData} {running} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} />
+        <BackupTab data={backupData} {running} {log} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} />
       {:else if active === 'profiles'}
         <ProfilesTab
           data={profilesData}

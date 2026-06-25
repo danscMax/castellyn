@@ -40,5 +40,13 @@ export default {
   previewTitle: '预览 (-WhatIf)：显示将被覆盖的内容——不做任何更改',
   showPlan: '显示方案',
   restoreTitle: '从快照恢复所选配置文件（不可逆）',
-  restoreNeedsPreview: '请先点击「显示方案」'
+  restoreNeedsPreview: '请先点击「显示方案」',
+
+  // In-dialog plan summary (human-readable; raw script output tucked under details)
+  planWhat: '恢复将执行的操作',
+  planProfiles: '将覆盖 {n} 个配置的设置：{list}',
+  planCredsOn: '将从快照补全缺失的凭据（保留现有凭据）。',
+  planCredsOff: '不会改动凭据。',
+  planUntouched: '共享与系统托管文件保持不变。',
+  planDetails: '技术输出'
 };

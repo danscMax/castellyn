@@ -40,5 +40,13 @@ export default {
   previewTitle: 'Preview (-WhatIf): show what would be overwritten — changes nothing',
   showPlan: 'Show plan',
   restoreTitle: 'Restore the selected profiles from the snapshot (irreversible)',
-  restoreNeedsPreview: 'Press “Show plan” first'
+  restoreNeedsPreview: 'Press “Show plan” first',
+
+  // In-dialog plan summary (human-readable; raw script output tucked under details)
+  planWhat: 'What restore will do',
+  planProfiles: 'Overwrites configs for {n} profile(s): {list}',
+  planCredsOn: 'Missing credentials are filled from the snapshot (existing ones are kept).',
+  planCredsOff: 'Credentials are left untouched.',
+  planUntouched: 'Shared and system-managed files are not changed.',
+  planDetails: 'Technical output'
 };

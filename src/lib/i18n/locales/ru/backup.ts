@@ -40,5 +40,13 @@ export default {
   previewTitle: 'Предпросмотр (-WhatIf): показать, что будет перезаписано — ничего не меняет',
   showPlan: 'Показать план',
   restoreTitle: 'Восстановить выбранные профили из снапшота (необратимо)',
-  restoreNeedsPreview: 'Сначала нажми «Показать план»'
+  restoreNeedsPreview: 'Сначала нажми «Показать план»',
+
+  // In-dialog plan summary (human-readable; raw script output tucked under details)
+  planWhat: 'Что сделает восстановление',
+  planProfiles: 'Перезапишет конфиги профилей ({n}): {list}',
+  planCredsOn: 'Недостающие учётные данные заполнятся из снапшота (существующие не трогаются).',
+  planCredsOff: 'Учётные данные не затрагиваются.',
+  planUntouched: 'Общие и системные файлы не изменяются.',
+  planDetails: 'Технический вывод'
 };
