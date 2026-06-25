@@ -36,15 +36,20 @@
   const branches = $derived(repo.branches ?? []);
   const conflictBranches = $derived(branches.filter((b) => b.outcome === 'conflict'));
 
+  // PowerShell's `Select-Object -Unique` returns a scalar string for a single conflict file
+  // (array only for 2+), so conflictFiles arrives as string | string[] | null — normalize it.
+  const confFiles = (cf: string | string[] | null): string[] =>
+    Array.isArray(cf) ? cf : cf ? [cf] : [];
+
   function aiPrompt(): string {
-    const lines = conflictBranches.map(
-      (b) =>
+    const lines = conflictBranches.map((b) => {
+      const files = confFiles(b.conflictFiles);
+      return (
         t('forks.promptBranchLine', { name: b.name }) +
         (b.prNumber ? t('forks.promptPrSuffix', { n: b.prNumber }) : '') +
-        (b.conflictFiles?.length
-          ? t('forks.promptConflictFiles', { files: b.conflictFiles.join(', ') })
-          : '')
-    );
+        (files.length ? t('forks.promptConflictFiles', { files: files.join(', ') }) : '')
+      );
+    });
     return [
       t('forks.promptRepo', { name: repo.Name, path: repo.Path }),
       t('forks.promptRemotes', {
@@ -295,8 +300,8 @@
               {@const cu = compareUrl(b.name)}
               {#if cu}<a class="text-sw-xs hover:underline" style="color:var(--sw-accent-text)" href="{cu}?expand=1" target="_blank" rel="noreferrer" title={t('forks.contributeTip')}>{t('forks.contribute')} ↗</a>{/if}
             {/if}
-            {#if b.conflictFiles?.length}
-              <p class="text-sw-xs {statusTextClass('bad')}">{t('forks.conflictInFiles', { files: b.conflictFiles.join(', ') })}</p>
+            {#if confFiles(b.conflictFiles).length}
+              <p class="text-sw-xs {statusTextClass('bad')}">{t('forks.conflictInFiles', { files: confFiles(b.conflictFiles).join(', ') })}</p>
             {/if}
           </li>
         {/each}

@@ -34,7 +34,8 @@ export type ForkBranch = {
   prState: string | null;
   url: string | null;
   outcome: string | null;
-  conflictFiles: string[] | null;
+  // PowerShell's `Select-Object -Unique` yields a scalar string for a single file (array for 2+).
+  conflictFiles: string | string[] | null;
   aheadOfUpstream: number | null;
   cherryPlus: number | null;
   divergedFromForkAhead: number | null;
