@@ -224,5 +224,12 @@ export default {
   hkFocusPane: 'Focus next / previous pane',
   hkFind: 'Find in terminal',
   hkCopyPaste: 'Copy / paste in terminal',
-  hkHelp: 'This help'
+  hkTabJump: 'Jump to tab 1–9',
+  hkCancel: 'Cancel the running operation',
+  hkHelp: 'This help',
+  // Command-palette action verbs
+  cmd_check_all: 'Check all for updates',
+  cmd_refresh_forks: 'Refresh forks',
+  cmd_backup_now: 'Backup now',
+  cmd_open_log: 'Open the run log'
 };

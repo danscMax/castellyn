@@ -111,7 +111,9 @@
   import SyncTab from '$lib/components/SyncTab.svelte';
   import HomeTab from '$lib/components/HomeTab.svelte';
   import ProvidersTab from '$lib/components/ProvidersTab.svelte';
-  import SessionsTab from '$lib/components/SessionsTab.svelte';
+  // SessionsTab pulls in the heavy xterm/WebGL terminal stack (~216 kB gzip). It is dynamically
+  // imported on first open (see the template) so a user who never opens Sessions doesn't pay its
+  // download/parse on cold start; once opened it stays mounted so running terminals survive.
   import CommandPalette from '$lib/components/CommandPalette.svelte';
   import AnalyticsTab from '$lib/components/AnalyticsTab.svelte';
   import PluginsTab from '$lib/components/PluginsTab.svelte';
@@ -1189,6 +1191,13 @@
     }
   }
 
+  // Sessions tab is lazy: mount it (and pull the xterm chunk) only once the user first opens it,
+  // then keep it mounted so running terminals survive tab switches.
+  let sessionsEverOpened = $state(false);
+  $effect(() => {
+    if (active === 'sessions') sessionsEverOpened = true;
+  });
+
   // Command palette (Ctrl+K): jump to any tab + a few quick actions.
   const NAV_IDS = ['home', 'updates', 'forks', 'backup', 'profiles', 'mcp', 'sync', 'providers', 'sessions', 'analytics', 'extensions', 'schedule', 'settings'];
   let paletteOpen = $state(false);
@@ -1204,7 +1213,13 @@
       id: 'act:theme',
       label: `${t('settings.theme')}: ${theme === 'dark' ? t('settings.themeLight') : t('settings.themeDark')}`,
       run: () => setTheme(theme === 'dark' ? 'light' : 'dark')
-    }
+    },
+    // High-frequency verbs so the daily loop is Ctrl+K → type → Enter (each handler self-guards on
+    // the run lock, so a no-op while busy is harmless).
+    { id: 'act:checkall', label: t('page.cmd_check_all'), run: () => startRun('all', 'check') },
+    { id: 'act:forks', label: t('page.cmd_refresh_forks'), run: () => startForks('check') },
+    { id: 'act:backup', label: t('page.cmd_backup_now'), run: () => startBackup('backup') },
+    { id: 'act:log', label: t('page.cmd_open_log'), run: () => consoleReveal++ }
   ]);
   function onGlobalKey(e: KeyboardEvent) {
     if (e.ctrlKey && (e.key === 'k' || e.key === 'K')) {
@@ -1212,9 +1227,25 @@
       paletteOpen = !paletteOpen;
       return;
     }
-    // "?" opens the keyboard-shortcut cheatsheet — but not while typing in a field.
     const tgt = e.target as HTMLElement | null;
     const typing = !!tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable);
+    // Ctrl+1..9 jumps straight to the Nth tab (the cheatsheet's Alt+number was Sessions-only).
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '9') {
+      const idx = Number(e.key) - 1;
+      if (idx < NAV_IDS.length) {
+        e.preventDefault();
+        active = NAV_IDS[idx];
+      }
+      return;
+    }
+    // Esc cancels a running operation — but only when no dialog/palette is open (they own their Esc)
+    // and the user isn't typing, so it never steals a field's or modal's own Escape.
+    if (e.key === 'Escape' && running && !typing && !paletteOpen && !hotkeyHelpOpen && !confirm.open) {
+      e.preventDefault();
+      cancel();
+      return;
+    }
+    // "?" opens the keyboard-shortcut cheatsheet — but not while typing in a field.
     if (e.key === '?' && !typing) {
       e.preventDefault();
       hotkeyHelpOpen = true;
@@ -1551,11 +1582,16 @@
       </div>
       </div>
 
-      <!-- Sessions tab is full-bleed and stays MOUNTED (display-toggled), so running
-           terminals survive switching to another tab. -->
-      <div class="absolute inset-0 {active === 'sessions' ? '' : 'hidden'}">
-        <SessionsTab visible={active === 'sessions'} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} folderReq={sessionFolderReq} onFolderReqConsumed={() => (sessionFolderReq = null)} />
-      </div>
+      <!-- Sessions tab is full-bleed and, once first opened, stays MOUNTED (display-toggled) so
+           running terminals survive switching to another tab. The heavy xterm chunk is dynamically
+           imported on first open (sessionsEverOpened) instead of shipping in the startup bundle. -->
+      {#if sessionsEverOpened}
+        <div class="absolute inset-0 {active === 'sessions' ? '' : 'hidden'}">
+          {#await import('$lib/components/SessionsTab.svelte') then { default: SessionsTab }}
+            <SessionsTab visible={active === 'sessions'} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} folderReq={sessionFolderReq} onFolderReqConsumed={() => (sessionFolderReq = null)} />
+          {/await}
+        </div>
+      {/if}
     </main>
 
     <Console {log} {running} revealSignal={consoleReveal} onClear={() => (log = [])} onCancel={cancel} />

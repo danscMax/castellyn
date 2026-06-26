@@ -4,6 +4,8 @@
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
   const rows = $derived([
     { k: 'Ctrl + K', d: t('page.hkPalette') },
+    { k: 'Ctrl + 1 … 9', d: t('page.hkTabJump') },
+    { k: 'Esc', d: t('page.hkCancel') },
     { k: 'Ctrl + T', d: t('page.hkNewSession') },
     { k: 'Alt + 1 / 2 / 3', d: t('page.hkColumns') },
     { k: 'Ctrl + ] / [', d: t('page.hkFocusPane') },

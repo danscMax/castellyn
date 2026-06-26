@@ -219,5 +219,12 @@ export default {
   hkFocusPane: '聚焦下一个 / 上一个面板',
   hkFind: '在终端中查找',
   hkCopyPaste: '在终端中复制 / 粘贴',
-  hkHelp: '本帮助'
+  hkTabJump: '跳转到标签页 1–9',
+  hkCancel: '取消正在进行的操作',
+  hkHelp: '本帮助',
+  // 命令面板动作
+  cmd_check_all: '检查全部更新',
+  cmd_refresh_forks: '刷新分叉',
+  cmd_backup_now: '立即备份',
+  cmd_open_log: '打开运行日志'
 };
