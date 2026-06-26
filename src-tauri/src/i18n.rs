@@ -269,4 +269,37 @@ mod tests {
         assert!(matches!(Lang::parse("ru"), Lang::Ru));
         assert!(matches!(Lang::parse("xx"), Lang::Ru)); // unknown → source language
     }
+
+    // The `{token}` set in a string (no regex crate — a tiny scan over `{…}` pairs).
+    fn placeholders(s: &str) -> std::collections::BTreeSet<&str> {
+        let mut out = std::collections::BTreeSet::new();
+        let mut rest = s;
+        while let Some(i) = rest.find('{') {
+            rest = &rest[i + 1..];
+            match rest.find('}') {
+                Some(j) => {
+                    out.insert(&rest[..j]);
+                    rest = &rest[j + 1..];
+                }
+                None => break,
+            }
+        }
+        out
+    }
+
+    // Gate the Rust locale table the same way parity.ts guards the JS locales: every row's ru/zh
+    // must carry the exact same {placeholder} set as en, so a translator typo (e.g. {err} where en
+    // has {e}) can never leak a literal "{err}" into a toast for one language. Empty = inherits en.
+    #[test]
+    fn table_placeholder_parity() {
+        for (key, vals) in TABLE {
+            let en = placeholders(vals[Lang::En.idx()]);
+            for (lang, v) in [("ru", vals[Lang::Ru.idx()]), ("zh", vals[Lang::Zh.idx()])] {
+                if v.is_empty() {
+                    continue; // empty cell falls back to English in tr()/trv()
+                }
+                assert_eq!(placeholders(v), en, "placeholder drift in '{key}' [{lang}]");
+            }
+        }
+    }
 }
