@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Main window: full capability set incl. native dialogs + the OS opener. Detached per-monitor / popped-out pane windows get a reduced set (see panes.json) — they render only a terminal mirror (DetachedView) and never need dialogs/opener.",
-  "windows": ["main"],
+  "identifier": "panes",
+  "description": "Detached per-monitor / popped-out pane windows. They render ONLY a terminal mirror (DetachedView), so they get window controls + clipboard-write + ipc — but NOT the native file dialogs or the OS opener that the main window has.",
+  "windows": ["mon-*", "pane-*"],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
@@ -12,9 +12,6 @@
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
-    "opener:default",
-    "dialog:allow-open",
-    "dialog:allow-save",
     "clipboard-manager:allow-write-text"
   ]
 }
