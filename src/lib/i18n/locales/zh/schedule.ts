@@ -16,6 +16,8 @@ export default {
   willCreate: '将在 {time} 创建每日任务。',
   createSchedule: '创建计划任务',
   createScheduleHint: '在 {time} 创建每日任务',
+  reschedule: '更改时间',
+  rescheduleHint: '以新时间重新注册任务',
   runNow: '立即运行',
   runNowHint: '立即运行该任务',
   disableHint: '禁用（将不再按计划运行）',

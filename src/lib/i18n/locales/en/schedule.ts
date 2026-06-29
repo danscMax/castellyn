@@ -16,6 +16,8 @@ export default {
   willCreate: 'A daily task will be created at {time}.',
   createSchedule: 'Create schedule',
   createScheduleHint: 'Create a daily task at {time}',
+  reschedule: 'Change time',
+  rescheduleHint: 'Re-register the task at the new time',
   runNow: 'Run now',
   runNowHint: 'Run the task right now',
   disableHint: 'Disable (will not run on schedule)',

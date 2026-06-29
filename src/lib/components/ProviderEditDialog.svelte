@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EngineStatus, ProfileProvider } from '$lib/ipc';
+  import type { EngineStatus, ProfileProvider, MyProvider } from '$lib/ipc';
   import { readEngineModels } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
@@ -13,6 +13,7 @@
     profileName,
     current,
     engines = [],
+    myProviders = [],
     onSubmit,
     onCancel
   }: {
@@ -20,6 +21,7 @@
     profileName: string;
     current: ProfileProvider | null;
     engines?: EngineStatus[];
+    myProviders?: MyProvider[];
     onSubmit: (v: {
       baseUrl: string;
       token: string;
@@ -59,12 +61,27 @@
   function onPresetChange() {
     const eng = engines.find((e) => e.baseUrl === baseUrl);
     if (eng?.id === 'lmstudio' && !keepToken && !token.trim()) token = 'lmstudio';
+    // Picking a saved custom provider seeds its model fields so they aren't retyped (DRY reuse).
+    const mp = myProviders.find((m) => m.baseUrl === baseUrl);
+    if (mp) {
+      if (mp.model) model = mp.model;
+      if (mp.smallModel) smallModel = mp.smallModel;
+    }
   }
-  const isCustomUrl = $derived(!!baseUrl && !engines.some((e) => e.baseUrl === baseUrl));
+  // Saved custom providers that aren't already an engine, offered as presets alongside them.
+  const myProviderPresets = $derived(
+    myProviders.filter((m) => m.baseUrl && !engines.some((e) => e.baseUrl === m.baseUrl))
+  );
+  const isCustomUrl = $derived(
+    !!baseUrl &&
+      !engines.some((e) => e.baseUrl === baseUrl) &&
+      !myProviderPresets.some((m) => m.baseUrl === baseUrl)
+  );
   const presetOptions = $derived([
     ...engines
       .filter((e) => e.protocol === 'anthropic' && e.baseUrl)
       .map((e) => ({ value: e.baseUrl, label: `${e.name} (${e.baseUrl})` })),
+    ...myProviderPresets.map((m) => ({ value: m.baseUrl, label: `${m.name} (${m.baseUrl})` })),
     ...(isCustomUrl ? [{ value: baseUrl, label: t('providers.presetCustom', { url: baseUrl }) }] : [])
   ]);
   // Block obviously malformed baseUrls from reaching the backend (shared strict http(s) check).

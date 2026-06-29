@@ -16,6 +16,8 @@ export default {
   willCreate: 'Будет создано ежедневное задание на {time}.',
   createSchedule: 'Создать расписание',
   createScheduleHint: 'Создать ежедневное задание на {time}',
+  reschedule: 'Изменить время',
+  rescheduleHint: 'Перерегистрировать задание на новое время',
   runNow: 'Запустить сейчас',
   runNowHint: 'Запустить задание прямо сейчас',
   disableHint: 'Отключить (не будет запускаться по расписанию)',

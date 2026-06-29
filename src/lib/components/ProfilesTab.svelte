@@ -8,7 +8,8 @@
     ProfileLaunch,
     ProfileProvider,
     EngineStatus,
-    ProviderArgs
+    ProviderArgs,
+    MyProvider
   } from '$lib/ipc';
   import { pProfile, t } from '$lib/i18n';
   import { readProfileFile } from '$lib/ipc';
@@ -40,7 +41,7 @@
     onMeasure,
     onProviderSet,
     onProviderClear,
-    onOpenProviders,
+    myProviders = null,
     onRepairElevated,
     onRelaunchAdmin
   }: {
@@ -58,7 +59,7 @@
     onMeasure: (name: string, lean: boolean) => Promise<number>;
     onProviderSet: (args: ProviderArgs) => void;
     onProviderClear: (name: string) => void;
-    onOpenProviders: () => void;
+    myProviders?: MyProvider[] | null;
     onRepairElevated: (name: string) => void;
     onRelaunchAdmin: () => void;
   } = $props();
@@ -381,6 +382,7 @@
     profileName={pvName}
     current={pvCurrent}
     engines={engines ?? []}
+    myProviders={myProviders ?? []}
     onSubmit={onPvSubmit}
     onCancel={() => (pvOpen = false)}
   />
@@ -490,8 +492,8 @@
         {:else if col.key === 'provider'}
           {#if p.exists}
             <span class="flex min-w-0 items-center gap-sw-1 text-sw-xs">
-              <button type="button" class="min-w-0 flex-1 truncate text-left font-medium text-sw-text-secondary hover:text-sw-text"
-                onclick={onOpenProviders} title={t('profiles.providerOpenTip')}>{providerLabel(p.name)}</button>
+              <button type="button" class="min-w-0 flex-1 truncate text-left font-medium text-sw-text-secondary hover:text-sw-text disabled:opacity-60"
+                disabled={busy} onclick={() => editProvider(p.name)} title={t('profiles.providerEditTip')}>{providerLabel(p.name)}</button>
               <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => editProvider(p.name)}
                 title={t('profiles.providerEditTip')}>{t('profiles.providerEdit')}</button>
             </span>

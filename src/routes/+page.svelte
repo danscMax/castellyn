@@ -383,7 +383,10 @@
   }
 
   function onForkAction(action: ForkAction, path?: string, label?: string) {
-    if (path) {
+    if (path && action === 'ff') {
+      // Fast-forward is non-destructive (fork-sync backs up refs) — run directly, no confirm.
+      startForkRepo(action, path);
+    } else if (path) {
       // Per-repo mutation -> confirm, then run CONCURRENTLY (each repo independent).
       askConfirm(
         t('page.confirm_fork_title'),
@@ -1621,7 +1624,7 @@
           {onMeasure}
           {onProviderSet}
           {onProviderClear}
-          onOpenProviders={() => (active = 'providers')}
+          myProviders={myProvidersData}
           {onRepairElevated}
           {onRelaunchAdmin}
         />

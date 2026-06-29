@@ -63,7 +63,7 @@
             <dl class="grid grid-cols-2 gap-x-sw-6 gap-y-1 text-sw-sm">
               <div>
                 <dt class="text-sw-xs text-sw-text-muted">{t('schedule.timeDaily')}</dt>
-                <dd class="text-sw-text">{task.time ?? '—'}</dd>
+                <dd><input type="time" class="sw-input w-28 text-sw-sm" bind:value={times[task.id]} disabled={busy} /></dd>
               </div>
               <div>
                 <dt class="text-sw-xs text-sw-text-muted">{t('schedule.nextRun')}</dt>
@@ -94,6 +94,10 @@
             {:else}
               <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onAction('run', task.id)}
                 title={t('schedule.runNowHint')}>{t('schedule.runNow')}</button>
+              {#if times[task.id] !== task.time}
+                <button class="sw-btn sw-btn-primary text-sw-xs" disabled={busy} onclick={() => onAction('create', task.id, times[task.id])}
+                  title={t('schedule.rescheduleHint')}>{t('schedule.reschedule')}</button>
+              {/if}
               {#if task.enabled}
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onAction('disable', task.id)}
                   title={t('schedule.disableHint')}>{t('common.disable')}</button>
