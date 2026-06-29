@@ -50,6 +50,23 @@
     const q = query.trim().toLowerCase();
     return !q || labels.some((l) => l.toLowerCase().includes(q));
   }
+  // True when a non-empty query matches no section — drives the "nothing found" empty state.
+  // Keep these label groups in sync with the show(...) guards in the markup below.
+  const noResults = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return false;
+    const groups = [
+      [t('settings.theme'), t('settings.themeDesc')],
+      [t('settings.view'), t('settings.density'), t('settings.fullWidth'), t('settings.termScrollback')],
+      [t('settings.language'), t('settings.languageDesc')],
+      [t('settings.scriptsRoot'), t('settings.scriptsRootDesc')],
+      [t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.toggleHotkey')],
+      [t('settings.timeouts'), t('settings.timeoutsDesc')],
+      [t('settings.backupSection'), t('settings.exportConfig'), t('settings.importConfig')],
+      [t('settings.about'), t('settings.version'), t('settings.scripts'), t('settings.config')]
+    ];
+    return !groups.some((g) => g.some((l) => l.toLowerCase().includes(q)));
+  });
 
   let cfg = $state<HubConfig>({});
   let scriptsRoot = $state('');
@@ -423,6 +440,14 @@
         {/if}
       </div>
     </div>
+    {/if}
+    {#if noResults}
+      <div class="grid place-items-center py-sw-6 text-center text-sw-text-muted">
+        <div>
+          <div class="mb-sw-2 text-2xl">🔍</div>
+          <div class="text-sw-sm">{t('settings.noResults', { query: query.trim() })}</div>
+        </div>
+      </div>
     {/if}
   </div>
 </div>

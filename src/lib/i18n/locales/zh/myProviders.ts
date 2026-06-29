@@ -27,6 +27,7 @@ export default {
   name: '名称',
   baseUrl: 'Base URL',
   errInvalidUrl: '需要有效的 http(s) URL',
+  errInvalidName: '名称需为 1–64 个字符，且不含控制字符',
   connectVia: '连接方式',
   connectViaHint: '通过 freellmapi — 适用于普通提供商（DeepSeek、Minimax）。直接 — 仅限 Anthropic 原生。',
   viaFreellmapi: '通过 freellmapi',

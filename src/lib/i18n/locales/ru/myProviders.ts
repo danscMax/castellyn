@@ -27,6 +27,7 @@ export default {
   name: 'Имя',
   baseUrl: 'Base URL',
   errInvalidUrl: 'Нужен корректный http(s) URL',
+  errInvalidName: 'Имя: 1–64 символа, без управляющих символов',
   connectVia: 'Способ подключения',
   connectViaHint:
     'Через freellmapi — для обычных провайдеров (DeepSeek, Minimax). Напрямую — только для Anthropic-родных.',

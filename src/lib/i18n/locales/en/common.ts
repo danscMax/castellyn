@@ -42,6 +42,7 @@ export default {
   back: 'Back',
   selectAll: 'Select all',
   deselectAll: 'Deselect all',
+  selectRow: 'Select row',
 
   // Generic words / statuses
   yes: 'Yes',

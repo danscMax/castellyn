@@ -27,6 +27,7 @@ export default {
   name: 'Name',
   baseUrl: 'Base URL',
   errInvalidUrl: 'A valid http(s) URL is required',
+  errInvalidName: 'Name must be 1–64 chars, no control characters',
   connectVia: 'Connect via',
   connectViaHint:
     'Via freellmapi — for normal providers (DeepSeek, Minimax). Direct — only for Anthropic-native ones.',

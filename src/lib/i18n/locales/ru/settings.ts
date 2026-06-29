@@ -1,6 +1,7 @@
 export default {
   title: 'Настройки',
   searchPlaceholder: 'Поиск по настройкам…',
+  noResults: 'Ничего не найдено по «{query}».',
   confirmDestructive: 'Подтверждать опасные действия',
   confirmDestructiveDesc: 'Спрашивать перед удалением/сбросом (восстановление и переустановка подтверждаются всегда)',
 

@@ -240,7 +240,7 @@
         <tr>
           {#if selectable}
             <th class="dt-sel">
-              <input class="dt-check" type="checkbox" checked={allSelected} onchange={toggleAll} aria-label="select all" />
+              <input class="dt-check" type="checkbox" checked={allSelected} onchange={toggleAll} aria-label={t('common.selectAll')} />
             </th>
           {/if}
           {#if expand}<th class="dt-exp" aria-hidden="true"></th>{/if}
@@ -269,7 +269,7 @@
             onclick={() => exp && toggleOpen(k)}>
             {#if selectable}
               <td class="dt-sel" onclick={(e) => e.stopPropagation()}>
-                <input class="dt-check" type="checkbox" checked={selected.has(k)} onchange={() => toggleSel(k)} aria-label="select row" />
+                <input class="dt-check" type="checkbox" checked={selected.has(k)} onchange={() => toggleSel(k)} aria-label={t('common.selectRow')} />
               </td>
             {/if}
             {#if expand}

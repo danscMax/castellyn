@@ -25,7 +25,6 @@
     onEngine,
     onStack,
     onProviderSet,
-    onProviderClear,
     onRouterInstall,
     onConnectRouter,
     onConnectOpencode,
@@ -48,7 +47,6 @@
     onEngine: (action: 'start' | 'stop', id: string) => void;
     onStack?: (action: 'start' | 'stop' | 'restart', only?: string) => void;
     onProviderSet: (args: ProviderArgs) => void;
-    onProviderClear: (name: string) => void;
     onRouterInstall: () => void;
     onConnectRouter: (engine: EngineStatus, model: string, profile: string) => void;
     onConnectOpencode?: (engine: EngineStatus, model: string, key: string) => void;
@@ -275,7 +273,7 @@
     </div>
     <button class="sw-btn sw-btn-ghost shrink-0" disabled={busy} onclick={onRefresh}
       title={t('providers.refreshTitle')}>
-      {running === 'engine' || running === 'provider' ? t('providers.busy') : t('providers.refreshLabel')}
+      {busy ? t('providers.busy') : t('providers.refreshLabel')}
     </button>
   </header>
 
@@ -370,7 +368,7 @@
                   {t('providers.dashboard')}
                 </button>
               {/if}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => checkUrl('stack:' + s.id, 'http://127.0.0.1:' + s.port, s.protocol)}
+              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => checkUrl('stack:' + s.id, 'http://127.0.0.1:' + s.port, s.protocol)}
                 title={t('providers.checkTip')}>
                 {hc === 'checking' ? t('common.busy') : t('common.check')}
               </button>
@@ -481,7 +479,7 @@
             {/if}
             <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => openEdit(e)}
               title={t('providers.editEndpointTitle')}>{t('providers.portUrl')}</button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => checkUrl('engine:' + e.id, e.baseUrl, e.protocol)}
+            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => checkUrl('engine:' + e.id, e.baseUrl, e.protocol)}
               title={t('providers.checkTip')}>
               {he === 'checking' ? t('common.busy') : t('common.check')}
             </button>

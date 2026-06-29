@@ -1,5 +1,6 @@
 <script lang="ts">
   // Ctrl+K command palette: fuzzy-filter a flat command list, run on Enter. Keyboard-first.
+  import { t } from '$lib/i18n';
   type Command = { id: string; label: string; hint?: string; icon?: string; run: () => void };
 
   let {
@@ -72,7 +73,7 @@
 
 {#if open}
   <div class="overlay" role="dialog" aria-modal="true">
-    <button type="button" class="backdrop" aria-label="close" onclick={onClose}></button>
+    <button type="button" class="backdrop" aria-label={t('common.close')} onclick={onClose}></button>
     <div class="palette">
       <input
         bind:this={input}

@@ -42,6 +42,7 @@ export default {
   back: '返回',
   selectAll: '全选',
   deselectAll: '取消全选',
+  selectRow: '选择行',
 
   // Generic words / statuses
   yes: '是',

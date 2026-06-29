@@ -72,13 +72,17 @@
 
   let models = $state<string[]>([]);
   let loadingModels = $state(false);
+  let modelsMsg = $state(''); // feedback when the fetch returns nothing or errors (was silent)
   async function loadModels() {
     if (!baseUrl.trim()) return;
     loadingModels = true;
+    modelsMsg = '';
     try {
       models = await readEngineModels(baseUrl.trim());
+      if (!models.length) modelsMsg = t('providers.modelsNone');
     } catch {
       models = [];
+      modelsMsg = t('providers.modelsError');
     }
     loadingModels = false;
   }
@@ -111,6 +115,8 @@
         <input class="sw-input" bind:value={baseUrl} placeholder="http://localhost:4000" spellcheck="false" autocomplete="off" title={t('providers.baseUrlInputTip')} />
         {#if matchedOpenAI}
           <span class="warn">{t('providers.openaiWarn')}</span>
+        {:else if baseUrl.trim() && !isValidHttpUrl(baseUrl.trim())}
+          <span class="warn">{t('providers.invalidUrl')}</span>
         {/if}
       </label>
 
@@ -135,6 +141,8 @@
       </div>
       {#if models.length}
         <p class="mb-sw-2 text-sw-xs text-sw-text-muted">{t('providers.modelsAvailable', { n: models.length })}</p>
+      {:else if modelsMsg}
+        <p class="mb-sw-2 text-sw-xs text-sw-text-muted">{modelsMsg}</p>
       {/if}
       <datalist id="engine-models">
         {#each models as m (m)}<option value={m}></option>{/each}

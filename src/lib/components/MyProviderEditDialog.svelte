@@ -93,6 +93,9 @@
       <label class="dlg-fld">
         <span>{t('myProviders.name')}</span>
         <input class="sw-input" bind:value={name} placeholder="DeepSeek" autocomplete="off" />
+        {#if name.trim() && !nameValid}
+          <span class="dlg-warn">{t('myProviders.errInvalidName')}</span>
+        {/if}
       </label>
 
       <label class="dlg-fld">

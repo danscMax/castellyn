@@ -605,16 +605,17 @@
 
   // No arg → deploy to all profiles (confirm). A profile name or array → deploy just those.
   function onMcpDeploy(target?: string | string[]) {
-    if (target) {
-      startMcp('deploy', Array.isArray(target) ? target : [target]);
-    } else {
-      askConfirm(
-        t('page.confirm_mcp_title'),
-        t('page.confirm_mcp_msg'),
-        t('page.confirm_mcp_btn'),
-        () => startMcp('deploy')
-      );
+    const profiles = target ? (Array.isArray(target) ? target : [target]) : null;
+    // Gate broad writes (all profiles, or a multi-profile selection) behind a confirm; a single
+    // explicit profile chip the user clicked deploys directly. Idempotent either way. (Was: only
+    // the all-profiles path confirmed, while a multi-select bulk overwrote silently.)
+    if (profiles && profiles.length === 1) {
+      startMcp('deploy', profiles);
+      return;
     }
+    askConfirm(t('page.confirm_mcp_title'), t('page.confirm_mcp_msg'), t('page.confirm_mcp_btn'), () =>
+      startMcp('deploy', profiles ?? undefined)
+    );
   }
 
   // --- Environments tab (read-only cross-harness overview) ---
@@ -760,12 +761,14 @@
   function onSyncApply(enabled: string[]) {
     const all = ['history', 'projects', 'skills', 'agents', 'commands', 'keybindings'];
     const off = all.filter((i) => !enabled.includes(i));
-    const detail = off.length
-      ? t('page.sync_apply_off', { off: off.join(', ') })
-      : t('page.sync_apply_all');
-    askConfirm(t('page.confirm_sync_title'), detail, t('page.confirm_sync_btn'), () =>
-      startSync('set', enabled)
-    );
+    // Enabling/keeping sync items is additive and safe — only gate behind a confirm when something
+    // is actually being DISABLED (the destructive direction).
+    if (!off.length) {
+      startSync('set', enabled);
+      return;
+    }
+    askConfirm(t('page.confirm_sync_title'), t('page.sync_apply_off', { off: off.join(', ') }),
+      t('page.confirm_sync_btn'), () => startSync('set', enabled));
   }
 
   // --- Config drift (FUN-7): shares the 'sync' run slot + outcome/toast ---
@@ -909,6 +912,7 @@
     startProvider(args);
   }
 
+  // Used by ProfilesTab's per-profile "reset provider" menu item (ProfilesTab.svelte:281).
   function onProviderClear(name: string) {
     if (running) return;
     askConfirm(
@@ -1641,7 +1645,6 @@
           onEngine={onEngineAction}
           onStack={onStack}
           onProviderSet={onProviderSet}
-          onProviderClear={onProviderClear}
           onRouterInstall={onRouterInstall}
           onConnectRouter={onConnectRouter}
           onConnectOpencode={onConnectOpencode}

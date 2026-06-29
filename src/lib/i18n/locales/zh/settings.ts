@@ -1,6 +1,7 @@
 export default {
   title: '设置',
   searchPlaceholder: '搜索设置…',
+  noResults: '没有与“{query}”匹配的设置。',
   confirmDestructive: '确认危险操作',
   confirmDestructiveDesc: '删除/重置前询问（恢复和重装始终需要确认）',
 

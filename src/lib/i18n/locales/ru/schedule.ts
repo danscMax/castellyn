@@ -12,7 +12,7 @@ export default {
   nextRun: 'Следующий запуск',
   lastRun: 'Последний запуск',
   lastResultOk: 'успешно',
-  lastResultFail: 'код {code}',
+  lastResultFail: 'ошибка (код {code})',
   willCreate: 'Будет создано ежедневное задание на {time}.',
   createSchedule: 'Создать расписание',
   createScheduleHint: 'Создать ежедневное задание на {time}',

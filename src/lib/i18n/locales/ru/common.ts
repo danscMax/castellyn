@@ -42,6 +42,7 @@ export default {
   back: 'Назад',
   selectAll: 'Выбрать все',
   deselectAll: 'Снять все',
+  selectRow: 'Выбрать строку',
 
   // Generic words / statuses
   yes: 'Да',

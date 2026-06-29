@@ -1,6 +1,7 @@
 export default {
   title: 'Settings',
   searchPlaceholder: 'Search settings…',
+  noResults: 'No settings match “{query}”.',
   confirmDestructive: 'Confirm destructive actions',
   confirmDestructiveDesc: 'Ask before delete/reset (restore and reinstall always confirm)',
 
