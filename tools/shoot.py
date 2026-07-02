@@ -14,11 +14,11 @@ from playwright.sync_api import sync_playwright
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5173"
 OUT = Path(__file__).resolve().parent.parent / "docs" / "img"
 
-# Sidebar default order (Sidebar.svelte ORD_VER 3) -> .nav-item index per tab.
+# Sidebar default order (navOrder.svelte.ts ORD_VER 4) -> .nav-item index per tab.
 NAV_INDEX = {
     "home": 0, "sessions": 1, "profiles": 2, "providers": 3, "mcp": 4,
-    "extensions": 5, "schedule": 6, "analytics": 7, "sync": 8, "updates": 9,
-    "forks": 10, "backup": 11, "settings": 12,
+    "envs": 5, "extensions": 6, "schedule": 7, "analytics": 8, "sync": 9,
+    "updates": 10, "forks": 11, "backup": 12, "settings": 13,
 }
 
 # tab id -> output filename stem
@@ -26,6 +26,7 @@ SHOTS = {
     "profiles": "screenshot-profiles",
     "extensions": "screenshot-plugins-skills",
     "mcp": "screenshot-mcp",
+    "envs": "screenshot-environments",
     "providers": "screenshot-providers",
     "sync": "screenshot-sync",
     "sessions": "screenshot-sessions",
@@ -37,7 +38,7 @@ INIT = """
 localStorage.setItem('cmh-theme', 'dark');
 localStorage.setItem('cmh-language', 'en');
 localStorage.setItem('cmh-onboarded', '1');
-localStorage.setItem('cmh-sidebar-order-ver', '3');
+localStorage.setItem('cmh-sidebar-order-ver', '4');
 // Force xterm onto its DOM renderer (disable WebGL): the WebGL canvas renderer does not reliably
 // paint programmatically-written content into headless screenshots; the DOM renderer does.
 const _gc = HTMLCanvasElement.prototype.getContext;

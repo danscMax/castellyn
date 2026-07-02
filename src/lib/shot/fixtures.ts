@@ -281,7 +281,22 @@ const handlers: Record<string, (args: any) => any> = {
   ] }),
 
   // --- Analytics ---
-  read_freellmapi_analytics: () => ({ available: true, totals: { totalRequests: 18432, successRate: 99.2, totalInputTokens: 42_500_000, totalOutputTokens: 6_200_000, avgLatencyMs: 740, estimatedCostSavings: 312.5, firstRequestAt: '2026-05-01T00:00:00Z' }, perModel: [], series: [], stepSec: 3600 })
+  read_freellmapi_analytics: () => ({ available: true, totals: { totalRequests: 18432, successRate: 99.2, totalInputTokens: 42_500_000, totalOutputTokens: 6_200_000, avgLatencyMs: 740, estimatedCostSavings: 312.5, firstRequestAt: '2026-05-01T00:00:00Z' }, perModel: [], series: [], stepSec: 3600 }),
+
+  // --- Environments (cross-harness coverage + fan-out) ---
+  read_environments: () => ([
+    { id: 'claude', name: 'Claude Code', installed: true, configPath: '~/.claude/settings.json', skillsVisible: 172, totalSkills: 172, pluginSkillsVisible: true, shareableGap: 0, providers: 4, mcpServers: 5, rtk: true, rtkAvailable: true, configOk: true },
+    { id: 'opencode', name: 'OpenCode', installed: true, configPath: '~/.config/opencode/opencode.json', skillsVisible: 170, totalSkills: 172, pluginSkillsVisible: true, shareableGap: 0, providers: 3, mcpServers: 5, rtk: true, rtkAvailable: true, configOk: true },
+    { id: 'codex', name: 'Codex', installed: true, configPath: '~/.codex/config.toml', skillsVisible: 169, totalSkills: 172, pluginSkillsVisible: false, shareableGap: 3, providers: 1, mcpServers: 4, rtk: false, rtkAvailable: false, configOk: true },
+    { id: 'zcode', name: 'zcode', installed: false, configPath: '', skillsVisible: 0, totalSkills: 172, pluginSkillsVisible: false, shareableGap: 0, providers: 0, mcpServers: 0, rtk: false, rtkAvailable: false, configOk: true }
+  ]),
+  read_skill_matrix: () => ([
+    { name: 'brainstorming', claude: true, opencode: true, codex: true, shareable: false },
+    { name: 'systematic-debugging', claude: true, opencode: true, codex: true, shareable: false },
+    { name: 'tauri-v2', claude: true, opencode: true, codex: false, shareable: true },
+    { name: 'powershell-cyrillic', claude: true, opencode: true, codex: false, shareable: true },
+    { name: 'claude-backup', claude: true, opencode: false, codex: false, shareable: true }
+  ])
 };
 
 // Returns the fixture for a command, or a benign default so any unlisted command never throws.
