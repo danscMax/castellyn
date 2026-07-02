@@ -759,8 +759,9 @@ export const runOpencodeProviders = () => invoke<number>('run_opencode_providers
 export const runOpencodeInstructions = () => invoke<number>('run_opencode_instructions');
 // Fan out canonical .mcp.json servers into Codex via the official `codex mcp add` CLI.
 export const runCodexMcp = () => invoke<number>('run_codex_mcp');
-// Connect the freellmapi gateway to Codex ([model_providers] + [profiles], key stays an env ref).
-export const runCodexProviders = () => invoke<number>('run_codex_providers');
+// Connect the freellmapi gateway to Codex ([model_providers] + [profiles]); also mirrors the
+// gateway key into the user env via setx. Resolves to whether the key was set.
+export const runCodexProviders = () => invoke<boolean>('run_codex_providers');
 // Delete a skill directory (guarded server-side to ~/.claude/skills).
 export const deleteSkill = (dir: string) => invoke('delete_skill', { dir });
 export type PluginRelease = {

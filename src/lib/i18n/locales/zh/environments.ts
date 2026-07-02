@@ -69,7 +69,9 @@ export default {
   deployMcpErrorCodex: '部署 MCP 到 Codex 失败',
   connectGateway: '接入网关',
   connectGatewayTitle:
-    '将 freellmapi 网关写入 Codex 的 config.toml（[model_providers] + 配置档）。密钥仅为 env 引用（FREELLMAPI_API_KEY）；不改变 Codex 默认模型',
-  connectGatewayDone: '网关已接入：codex --profile freellmapi（需要 env FREELLMAPI_API_KEY）',
+    '将 freellmapi 网关写入 Codex 的 config.toml（[model_providers] + 配置档），并把密钥写入 FREELLMAPI_API_KEY 变量。不改变 Codex 默认模型',
+  connectGatewayDone: '网关已接入，密钥已设置 — codex --profile freellmapi（在新终端中）',
+  connectGatewayDoneNoKey:
+    '网关已接入，但密钥设置失败 — 请在 freellmapi 仪表盘复制密钥并执行：setx FREELLMAPI_API_KEY <密钥>',
   connectGatewayError: '接入网关到 Codex 失败'
 };

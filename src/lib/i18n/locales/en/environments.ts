@@ -69,7 +69,9 @@ export default {
   deployMcpErrorCodex: 'Failed to deploy MCP to Codex',
   connectGateway: 'Connect gateway',
   connectGatewayTitle:
-    "Write the freellmapi gateway into Codex's config.toml ([model_providers] + a profile). The key stays an env reference (FREELLMAPI_API_KEY); Codex's default model is not changed",
-  connectGatewayDone: 'Gateway connected: codex --profile freellmapi (needs env FREELLMAPI_API_KEY)',
+    "Write the freellmapi gateway into Codex's config.toml ([model_providers] + a profile) and set the key into the FREELLMAPI_API_KEY variable. Codex's default model is not changed",
+  connectGatewayDone: 'Gateway connected, key set — codex --profile freellmapi (in a new terminal)',
+  connectGatewayDoneNoKey:
+    'Gateway connected, but the key could not be set — copy it from the freellmapi dashboard and run: setx FREELLMAPI_API_KEY <key>',
   connectGatewayError: 'Failed to connect the gateway to Codex'
 };

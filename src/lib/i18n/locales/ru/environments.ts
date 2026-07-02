@@ -69,7 +69,9 @@ export default {
   deployMcpErrorCodex: 'Не удалось развернуть MCP в Codex',
   connectGateway: 'Подключить гейтвей',
   connectGatewayTitle:
-    'Записать freellmapi-гейтвей в config.toml Codex ([model_providers] + профиль). Ключ — только ссылка на env FREELLMAPI_API_KEY; дефолтная модель Codex не меняется',
-  connectGatewayDone: 'Гейтвей подключён: codex --profile freellmapi (нужна env FREELLMAPI_API_KEY)',
+    'Записать freellmapi-гейтвей в config.toml Codex ([model_providers] + профиль) и задать ключ в переменную FREELLMAPI_API_KEY. Дефолтная модель Codex не меняется',
+  connectGatewayDone: 'Гейтвей подключён, ключ задан — codex --profile freellmapi (в новом терминале)',
+  connectGatewayDoneNoKey:
+    'Гейтвей подключён, но ключ задать не удалось — скопируйте его в дашборде freellmapi и выполните: setx FREELLMAPI_API_KEY <ключ>',
   connectGatewayError: 'Не удалось подключить гейтвей к Codex'
 };

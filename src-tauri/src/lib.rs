@@ -6569,10 +6569,14 @@ fn patch_codex_gateway(toml_text: &str, base_url: &str) -> Result<String, String
 }
 
 /// Connect the freellmapi gateway to Codex (the "providers" fan-out for Codex — see
-/// `patch_codex_gateway` for why the raw registry is not written). Returns 1 on success.
-/// The API key stays a reference: the user sets FREELLMAPI_API_KEY in the environment.
+/// `patch_codex_gateway` for why the raw registry is not written). After the config write
+/// it best-effort mirrors the gateway's unified API key into the USER environment
+/// (`setx FREELLMAPI_API_KEY`, read from the gateway's own SQLite via a read-only node
+/// helper — same mechanism as analytics) so `codex --profile freellmapi` works out of the
+/// box in a new terminal. Returns whether the key was set; the key itself is never logged.
 #[tauri::command]
-fn run_codex_providers() -> Result<usize, String> {
+fn run_codex_providers() -> Result<bool, String> {
+    use std::os::windows::process::CommandExt;
     let base = gateway_base_url().ok_or_else(|| tr("err.gateway_missing", cur_lang()).to_string())?;
     let home = std::env::var("USERPROFILE")
         .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
@@ -6581,7 +6585,34 @@ fn run_codex_providers() -> Result<usize, String> {
         .map_err(|_| tr("err.codex_missing", cur_lang()).to_string())?;
     let patched = patch_codex_gateway(text.trim_start_matches('\u{feff}'), &base)?;
     write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
-    Ok(1)
+
+    // Key mirror is best-effort: a missing DB/node/helper leaves the config connected and
+    // the toast tells the user to set the variable by hand (dashboard shows the key).
+    let key_set = (|| -> Option<()> {
+        let db = gateway_db_path().filter(|p| std::path::Path::new(p).exists())?;
+        let helper = abs("Castellyn\\tools\\analytics\\unified-key.cjs");
+        let out = std::process::Command::new("node")
+            .args([&helper, &db])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let v = parse_json_bom(String::from_utf8_lossy(&out.stdout).trim()).ok()?;
+        let key = v.get("key")?.as_str()?.trim().to_string();
+        if key.is_empty() {
+            return None;
+        }
+        let st = std::process::Command::new("setx")
+            .args(["FREELLMAPI_API_KEY", &key])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        st.status.success().then_some(())
+    })()
+    .is_some();
+    Ok(key_set)
 }
 
 /// Canonical rule files fanned into OpenCode's `instructions` array (paths, not copies —

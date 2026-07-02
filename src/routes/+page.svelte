@@ -791,7 +791,19 @@
     if (id === 'opencode')
       void deployToHarness(runOpencodeProviders, 'environments.deployProvidersDone', 'environments.deployProvidersError');
     else if (id === 'codex')
-      void deployToHarness(runCodexProviders, 'environments.connectGatewayDone', 'environments.connectGatewayError');
+      // Not deployToHarness: the result is "was the key mirrored", which picks the toast text.
+      void (async () => {
+        try {
+          const keySet = await runCodexProviders();
+          pushToast({
+            kind: keySet ? 'success' : 'warn',
+            title: t(keySet ? 'environments.connectGatewayDone' : 'environments.connectGatewayDoneNoKey')
+          });
+          await reloadEnvs();
+        } catch (e) {
+          pushToast({ kind: 'error', title: t('environments.connectGatewayError'), detail: String(e) });
+        }
+      })();
   };
   const onDeployInstructions = (id: string) => {
     if (id === 'opencode')
