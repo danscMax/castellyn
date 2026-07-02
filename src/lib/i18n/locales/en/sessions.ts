@@ -121,6 +121,8 @@ export default {
   zoomAllIn: 'Larger in all panes',
   zoomAllOut: 'Smaller in all panes',
   focusModeTip: 'Focus mode: dim the other panes (hover the one you want)',
+  focusMode: 'Focus mode',
+  moreActions: 'More actions',
   monitorOpenFailed: "Couldn't open the window on that monitor.",
   pinned: 'Pinned: {label}',
   sshToolHint: '{tool} runs on the server — it must be installed there.',

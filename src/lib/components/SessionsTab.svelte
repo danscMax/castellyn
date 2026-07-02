@@ -3,6 +3,7 @@
   import TerminalPane from './TerminalPane.svelte';
   import FolderField from './FolderField.svelte';
   import Toggle from './Toggle.svelte';
+  import DropdownMenu from './DropdownMenu.svelte';
   import { t } from '$lib/i18n';
   import {
     sessionWrite,
@@ -1013,26 +1014,24 @@
         </label>
         <span class="text-sw-text-muted">·</span>
       {/if}
-      {#if panes.length}
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => zoomAll(-1)} title={t('sessions.zoomAllOut')} aria-label={t('sessions.zoomAllOut')}>A−</button>
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => zoomAll(1)} title={t('sessions.zoomAllIn')} aria-label={t('sessions.zoomAllIn')}>A+</button>
-        <button class="sw-btn sw-btn-ghost text-sw-xs" class:active={focusMode} onclick={() => (focusMode = !focusMode)}
-          title={t('sessions.focusModeTip')} aria-pressed={focusMode}>◎</button>
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={distributeToMonitors}
-          title={t('sessions.distributeTip')} aria-label={t('sessions.distribute')}>⬈⬈</button>
-        <span class="text-sw-text-muted">·</span>
-      {/if}
-      {#if savedLayoutExists}
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={forgetLayout}
-          title={t('sessions.forgetLayoutTip')} aria-label={t('sessions.forgetLayout')}>↺✕</button>
-        <span class="text-sw-text-muted">·</span>
-      {/if}
       <span class="text-sw-xs text-sw-text-muted">{t('sessions.layout')}</span>
       {#each [1, 2, 3] as c (c)}
         <button class="sw-btn sw-btn-ghost text-sw-xs" class:active={columns === c} onclick={() => (columns = c)}
           title="{t('sessions.layoutCols', { n: c })} · Alt+{c}">{c}</button>
       {/each}
       {#if panes.length}
+        <!-- Redesign 2D: rare whole-grid actions leave the header row for an overflow menu —
+             the strip keeps only search / command / broadcast / layout / close-all. -->
+        <DropdownMenu
+          title={t('sessions.moreActions')}
+          items={[
+            { label: `A− ${t('sessions.zoomAllOut')}`, onClick: () => zoomAll(-1) },
+            { label: `A+ ${t('sessions.zoomAllIn')}`, onClick: () => zoomAll(1) },
+            { label: `◎ ${t('sessions.focusMode')}${focusMode ? ' ✓' : ''}`, onClick: () => (focusMode = !focusMode) },
+            { label: `⬈ ${t('sessions.distribute')}`, onClick: distributeToMonitors },
+            ...(savedLayoutExists ? [{ label: `↺ ${t('sessions.forgetLayout')}`, onClick: forgetLayout }] : [])
+          ]}
+        />
         <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={closeAll} title={t('sessions.closeAllTip')}>
           {t('sessions.closeAll')}
         </button>

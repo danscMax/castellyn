@@ -121,6 +121,8 @@ export default {
   zoomAllIn: '放大所有面板',
   zoomAllOut: '缩小所有面板',
   focusModeTip: '专注模式：淡化其他面板（悬停所需面板）',
+  focusMode: '专注模式',
+  moreActions: '更多操作',
   monitorOpenFailed: '无法在该显示器上打开窗口。',
   pinned: '已收藏：{label}',
   sshToolHint: '{tool} 将在服务器上运行——需先在服务器安装。',
