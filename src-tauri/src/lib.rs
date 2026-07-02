@@ -6983,13 +6983,10 @@ struct PluginRelease {
 }
 
 /// In-memory cache keyed by plugin id: (fetch_time, releases). 5 minute TTL.
-static RELEASES_CACHE: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Vec<PluginRelease>)>>,
-> = std::sync::OnceLock::new();
+type ReleasesCache = std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Vec<PluginRelease>)>>;
+static RELEASES_CACHE: std::sync::OnceLock<ReleasesCache> = std::sync::OnceLock::new();
 
-fn get_releases_cache() -> &'static std::sync::Mutex<
-    std::collections::HashMap<String, (std::time::Instant, Vec<PluginRelease>)>,
-> {
+fn get_releases_cache() -> &'static ReleasesCache {
     RELEASES_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
