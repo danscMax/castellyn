@@ -155,6 +155,7 @@ const handlers: Record<string, (args: any) => any> = {
     return `sess-${spawnSeq}`;
   },
   session_attach: () => 1,
+  session_list: () => [],
   // --- init / settings ---
   read_config: () => ({ scriptsRoot: 'E:\\Scripts', startHidden: false, closeToTray: true, fetchTimeoutSec: 30, ghTimeoutSec: 20, toggleHotkey: 'Ctrl+Shift+H', shortcuts: { toggle_window: 'Ctrl+Shift+H' }, language: 'en' }),
   read_shortcuts: () => ({ toggle_window: 'Ctrl+Shift+H' }),

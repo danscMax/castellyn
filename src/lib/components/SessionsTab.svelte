@@ -140,6 +140,9 @@
               addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true });
             }
           }
+          // Dead entries = a full app restart (the PTYs died with it). Offer to rebuild
+          // the set; claude panes resume their conversation via the captured session id.
+          restorable = savedLive.filter((s) => !alive.has(s.id));
         } catch {
           /* backend gone / no restore */
         }
@@ -236,10 +239,14 @@
   // Keyed by SESSION id. `done` is derived here: working/blocked → idle while the pane
   // wasn't focused (herdr's Idle+!seen); focusing the pane acknowledges it back to idle.
   let agentStates = $state<Record<string, AgentPaneState>>({});
+  // claude conversation ids (from the lifecycle hook) — persisted with the live-pane
+  // list so a restore after an app restart can respawn with `--resume <id>`.
+  let claudeSids = $state<Record<string, string>>({});
   onMount(() => {
     let un: UnlistenFn | undefined;
     listen<AgentStatusEvent>('agent-status', (e) => {
       const { id, state } = e.payload;
+      if (e.payload.claudeSessionId) claudeSids = { ...claudeSids, [id]: e.payload.claudeSessionId };
       const prev = agentStates[id];
       const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
       const focused = paneKey != null && activeKey === paneKey && visible;
@@ -329,7 +336,7 @@
   }
   // ── Reload survival (#5): persist spawned-here sessions, re-attach the ones still alive on mount ──
   const LIVE_KEY = 'cmh-sessions-live';
-  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string };
+  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string };
   // Captured synchronously at init — BEFORE the persist effect first runs and overwrites it with the
   // (empty) fresh panes — so a webview reload still sees the pre-reload session list.
   const savedLive: LivePane[] = (() => {
@@ -343,7 +350,7 @@
     try {
       const live: LivePane[] = panes
         .filter((p) => !p.attachId && sessionIds[p.key])
-        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key] }));
+        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]] }));
       localStorage.setItem(LIVE_KEY, JSON.stringify(live));
     } catch {
       /* ignore */
@@ -1038,6 +1045,21 @@
   function launchWorkspace(name: string) {
     for (const c of workspaces[name] ?? []) addPane(c);
   }
+
+  // ── Restore after an app restart: rebuild the last session set (Wave 3) ──
+  let restorable = $state<LivePane[]>([]);
+  function restoreLast() {
+    for (const s of restorable) {
+      let args = s.args;
+      // Resume the conversation only for a LOCAL claude with a captured id and no
+      // user-supplied resume/continue flag of its own.
+      if (s.tool === 'claude' && !s.sshTarget && s.claudeSid && !/--(resume|continue)\b/.test(args)) {
+        args = `${args} --resume ${s.claudeSid}`.trim();
+      }
+      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget });
+    }
+    restorable = [];
+  }
   function deleteWorkspace(name: string) {
     const { [name]: _drop, ...rest } = workspaces;
     workspaces = rest;
@@ -1286,6 +1308,15 @@
     <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-text-muted)">{t('sessions.globalNearNote', { used: globalCount, max: SESSION_LIMIT })}</p>
   {/if}
 
+  <!-- Restore the previous run's session set (claude panes resume their conversation) -->
+  {#if restorable.length}
+    <div class="restorebar">
+      <span class="text-sw-xs">{t('sessions.restoreOffer', { n: restorable.length })}</span>
+      <button class="sw-btn sw-btn-primary text-sw-xs" onclick={restoreLast}>{t('sessions.restoreDo')}</button>
+      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (restorable = [])}>{t('sessions.restoreDismiss')}</button>
+    </div>
+  {/if}
+
   <!-- Saved workspaces: one click re-opens the whole set of sessions -->
   {#if wsNames.length}
     <div class="workspaces">
@@ -1444,6 +1475,17 @@
   .broadcast-armed {
     color: var(--sw-status-warn, #e0b341);
     font-weight: 600;
+  }
+  /* Restore-last-session offer bar. */
+  .restorebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: var(--sw-space-2);
+    padding: 6px 12px;
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-subtle);
   }
   /* Agent-status rollup chips (header): blocked / working / done counts. */
   .status-sum {
