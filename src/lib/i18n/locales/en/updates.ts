@@ -4,6 +4,11 @@ export default {
   subtitle: 'Check and apply updates for the whole Claude Code stack',
   groupHasUpdate: 'Update available ({count})',
   groupUpToDate: 'Up to date ({count})',
+  groupHeld: 'Held ({count})',
+  groupErrors: 'With errors ({count})',
+  summaryChecked: 'checked {time}',
+  checkAllBtn: 'Check all',
+  updateAllBtn: 'Update all',
 
   // ── ComponentCard: forks summary ──
   forkConflicts: '{count} with conflicts',

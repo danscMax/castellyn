@@ -4,6 +4,11 @@ export default {
   subtitle: 'Проверка и применение обновлений всего стека Claude Code',
   groupHasUpdate: 'Есть обновление ({count})',
   groupUpToDate: 'Актуально ({count})',
+  groupHeld: 'На удержании ({count})',
+  groupErrors: 'С ошибками ({count})',
+  summaryChecked: 'проверено {time}',
+  checkAllBtn: 'Проверить всё',
+  updateAllBtn: 'Обновить всё',
 
   // ── ComponentCard: forks summary ──
   forkConflicts: '{count} с конфликтами',
