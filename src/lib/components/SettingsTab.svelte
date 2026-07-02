@@ -285,18 +285,8 @@
     }
   }
 
-  // #123: register the combo first (it throws on a bad/taken accelerator) and only persist if it took.
-  async function applyToggleHotkey() {
-    const accel = toggleHotkey.trim() || null;
-    errMsg = '';
-    try {
-      await setToggleHotkey(accel);
-      await persist({ toggleHotkey: accel });
-      flash(t('settings.saved'));
-    } catch (e) {
-      errMsg = `${t('settings.toggleHotkeyError')}: ${e}`;
-    }
-  }
+  // (L5: the single-hotkey applyToggleHotkey helper was dead — the markup applies the whole
+  // shortcut map via applyShortcuts since Phase 4.1.)
 </script>
 
 <div class="p-sw-6">

@@ -48,7 +48,6 @@ export default {
   smallModelPlaceholder: '(необязательно)',
   smallModelHint: 'Для мелких задач (заголовки чата и т.п.). Пусто = та же модель.',
   save: 'Сохранить',
-  dialogClose: 'Закрыть диалог',
   hasKey: 'Ключ сохранён в Credential Manager',
   noKey: 'Ключ не задан',
   keySet: 'ключ есть',

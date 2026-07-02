@@ -46,7 +46,6 @@ export default {
   sortBy: 'Сортировать по «{label}»',
 
   // Generic words / statuses
-  yes: 'Да',
   no: 'Нет',
   error: 'Ошибка',
   done: 'Готово',
@@ -58,7 +57,6 @@ export default {
   noData: 'нет данных',
   dash: '—',
   upToDate: 'актуально',
-  inSync: 'всё синхронизировано',
 
   // Plural noun forms (one / few / many) — selected by Intl.PluralRules per locale.
   update_one: 'обновление',

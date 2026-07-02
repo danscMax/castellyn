@@ -6,12 +6,8 @@ export default {
   refreshBtn: '刷新列表',
 
   // Plugins section
-  pluginsHeading: '插件 ({count})',
-  withUpdateBadge: '{count} 个有更新',
-  withUpdateBadgeTip: '有可用更新的插件',
   updateAvailableBadge: '有更新',
   updateAvailableBadgeTip: '可用版本 {version}',
-  managedBadge: 'managed',
   colName: '名称',
   colMarket: '市场',
   colVersion: '版本',
@@ -41,21 +37,10 @@ export default {
   skillOpenTip: '在资源管理器中打开技能文件夹',
   skillDelete: '删除',
   skillDeleteTip: '删除技能文件夹',
-  managedBadgeTip: '由 managed-settings 在所有配置中强制启用',
-  enabledBadge: '已启用',
-  disabledBadge: '已禁用',
   enabledTip: '插件已启用',
   disabledTip: '插件已禁用',
 
   // Plugin contents (details)
-  contentsLabel: '组成：',
-  contentsToggleTip: '展开/收起插件的技能、命令和代理列表',
-  skillsBadge: '{count} 个{skills}',
-  skillsBadgeTip: '插件内的技能',
-  commandsBadge: '{count} 个{commands}',
-  commandsBadgeTip: '插件的斜杠命令',
-  agentsBadge: '{count} 个{agents}',
-  agentsBadgeTip: '插件的子代理',
   catSkills: '技能',
   catCommands: '命令',
   catAgents: '代理',
@@ -76,8 +61,6 @@ export default {
   filterUpdates: '有更新',
   filterEnabled: '仅已启用',
   sortName: '排序：名称',
-  sortStatus: '排序：状态',
-  sortUpdate: '排序：更新',
   changelogBtn: '更新日志',
   changelogBtnTip: '查看 GitHub 发布历史',
   changelogTitle: '发布历史',
@@ -89,7 +72,5 @@ export default {
   skillsHeading: '技能 ({count})',
   openSkillsBtn: '打开技能文件夹',
   openSkillsTip: '在文件资源管理器中打开 ~/.claude/skills',
-  skillsNote:
-    '技能是 ~/.claude/skills 中的文件（由文件和插件管理；没有单独的启用/禁用）。',
   noSkills: '在 ~/.claude/skills 中未找到技能。'
 };

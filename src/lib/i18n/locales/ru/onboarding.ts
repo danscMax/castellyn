@@ -30,7 +30,6 @@ export default {
   profileExisting: 'Найдено профилей: {n}.',
   profileNoneYet: 'Профилей пока нет.',
   profileOpenTab: 'Открыть «Профили»',
-  profileCreated: 'Профиль создан.',
   profileSkipHint: 'Профили можно добавить в любой момент на вкладке «Профили».',
 
   // Step 4 — finish

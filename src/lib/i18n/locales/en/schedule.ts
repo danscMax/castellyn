@@ -13,7 +13,6 @@ export default {
   lastRun: 'Last run',
   lastResultOk: 'success',
   lastResultFail: 'failed (code {code})',
-  willCreate: 'A daily task will be created at {time}.',
   createSchedule: 'Create schedule',
   createScheduleHint: 'Create a daily task at {time}',
   reschedule: 'Change time',

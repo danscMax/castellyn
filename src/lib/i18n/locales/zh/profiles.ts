@@ -63,12 +63,8 @@ export default {
   // Provider section
   providerLabel: '提供商：',
   providerDefault: 'Anthropic（默认）',
-  providerStdTip: '标准 Anthropic 登录',
   providerEdit: '更改',
-  providerOpenTip: '打开「提供商」标签页 — 在那里配置该提供商及其密钥',
   providerEditTip: '为此配置指定/更改 LLM 提供商（LM Studio、路由器、自定义）',
-  providerClear: '重置',
-  providerClearTip: '重置为标准 Anthropic 登录',
 
   // Link kinds / tips
   linkJunction: 'junction',
@@ -140,7 +136,6 @@ export default {
   dlgCancel: '取消',
   dlgAdd: '添加',
   dlgRename: '重命名',
-  dlgApply: '应用',
 
   // LaunchConfigDialog
   lcTitle: '工具与大小 · 配置「{name}」',

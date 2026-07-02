@@ -13,7 +13,6 @@ export default {
   lastRun: '上次运行',
   lastResultOk: '成功',
   lastResultFail: '失败（代码 {code}）',
-  willCreate: '将在 {time} 创建每日任务。',
   createSchedule: '创建计划任务',
   createScheduleHint: '在 {time} 创建每日任务',
   reschedule: '更改时间',

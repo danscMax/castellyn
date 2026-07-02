@@ -30,7 +30,6 @@ export default {
   profileExisting: '{n} profile(s) found.',
   profileNoneYet: 'No profiles yet.',
   profileOpenTab: 'Open Profiles tab',
-  profileCreated: 'Profile created.',
   profileSkipHint: 'You can add profiles any time from the Profiles tab.',
 
   // Step 4 — finish

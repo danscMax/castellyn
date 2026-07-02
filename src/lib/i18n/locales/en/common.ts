@@ -46,7 +46,6 @@ export default {
   sortBy: 'Sort by {label}',
 
   // Generic words / statuses
-  yes: 'Yes',
   no: 'No',
   error: 'Error',
   done: 'Done',
@@ -58,7 +57,6 @@ export default {
   noData: 'no data',
   dash: '—',
   upToDate: 'up to date',
-  inSync: 'all in sync',
 
   // Plural noun forms (one / few / many) — English uses one / other (few == many).
   update_one: 'update',

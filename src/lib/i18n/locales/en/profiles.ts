@@ -64,13 +64,9 @@ export default {
   // Provider section
   providerLabel: 'Provider:',
   providerDefault: 'Anthropic (default)',
-  providerStdTip: 'Standard Anthropic login',
   providerEdit: 'change',
-  providerOpenTip: 'Open the Providers tab — configure this provider and its keys there',
   providerEditTip:
     'Assign/change this profile’s LLM provider (LM Studio, router, custom)',
-  providerClear: 'reset',
-  providerClearTip: 'Reset to the standard Anthropic login',
 
   // Link kinds / tips
   linkJunction: 'junction',
@@ -145,7 +141,6 @@ export default {
   dlgCancel: 'Cancel',
   dlgAdd: 'Add',
   dlgRename: 'Rename',
-  dlgApply: 'Apply',
 
   // LaunchConfigDialog
   lcTitle: 'Tools and size · profile “{name}”',

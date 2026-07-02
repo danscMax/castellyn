@@ -18,13 +18,11 @@ export default {
   bulkDeployTip: '将所有 MCP 服务器部署到选中的配置',
 
   // Server card
-  commandTitle: '服务器启动命令',
   pluginBadge: '来自插件',
   pluginBadgeTitle: '该服务器来自插件市场——不会部署到配置中',
   deployedCountTitle: '已部署到 {total} 个配置中的 {n} 个',
   pluginNote: '通过插件市场全局提供——不部署到配置中（这是正常的）。',
   profileDeployedTitle: '已部署到配置 {p}',
-  profileNotDeployedTitle: '未部署到 {p}——点击「部署到所有配置」以添加',
   deployToProfileTip: '将所有 MCP 服务器部署到配置 {p}',
 
   // Empty state
@@ -34,7 +32,6 @@ export default {
   // Extras (out of source of truth)
   extrasHeading: '真实来源之外',
   extrasNote: '在配置中找到但不在 config/.mcp.json 中的服务器：',
-  extrasProfileTitle: '存在于此配置中，但不在真实来源中',
   removeExtraTitle: '从配置 {p} 中移除此服务器',
 
   // Add / edit a canonical server

@@ -64,13 +64,9 @@ export default {
   // Provider section
   providerLabel: 'Провайдер:',
   providerDefault: 'Anthropic (по умолчанию)',
-  providerStdTip: 'Стандартный Anthropic-логин',
   providerEdit: 'изменить',
-  providerOpenTip: 'Открыть вкладку «Провайдеры» — там настройка и ключи этого провайдера',
   providerEditTip:
     'Назначить/изменить LLM-провайдера этого профиля (LM Studio, роутер, кастомный)',
-  providerClear: 'сбросить',
-  providerClearTip: 'Сбросить на стандартный Anthropic-логин',
 
   // Link kinds / tips
   linkJunction: 'junction',
@@ -147,7 +143,6 @@ export default {
   dlgCancel: 'Отмена',
   dlgAdd: 'Добавить',
   dlgRename: 'Переименовать',
-  dlgApply: 'Применить',
 
   // LaunchConfigDialog
   lcTitle: 'Инструменты и размер · профиль «{name}»',

@@ -161,7 +161,6 @@ export default {
   sync_log_query: '▶ Sync: checking…',
   sync_apply_off:
     'These will stop syncing across machines: {off} (local files are not deleted). .stignore will be regenerated.',
-  sync_apply_all: 'All items will sync. .stignore will be regenerated.',
   confirm_sync_title: 'Apply sync settings?',
   confirm_sync_btn: 'Apply',
 
@@ -217,9 +216,6 @@ export default {
   plugin_verb_remove: 'removing',
   plugin_log: '▶ Plugin {id}: {verb}…',
   plugin_bulk_log: '▶ {n} plugins: {verb}…',
-  confirm_plugin_disable_title: 'Disable plugin?',
-  confirm_plugin_disable_msg: '“{id}” will be disabled in all profiles. Continue?',
-  confirm_plugin_disable_btn: 'Disable',
   confirm_plugin_remove_title: 'Remove plugin?',
   confirm_plugin_remove_msg: '“{id}” will be uninstalled (claude plugin remove). Continue?',
   confirm_plugin_remove_btn: 'Remove',

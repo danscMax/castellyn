@@ -161,7 +161,6 @@ export default {
   sync_log_query: '▶ Синхронизация: проверка…',
   sync_apply_off:
     'Перестанут синхронизироваться между машинами: {off} (локальные файлы не удаляются). .stignore будет перегенерирован.',
-  sync_apply_all: 'Все элементы будут синхронизироваться. .stignore будет перегенерирован.',
   confirm_sync_title: 'Применить настройки синхронизации?',
   confirm_sync_btn: 'Применить',
 
@@ -217,9 +216,6 @@ export default {
   plugin_verb_remove: 'удаление',
   plugin_log: '▶ Плагин {id}: {verb}…',
   plugin_bulk_log: '▶ {n} плагинов: {verb}…',
-  confirm_plugin_disable_title: 'Выключить плагин?',
-  confirm_plugin_disable_msg: '«{id}» будет выключен во всех профилях. Продолжить?',
-  confirm_plugin_disable_btn: 'Выключить',
   confirm_plugin_remove_title: 'Удалить плагин?',
   confirm_plugin_remove_msg: '«{id}» будет удалён (claude plugin remove). Продолжить?',
   confirm_plugin_remove_btn: 'Удалить',

@@ -90,17 +90,6 @@
   const fmt = (n: number) => nf.format(n ?? 0);
   const money = (n: number) => cf.format(n ?? 0);
   const pct = (n: number) => `${(n ?? 0).toFixed(1)}%`;
-  function fmtRel(ts: number): string {
-    const diff = Date.now() - ts;
-    const mins = Math.floor(diff / 60_000);
-    if (mins < 2) return 'now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
-  }
-
   // Export the per-model table to a CSV file (client-side blob download; no backend).
   function exportCsv() {
     const head = ['model', 'platform', 'modelId', 'requests', 'successRate', 'avgLatencyMs', 'tokens', 'estimatedCost'];

@@ -6,12 +6,8 @@ export default {
   refreshBtn: 'Refresh list',
 
   // Plugins section
-  pluginsHeading: 'Plugins ({count})',
-  withUpdateBadge: '{count} with update',
-  withUpdateBadgeTip: 'Plugins with an available update',
   updateAvailableBadge: 'update available',
   updateAvailableBadgeTip: 'Version {version} available',
-  managedBadge: 'managed',
   colName: 'Name',
   colMarket: 'Marketplace',
   colVersion: 'Version',
@@ -41,21 +37,10 @@ export default {
   skillOpenTip: 'Open the skill folder in Explorer',
   skillDelete: 'Delete',
   skillDeleteTip: 'Delete the skill folder',
-  managedBadgeTip: 'Forced by managed-settings across all profiles',
-  enabledBadge: 'enabled',
-  disabledBadge: 'disabled',
   enabledTip: 'Plugin enabled',
   disabledTip: 'Plugin disabled',
 
   // Plugin contents (details)
-  contentsLabel: 'Contents:',
-  contentsToggleTip: 'Expand/collapse the list of the plugin’s skills, commands and agents',
-  skillsBadge: '{count} {skills}',
-  skillsBadgeTip: 'Skills inside the plugin',
-  commandsBadge: '{count} {commands}',
-  commandsBadgeTip: 'Plugin slash commands',
-  agentsBadge: '{count} {agents}',
-  agentsBadgeTip: 'Plugin subagents',
   catSkills: 'Skills',
   catCommands: 'Commands',
   catAgents: 'Agents',
@@ -76,8 +61,6 @@ export default {
   filterUpdates: 'Has update',
   filterEnabled: 'Enabled only',
   sortName: 'Sort: name',
-  sortStatus: 'Sort: status',
-  sortUpdate: 'Sort: updates',
   changelogBtn: 'Changelog',
   changelogBtnTip: 'View release history on GitHub',
   changelogTitle: 'Release history',
@@ -89,7 +72,5 @@ export default {
   skillsHeading: 'Skills ({count})',
   openSkillsBtn: 'Open skills folder',
   openSkillsTip: 'Open ~/.claude/skills in the file explorer',
-  skillsNote:
-    'Skills are files in ~/.claude/skills (managed by files and plugins; there is no per-skill enable/disable).',
   noSkills: 'No skills found in ~/.claude/skills.'
 };

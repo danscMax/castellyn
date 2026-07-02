@@ -13,7 +13,6 @@ export default {
   lastRun: 'Последний запуск',
   lastResultOk: 'успешно',
   lastResultFail: 'ошибка (код {code})',
-  willCreate: 'Будет создано ежедневное задание на {time}.',
   createSchedule: 'Создать расписание',
   createScheduleHint: 'Создать ежедневное задание на {time}',
   reschedule: 'Изменить время',

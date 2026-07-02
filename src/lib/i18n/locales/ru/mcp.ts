@@ -18,13 +18,11 @@ export default {
   bulkDeployTip: 'Развернуть все MCP-серверы в отмеченные профили',
 
   // Server card
-  commandTitle: 'Команда запуска сервера',
   pluginBadge: 'из плагина',
   pluginBadgeTitle: 'Сервер приходит из плагин-маркетплейса — в профили не разворачивается',
   deployedCountTitle: 'Развёрнут в {n} из {total} профилей',
   pluginNote: 'Глобально через плагин-маркетплейс — не разворачивается в профили (это нормально).',
   profileDeployedTitle: 'Развёрнут в профиле {p}',
-  profileNotDeployedTitle: 'НЕ развёрнут в {p} — нажми «Развернуть во все профили», чтобы добавить',
   deployToProfileTip: 'Развернуть все MCP-серверы в профиль {p}',
 
   // Empty state
@@ -34,7 +32,6 @@ export default {
   // Extras (out of source of truth)
   extrasHeading: 'Вне источника истины',
   extrasNote: 'Серверы, найденные в профилях, но отсутствующие в config/.mcp.json:',
-  extrasProfileTitle: 'Есть в этом профиле, но нет в источнике истины',
   removeExtraTitle: 'Убрать этот сервер из профиля {p}',
 
   // Add / edit a canonical server

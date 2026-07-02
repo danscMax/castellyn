@@ -48,7 +48,6 @@ export default {
   smallModelPlaceholder: '(optional)',
   smallModelHint: 'For small tasks (chat titles, etc.). Empty = same model.',
   save: 'Save',
-  dialogClose: 'Close dialog',
   hasKey: 'Key stored in Credential Manager',
   noKey: 'No key set',
   keySet: 'key set',

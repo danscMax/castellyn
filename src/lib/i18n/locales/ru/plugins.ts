@@ -6,12 +6,8 @@ export default {
   refreshBtn: 'Обновить список',
 
   // Plugins section
-  pluginsHeading: 'Плагины ({count})',
-  withUpdateBadge: '{count} с обновлением',
-  withUpdateBadgeTip: 'Плагинов с доступным обновлением',
   updateAvailableBadge: 'обновление есть',
   updateAvailableBadgeTip: 'Доступна версия {version}',
-  managedBadge: 'managed',
   colName: 'Название',
   colMarket: 'Маркетплейс',
   colVersion: 'Версия',
@@ -41,21 +37,10 @@ export default {
   skillOpenTip: 'Открыть папку скилла в Проводнике',
   skillDelete: 'Удалить',
   skillDeleteTip: 'Удалить папку скилла',
-  managedBadgeTip: 'Навязан managed-settings во всех профилях',
-  enabledBadge: 'включён',
-  disabledBadge: 'выключен',
   enabledTip: 'Плагин включён',
   disabledTip: 'Плагин выключен',
 
   // Plugin contents (details)
-  contentsLabel: 'Состав:',
-  contentsToggleTip: 'Развернуть/свернуть список скиллов, команд и агентов плагина',
-  skillsBadge: '{count} {skills}',
-  skillsBadgeTip: 'Скиллы внутри плагина',
-  commandsBadge: '{count} {commands}',
-  commandsBadgeTip: 'Слэш-команды плагина',
-  agentsBadge: '{count} {agents}',
-  agentsBadgeTip: 'Сабагенты плагина',
   catSkills: 'Скиллы',
   catCommands: 'Команды',
   catAgents: 'Агенты',
@@ -76,8 +61,6 @@ export default {
   filterUpdates: 'С обновлением',
   filterEnabled: 'Только включённые',
   sortName: 'Сортировка: имя',
-  sortStatus: 'Сортировка: статус',
-  sortUpdate: 'Сортировка: обновления',
   changelogBtn: 'Чейнджлог',
   changelogBtnTip: 'История релизов на GitHub',
   changelogTitle: 'История релизов',
@@ -89,7 +72,5 @@ export default {
   skillsHeading: 'Скиллы ({count})',
   openSkillsBtn: 'Открыть папку скиллов',
   openSkillsTip: 'Открыть ~/.claude/skills в Проводнике',
-  skillsNote:
-    'Скиллы — это файлы в ~/.claude/skills (управляются файлами и плагинами; индивидуального вкл/выкл нет).',
   noSkills: 'Скиллы не найдены в ~/.claude/skills.'
 };

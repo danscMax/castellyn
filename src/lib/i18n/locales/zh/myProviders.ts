@@ -47,7 +47,6 @@ export default {
   smallModelPlaceholder: '（可选）',
   smallModelHint: '用于小任务（聊天标题等）。留空 = 同一模型。',
   save: '保存',
-  dialogClose: '关闭对话框',
   hasKey: '密钥已存入凭据管理器',
   noKey: '未设置密钥',
   keySet: '有密钥',

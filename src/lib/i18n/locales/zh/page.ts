@@ -159,7 +159,6 @@ export default {
   sync_log_set: '▶ 同步：应用设置…',
   sync_log_query: '▶ 同步：检查…',
   sync_apply_off: '以下项目将停止跨设备同步：{off}（本地文件不会删除）。.stignore 将被重新生成。',
-  sync_apply_all: '所有项目都将同步。.stignore 将被重新生成。',
   confirm_sync_title: '应用同步设置？',
   confirm_sync_btn: '应用',
 
@@ -212,9 +211,6 @@ export default {
   plugin_verb_remove: '删除',
   plugin_log: '▶ 插件 {id}：{verb}…',
   plugin_bulk_log: '▶ {n} 个插件：{verb}…',
-  confirm_plugin_disable_title: '禁用插件？',
-  confirm_plugin_disable_msg: '「{id}」将在所有配置中被禁用。是否继续？',
-  confirm_plugin_disable_btn: '禁用',
   confirm_plugin_remove_title: '删除插件？',
   confirm_plugin_remove_msg: '「{id}」将被卸载（claude plugin remove）。是否继续？',
   confirm_plugin_remove_btn: '删除',

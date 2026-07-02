@@ -18,13 +18,11 @@ export default {
   bulkDeployTip: 'Deploy all MCP servers to the checked profiles',
 
   // Server card
-  commandTitle: 'Server launch command',
   pluginBadge: 'from plugin',
   pluginBadgeTitle: 'Server comes from the plugin marketplace — not deployed into profiles',
   deployedCountTitle: 'Deployed in {n} of {total} profiles',
   pluginNote: 'Global via the plugin marketplace — not deployed into profiles (this is normal).',
   profileDeployedTitle: 'Deployed in profile {p}',
-  profileNotDeployedTitle: 'NOT deployed in {p} — click “Deploy to all profiles” to add it',
   deployToProfileTip: 'Deploy all MCP servers to profile {p}',
 
   // Empty state
@@ -34,7 +32,6 @@ export default {
   // Extras (out of source of truth)
   extrasHeading: 'Outside the source of truth',
   extrasNote: 'Servers found in profiles but missing from config/.mcp.json:',
-  extrasProfileTitle: 'Present in this profile, but not in the source of truth',
   removeExtraTitle: 'Remove this server from profile {p}',
 
   // Add / edit a canonical server

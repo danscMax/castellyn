@@ -46,7 +46,6 @@ export default {
   sortBy: '按 {label} 排序',
 
   // Generic words / statuses
-  yes: '是',
   no: '否',
   error: '错误',
   done: '完成',
@@ -58,7 +57,6 @@ export default {
   noData: '无数据',
   dash: '—',
   upToDate: '已是最新',
-  inSync: '已全部同步',
 
   // Plural noun forms — Chinese has a single form; all three are identical.
   update_one: '更新',

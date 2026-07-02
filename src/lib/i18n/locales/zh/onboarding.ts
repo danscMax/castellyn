@@ -30,7 +30,6 @@ export default {
   profileExisting: '已找到 {n} 个配置档案。',
   profileNoneYet: '暂无配置档案。',
   profileOpenTab: '打开“配置档案”',
-  profileCreated: '配置档案已创建。',
   profileSkipHint: '你可以随时在“配置档案”标签页中添加档案。',
 
   // Step 4 — finish
