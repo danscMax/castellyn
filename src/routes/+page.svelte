@@ -67,6 +67,9 @@
     listPluginContents,
     runPlugin,
     runPluginsBulk,
+    pluginSyncStatus,
+    pluginSyncSet,
+    runPluginSync,
     readSchedules,
     runSchedule,
     cancelRun,
@@ -100,7 +103,8 @@
     type SkillInfo,
     type PluginAction,
     type PluginUpdate,
-    type PluginContents
+    type PluginContents,
+    type PluginSyncStatus
   } from '$lib/ipc';
   import {
     updatesAttention,
@@ -190,6 +194,7 @@
   let skillsData = $state<SkillInfo[] | null>(null);
   let pluginUpdates = $state<PluginUpdate[]>([]);
   let pluginContents = $state<PluginContents[]>([]);
+  let pluginSyncData = $state<PluginSyncStatus | null>(null);
   let extensionsLoaded = $state(false);
   let loadError = $state<string | null>(null);
   // OU-04 first-run onboarding wizard. Shown once when a fresh user has neither a configured
@@ -1277,6 +1282,11 @@
     } catch {
       pluginContents = [];
     }
+    try {
+      pluginSyncData = await pluginSyncStatus();
+    } catch {
+      pluginSyncData = null;
+    }
     await reloadPluginUpdates();
     extensionsLoaded = true;
   }
@@ -1402,6 +1412,24 @@
       reloadExtensions();
     }
   }
+  // Cross-profile plugin sync: one-off reconcile (streams into the console, run-done
+  // releases the lock + toasts via the generic operational path).
+  function onPluginSyncNow() {
+    if (running) return;
+    running = 'pluginsync';
+    log = [t('page.log_component', { name: opName('pluginsync'), verb: t('page.verb_apply') })];
+    runPluginSync().catch(onSpawnErr);
+  }
+  // Wire/unwire the SessionStart auto-sync hook in every profile (quick file edits, no run lock).
+  async function onPluginSyncHookToggle(enabled: boolean) {
+    try {
+      pluginSyncData = await pluginSyncSet(enabled);
+      pushToast({ kind: 'success', title: t(enabled ? 'page.pluginsync_hook_on' : 'page.pluginsync_hook_off') });
+    } catch (e) {
+      toastErr(e);
+    }
+  }
+
   function onBulkPlugin(action: PluginAction, ids: string[]) {
     if (!ids.length) return;
     if (action === 'remove') {
@@ -2037,12 +2065,15 @@
           updates={pluginUpdates}
           contents={pluginContents}
           running={bulkActive ? 'plugin-mgr' : running}
+          syncStatus={pluginSyncData}
           onAction={onPluginAction}
           {onBulkPlugin}
           onRefresh={reloadExtensions}
           {onOpenSkills}
           {onOpenSkill}
           {onDeleteSkill}
+          onSyncNow={onPluginSyncNow}
+          onSyncHookToggle={onPluginSyncHookToggle}
         />
       {:else if active === 'schedule'}
         <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} />

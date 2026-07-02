@@ -780,6 +780,20 @@ export const runPlugin = (action: PluginAction, id: string) =>
 export const runPluginsBulk = (action: PluginAction, ids: string[]) =>
   invoke<number>('run_plugins_bulk', { action, ids });
 
+// Plugin sync across profiles: SessionStart hook wiring status + on-demand reconcile.
+// wired/unwired hold profile DIR names (".claude", ".claude-cc1", …).
+export type PluginSyncStatus = {
+  wired: string[];
+  unwired: string[];
+  scriptInstalled: boolean;
+  scriptVersion: number;
+};
+export const pluginSyncStatus = () => invoke<PluginSyncStatus>('plugin_sync_status');
+export const pluginSyncSet = (enabled: boolean) =>
+  invoke<PluginSyncStatus>('plugin_sync_set', { enabled });
+// Streams into the console as component "pluginsync"; resolves with the exit code on run-done.
+export const runPluginSync = () => invoke<number>('run_plugin_sync');
+
 // --- Settings ---
 export type HubConfig = {
   scriptsRoot?: string | null;

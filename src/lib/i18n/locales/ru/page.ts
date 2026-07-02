@@ -64,6 +64,9 @@ export default {
   op_provider: 'Провайдер',
   op_schedule: 'Расписание',
   op_plugins: 'Плагины',
+  op_pluginsync: 'Синхронизация плагинов',
+  pluginsync_hook_on: 'Авто-синк плагинов включён во всех профилях',
+  pluginsync_hook_off: 'Авто-синк плагинов отключён',
   op_forks: 'Форки',
 
   // Generic run-log lines

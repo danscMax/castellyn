@@ -264,6 +264,12 @@ const handlers: Record<string, (args: any) => any> = {
     { name: 'claude-backup', description: 'Backup/restore the Claude setup', version: '1.2', dir: '~/.claude/skills/claude-backup', source: 'own', mine: true }
   ]),
   list_plugin_updates: () => ([{ id: 'superpowers', installed: '2.4.1', available: '2.5.0' }]),
+  plugin_sync_status: () => ({
+    wired: ['.claude', '.claude-cc1', '.claude-cc2', '.claude-ccfree'],
+    unwired: ['.claude-cctest'],
+    scriptInstalled: true,
+    scriptVersion: 2
+  }),
   list_plugin_contents: () => ([
     { id: 'superpowers', skills: ['brainstorming', 'systematic-debugging', 'test-driven-development'], commands: ['/spec'], agents: ['Plan', 'Explore'] },
     { id: 'max', skills: ['max-dedup', 'max-modernize'], commands: ['/max:audit', '/max:review'], agents: ['max:review-critic'] }

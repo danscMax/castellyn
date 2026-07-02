@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease } from '$lib/ipc';
+  import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease, PluginSyncStatus } from '$lib/ipc';
   import { listPluginReleases } from '$lib/ipc';
   import { t, pSkill, pCommand, pAgent, pPlugin } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
@@ -13,25 +13,36 @@
     updates = [],
     contents = [],
     running,
+    syncStatus = null,
     onAction,
     onBulkPlugin,
     onRefresh,
     onOpenSkills,
     onOpenSkill,
-    onDeleteSkill
+    onDeleteSkill,
+    onSyncNow,
+    onSyncHookToggle
   }: {
     plugins: PluginInfo[] | null;
     skills: SkillInfo[] | null;
     updates?: PluginUpdate[];
     contents?: PluginContents[];
     running: string | null;
+    syncStatus?: PluginSyncStatus | null;
     onAction: (action: PluginAction, id: string) => void;
     onBulkPlugin: (action: PluginAction, ids: string[]) => void;
     onRefresh: () => void;
     onOpenSkills: () => void;
     onOpenSkill: (dir: string) => void;
     onDeleteSkill: (dir: string, name: string) => void;
+    onSyncNow: () => void;
+    onSyncHookToggle: (enabled: boolean) => void;
   } = $props();
+
+  // Auto-sync toggle reflects FULL coverage; a partial wiring (e.g. a profile added after
+  // enabling) shows as off + the coverage counter, and re-enabling wires the missing ones.
+  const syncTotal = $derived(syncStatus ? syncStatus.wired.length + syncStatus.unwired.length : 0);
+  const syncHookOn = $derived(!!syncStatus && syncTotal > 0 && syncStatus.unwired.length === 0);
 
   const busy = $derived(!!running);
   let actingId = $state<string | null>(null);
@@ -231,6 +242,28 @@
       </button>
     </div>
   </header>
+
+  <!-- Cross-profile plugin sync -->
+  <div class="sw-card synccard mb-sw-4">
+    <div class="syncmeta">
+      <p class="synctitle">{t('plugins.syncTitle')}</p>
+      <p class="syncdesc">{t('plugins.syncDesc')}</p>
+    </div>
+    <div class="syncactions">
+      {#if syncStatus}
+        <span class="synccov" title={syncStatus.wired.join(', ')}>
+          {t('plugins.syncCoverage', { wired: syncStatus.wired.length, total: syncTotal })}
+        </span>
+      {/if}
+      <label class="synctoggle" title={t('plugins.syncHookTip')}>
+        <Toggle checked={syncHookOn} disabled={busy || !syncStatus} onCheckedChange={onSyncHookToggle} />
+        <span>{t('plugins.syncHookLabel')}</span>
+      </label>
+      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onSyncNow} title={t('plugins.syncNowTip')}>
+        {running === 'pluginsync' ? t('plugins.refreshing') : t('plugins.syncNowBtn')}
+      </button>
+    </div>
+  </div>
 
   {#if plugins === null && skills === null}
     <div class="flex flex-col gap-sw-2">
@@ -441,6 +474,44 @@
 {/if}
 
 <style>
+  .synccard {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .syncmeta {
+    min-width: 0;
+  }
+  .synctitle {
+    font-size: var(--sw-text-sm);
+    font-weight: 600;
+  }
+  .syncdesc {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
+  }
+  .syncactions {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+  .synccov {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    white-space: nowrap;
+  }
+  .synctoggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+  }
   .dt-summary {
     font-size: var(--sw-text-xs);
     font-weight: 600;

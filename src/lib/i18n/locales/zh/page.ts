@@ -64,6 +64,9 @@ export default {
   op_provider: '提供商',
   op_schedule: '计划任务',
   op_plugins: '插件',
+  op_pluginsync: '插件同步',
+  pluginsync_hook_on: '已在所有配置中启用插件自动同步',
+  pluginsync_hook_off: '已禁用插件自动同步',
   op_forks: '分叉',
 
   // Generic run-log lines

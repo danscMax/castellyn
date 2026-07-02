@@ -5,6 +5,15 @@ export default {
   refreshing: 'Working…',
   refreshBtn: 'Refresh list',
 
+  // Cross-profile plugin sync
+  syncTitle: 'Cross-profile sync',
+  syncDesc: 'A plugin enabled in any profile is added to all the others. Explicitly disabled (false) entries are never touched.',
+  syncNowBtn: 'Sync now',
+  syncNowTip: 'One-off reconcile of plugins and marketplaces across all Claude Code profiles',
+  syncHookLabel: 'Auto-sync on session start',
+  syncHookTip: 'SessionStart hook plugin_sync.py in every profile: the reconcile runs on each Claude Code start',
+  syncCoverage: 'hook in {wired}/{total} profiles',
+
   // Plugins section
   updateAvailableBadge: 'update available',
   updateAvailableBadgeTip: 'Version {version} available',

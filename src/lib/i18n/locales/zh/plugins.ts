@@ -5,6 +5,15 @@ export default {
   refreshing: '处理中…',
   refreshBtn: '刷新列表',
 
+  // Cross-profile plugin sync
+  syncTitle: '跨配置同步',
+  syncDesc: '任一配置中启用的插件会补充到其他所有配置。显式禁用（false）的条目永不改动。',
+  syncNowBtn: '立即同步',
+  syncNowTip: '一次性在所有 Claude Code 配置间对齐插件和市场',
+  syncHookLabel: '会话启动时自动同步',
+  syncHookTip: '在每个配置中安装 SessionStart 钩子 plugin_sync.py：每次 Claude Code 启动时执行同步',
+  syncCoverage: '钩子覆盖 {wired}/{total} 个配置',
+
   // Plugins section
   updateAvailableBadge: '有更新',
   updateAvailableBadgeTip: '可用版本 {version}',

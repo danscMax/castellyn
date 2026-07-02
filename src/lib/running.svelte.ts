@@ -15,6 +15,7 @@ const OP_KEYS: Record<string, string> = {
   provider: 'op_provider',
   schedule: 'op_schedule',
   forks: 'op_forks',
-  'plugin-mgr': 'op_plugins'
+  'plugin-mgr': 'op_plugins',
+  pluginsync: 'op_pluginsync'
 };
 export const opName = (id: string) => (OP_KEYS[id] ? t(`page.${OP_KEYS[id]}`) : id);

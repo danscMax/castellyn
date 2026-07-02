@@ -7308,6 +7308,338 @@ fn delete_skill(dir: String) -> Result<(), String> {
     }
 }
 
+// --- Plugin sync across profiles (Plugins tab) ---
+//
+// Ships the user's plugin_sync.py reconcile hook as an embedded asset. Two surfaces:
+//  * "Sync now" — runs the script once (py launcher) streaming into the console;
+//  * SessionStart auto-sync toggle — wires/unwires the hook command into every profile's
+//    settings.json (idempotent; skips symlinked settings; the reconcile itself only fills
+//    MISSING enabledPlugins keys — an explicit `false` is a per-profile opt-out it never touches).
+
+const PLUGIN_SYNC_SCRIPT: &str = include_str!("../assets/plugin_sync.py");
+/// Hook command, byte-identical to the pre-Castellyn manual wiring so wired-detection
+/// (filename match) and re-wiring stay idempotent with existing installs.
+const PLUGIN_SYNC_HOOK_CMD: &str = "py -X utf8 ~/.claude/hooks/plugin_sync.py";
+
+fn plugin_sync_script_path(home: &str) -> String {
+    format!("{home}\\.claude\\hooks\\plugin_sync.py")
+}
+
+/// First-line "# plugin-sync-version: N" header → N (0 when absent/unparsable).
+fn plugin_sync_version(text: &str) -> u32 {
+    text.lines()
+        .next()
+        .and_then(|l| l.strip_prefix("# plugin-sync-version:"))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Render the embedded script with the current profile-dir list substituted into the
+/// `# castellyn:profiles` marker line. Pure (unit-tested); deterministic for change-compare.
+fn render_plugin_sync_script(dirs: &[String]) -> String {
+    let list = dirs
+        .iter()
+        .map(|d| format!("{d:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    PLUGIN_SYNC_SCRIPT
+        .lines()
+        .map(|l| {
+            if l.contains("# castellyn:profiles") {
+                format!("PROFILES = [{list}]  # castellyn:profiles")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// Install/refresh the hook script: written when missing, older than the embedded version,
+/// or same-version with a changed profile list. Never downgrades a newer local copy.
+/// Returns the script path.
+fn ensure_plugin_sync_script(home: &str) -> Result<String, String> {
+    let path = plugin_sync_script_path(home);
+    let rendered = render_plugin_sync_script(
+        &plugin_sync_profiles(home)
+            .into_iter()
+            .map(|(dir, _)| dir)
+            .collect::<Vec<_>>(),
+    );
+    let embedded_ver = plugin_sync_version(&rendered);
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    let disk_ver = plugin_sync_version(&on_disk);
+    if disk_ver < embedded_ver || (disk_ver == embedded_ver && on_disk != rendered) {
+        write_json_atomic(&path, &rendered).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    Ok(path)
+}
+
+/// Authoritative profile-dir list: ~/.claude plus ~/.claude-<name> for every profile in
+/// profiles.json — filtered to dirs whose settings.json exists and is not a symlink.
+/// A home-dir scan is deliberately NOT used: sibling dirs like ~/.claude-mem (claude-mem's
+/// data) or stray copies also hold a settings.json and must never be treated as profiles.
+fn plugin_sync_profiles(home: &str) -> Vec<(String, String)> {
+    let mut dirs = vec![".claude".to_string()];
+    dirs.extend(profile_names().into_iter().map(|n| format!(".claude-{n}")));
+    let mut out = Vec::new();
+    for n in dirs {
+        let sp = format!("{home}\\{n}\\settings.json");
+        if let Ok(meta) = std::fs::symlink_metadata(&sp) {
+            if meta.file_type().is_file() {
+                out.push((n, sp));
+            }
+        }
+    }
+    out
+}
+
+fn plugin_sync_hook_wired(settings: &serde_json::Value) -> bool {
+    settings
+        .get("hooks")
+        .and_then(|h| h.get("SessionStart"))
+        .and_then(|s| s.as_array())
+        .is_some_and(|entries| {
+            entries.iter().any(|e| {
+                e.get("hooks").and_then(|h| h.as_array()).is_some_and(|hs| {
+                    hs.iter().any(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .is_some_and(|c| c.contains("plugin_sync.py"))
+                    })
+                })
+            })
+        })
+}
+
+/// Append the SessionStart hook entry (idempotent). Returns true when the value changed.
+fn plugin_sync_wire(settings: &mut serde_json::Value) -> bool {
+    if plugin_sync_hook_wired(settings) {
+        return false;
+    }
+    let Some(obj) = settings.as_object_mut() else {
+        return false;
+    };
+    let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
+    // Don't clobber a malformed (non-object) hooks value — skip this profile instead.
+    let Some(hobj) = hooks.as_object_mut() else {
+        return false;
+    };
+    let ss = hobj
+        .entry("SessionStart")
+        .or_insert_with(|| serde_json::json!([]));
+    let Some(arr) = ss.as_array_mut() else {
+        return false;
+    };
+    arr.push(serde_json::json!({
+        "hooks": [{ "type": "command", "command": PLUGIN_SYNC_HOOK_CMD }]
+    }));
+    true
+}
+
+/// Remove every plugin_sync hook command (and SessionStart entries left empty by that).
+/// Returns true when the value changed. Other hooks are never touched.
+fn plugin_sync_unwire(settings: &mut serde_json::Value) -> bool {
+    let Some(ss) = settings
+        .get_mut("hooks")
+        .and_then(|h| h.get_mut("SessionStart"))
+        .and_then(|s| s.as_array_mut())
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for e in ss.iter_mut() {
+        if let Some(hs) = e.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+            let before = hs.len();
+            hs.retain(|h| {
+                !h.get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.contains("plugin_sync.py"))
+            });
+            changed |= hs.len() != before;
+        }
+    }
+    if changed {
+        ss.retain(|e| {
+            e.get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(true)
+        });
+    }
+    changed
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginSyncStatus {
+    /// Profile dir names (".claude", ".claude-cc1", …) with the SessionStart hook wired.
+    wired: Vec<String>,
+    unwired: Vec<String>,
+    script_installed: bool,
+    script_version: u32,
+}
+
+#[tauri::command]
+fn plugin_sync_status() -> Result<PluginSyncStatus, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let (mut wired, mut unwired) = (Vec::new(), Vec::new());
+    for (name, sp) in plugin_sync_profiles(&home) {
+        let is_wired = std::fs::read_to_string(&sp)
+            .ok()
+            .and_then(|c| parse_json_bom(&c).ok())
+            .map(|v| plugin_sync_hook_wired(&v))
+            .unwrap_or(false);
+        if is_wired {
+            wired.push(name);
+        } else {
+            unwired.push(name);
+        }
+    }
+    let script = std::fs::read_to_string(plugin_sync_script_path(&home)).ok();
+    Ok(PluginSyncStatus {
+        wired,
+        unwired,
+        script_installed: script.is_some(),
+        script_version: script.map(|c| plugin_sync_version(&c)).unwrap_or(0),
+    })
+}
+
+/// Wire (enable) or unwire (disable) SessionStart auto-sync in every profile; enable also
+/// installs/updates the hook script. Unreadable/malformed settings files are skipped.
+#[tauri::command]
+fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    if enabled {
+        ensure_plugin_sync_script(&home)?;
+    }
+    for (_, sp) in plugin_sync_profiles(&home) {
+        let Ok(c) = std::fs::read_to_string(&sp) else {
+            continue;
+        };
+        let Ok(mut v) = parse_json_bom(&c) else {
+            continue;
+        };
+        let changed = if enabled {
+            plugin_sync_wire(&mut v)
+        } else {
+            plugin_sync_unwire(&mut v)
+        };
+        if changed {
+            let s = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+            write_json_atomic(&sp, &s).map_err(|e| format!("write {sp}: {e}"))?;
+        }
+    }
+    plugin_sync_status()
+}
+
+/// Run the reconcile once now, streaming output into the console (component "pluginsync").
+#[tauri::command]
+async fn run_plugin_sync(app: AppHandle, state: State<'_, RunState>) -> Result<i32, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let script = ensure_plugin_sync_script(&home)?;
+    run_native_streamed(app, state, "pluginsync".to_string(), move |out, err| {
+        out(&format!("py -X utf8 {script} --verbose"));
+        match std::process::Command::new("py")
+            .args(["-X", "utf8", &script, "--verbose"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            Ok(o) => {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    out(line);
+                }
+                for line in String::from_utf8_lossy(&o.stderr).lines() {
+                    err(line);
+                }
+                if o.status.success() {
+                    0
+                } else {
+                    o.status.code().unwrap_or(1)
+                }
+            }
+            Err(e) => {
+                err(&format!("py: {e}"));
+                1
+            }
+        }
+    })
+    .await
+}
+
+#[cfg(test)]
+mod plugin_sync_tests {
+    use serde_json::json;
+
+    #[test]
+    fn wire_unwire_roundtrip_preserves_other_hooks() {
+        // A profile with an unrelated SessionStart hook: wiring adds ours, unwiring removes
+        // ONLY ours and keeps the neighbour + the rest of the settings untouched.
+        let mut v = json!({
+            "env": { "X": "1" },
+            "hooks": { "SessionStart": [
+                { "hooks": [{ "type": "command", "command": "py other_hook.py" }] }
+            ]}
+        });
+        assert!(super::plugin_sync_wire(&mut v));
+        assert!(super::plugin_sync_hook_wired(&v));
+        assert!(!super::plugin_sync_wire(&mut v)); // idempotent: second wire is a no-op
+        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 2);
+
+        assert!(super::plugin_sync_unwire(&mut v));
+        assert!(!super::plugin_sync_hook_wired(&v));
+        assert!(!super::plugin_sync_unwire(&mut v)); // idempotent: nothing left to remove
+        let ss = v["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(ss.len(), 1);
+        assert_eq!(ss[0]["hooks"][0]["command"], "py other_hook.py");
+        assert_eq!(v["env"]["X"], "1");
+    }
+
+    #[test]
+    fn wire_creates_hooks_shape_and_detects_manual_wiring() {
+        // Empty settings: wire builds hooks.SessionStart from scratch with the exact command.
+        let mut v = json!({});
+        assert!(super::plugin_sync_wire(&mut v));
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            super::PLUGIN_SYNC_HOOK_CMD
+        );
+        // The user's pre-Castellyn manual wiring (same filename, any wording) counts as wired.
+        let manual = json!({ "hooks": { "SessionStart": [
+            { "hooks": [{ "type": "command", "command": "py -X utf8 C:/x/plugin_sync.py" }] }
+        ]}});
+        assert!(super::plugin_sync_hook_wired(&manual));
+        // Malformed hooks value: wire refuses instead of clobbering it.
+        let mut bad = json!({ "hooks": "oops" });
+        assert!(!super::plugin_sync_wire(&mut bad));
+        assert_eq!(bad["hooks"], "oops");
+    }
+
+    #[test]
+    fn version_header_parses() {
+        assert_eq!(super::plugin_sync_version("# plugin-sync-version: 2\nrest"), 2);
+        assert_eq!(super::plugin_sync_version("import json"), 0);
+        // The embedded asset must carry a parsable version (guards accidental header edits).
+        assert!(super::plugin_sync_version(super::PLUGIN_SYNC_SCRIPT) >= 2);
+    }
+
+    #[test]
+    fn render_substitutes_profile_list() {
+        // The generated script must carry the exact dir list on the marker line and keep the
+        // version header intact (ensure_plugin_sync_script compares version + content).
+        let dirs = vec![".claude".to_string(), ".claude-cc1".to_string()];
+        let s = super::render_plugin_sync_script(&dirs);
+        assert!(s.contains(r#"PROFILES = [".claude", ".claude-cc1"]  # castellyn:profiles"#));
+        assert_eq!(
+            super::plugin_sync_version(&s),
+            super::plugin_sync_version(super::PLUGIN_SYNC_SCRIPT)
+        );
+        // Rendering is deterministic — same input, same output (change-compare relies on it).
+        assert_eq!(s, super::render_plugin_sync_script(&dirs));
+    }
+}
+
 #[tauri::command]
 fn read_config() -> HubConfig {
     read_config_file()
@@ -9335,6 +9667,9 @@ pub fn run() {
             list_plugin_releases,
             run_plugin,
             run_plugins_bulk,
+            plugin_sync_status,
+            plugin_sync_set,
+            run_plugin_sync,
             delete_skill,
             read_schedules,
             run_schedule,

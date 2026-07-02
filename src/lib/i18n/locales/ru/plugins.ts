@@ -5,6 +5,15 @@ export default {
   refreshing: 'Идёт…',
   refreshBtn: 'Обновить список',
 
+  // Cross-profile plugin sync
+  syncTitle: 'Синхронизация между профилями',
+  syncDesc: 'Плагин, включённый в любом профиле, добавляется во все остальные. Явно выключенные (false) не трогаются.',
+  syncNowBtn: 'Синхронизировать',
+  syncNowTip: 'Разово выровнять плагины и маркетплейсы по всем профилям Claude Code',
+  syncHookLabel: 'Авто-синк при старте сессий',
+  syncHookTip: 'SessionStart-хук plugin_sync.py во всех профилях: синхронизация выполняется при каждом старте Claude Code',
+  syncCoverage: 'хук в {wired}/{total} профилях',
+
   // Plugins section
   updateAvailableBadge: 'обновление есть',
   updateAvailableBadgeTip: 'Доступна версия {version}',

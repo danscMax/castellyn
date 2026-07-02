@@ -64,6 +64,9 @@ export default {
   op_provider: 'Provider',
   op_schedule: 'Schedule',
   op_plugins: 'Plugins',
+  op_pluginsync: 'Plugin sync',
+  pluginsync_hook_on: 'Plugin auto-sync enabled in all profiles',
+  pluginsync_hook_off: 'Plugin auto-sync disabled',
   op_forks: 'Forks',
 
   // Generic run-log lines
