@@ -134,6 +134,20 @@ struct HubConfig {
     // localize too. Owned by set_language; write_config preserves it (never clobbered by a settings save).
     #[serde(rename = "language", default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    // Agent-status notifications (Sessions): None = default (true). Sounds are system
+    // beeps (MessageBeep); notify = OS toast on →blocked and background completion.
+    #[serde(
+        rename = "statusSounds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    status_sounds: Option<bool>,
+    #[serde(
+        rename = "statusNotify",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    status_notify: Option<bool>,
 }
 
 fn config_path() -> Option<String> {
@@ -8975,7 +8989,7 @@ fn session_spawn(
     }
     // Track for agent status (skips shell/ssh; remote agents get PTY-activity only —
     // their hooks run on the remote host and never reach the local status dir).
-    agent_status::on_spawn(&id, &tool);
+    agent_status::on_spawn(&id, &tool, &profile);
 
     // Reader thread: stream PTY output as raw bytes to EVERY attached channel (no base64/JSON event
     // per chunk) until EOF, keeping a bounded scrollback; then wait for the child and signal exit.
@@ -9691,6 +9705,7 @@ fn open_monitor_window(app: AppHandle, label: String, monitor_index: usize) -> R
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

@@ -16,7 +16,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 const POLL_MS: u64 = 500;
 /// Right after spawn nothing meaningful has happened yet — report `unknown`.
@@ -36,6 +36,8 @@ fn now_ms() -> u64 {
 
 struct Track {
     tool: String,
+    /// Human label for notifications ("claude · cc1", "codex").
+    label: String,
     spawned_at: u64,
     last_output: u64,
     exited: bool,
@@ -56,7 +58,7 @@ pub fn status_dir() -> Option<std::path::PathBuf> {
 }
 
 /// Register a freshly-spawned session. `shell`/`ssh` panes carry no agent — skipped.
-pub fn on_spawn(id: &str, tool: &str) {
+pub fn on_spawn(id: &str, tool: &str, profile: &str) {
     if !matches!(tool, "claude" | "opencode" | "codex") {
         return;
     }
@@ -65,6 +67,11 @@ pub fn on_spawn(id: &str, tool: &str) {
         id.to_string(),
         Track {
             tool: tool.to_string(),
+            label: if tool == "claude" && !profile.is_empty() {
+                format!("{tool} · {profile}")
+            } else {
+                tool.to_string()
+            },
             spawned_at: now,
             last_output: now,
             exited: false,
@@ -105,6 +112,65 @@ struct StatusEvent {
     id: String,
     state: String,
     claude_session_id: Option<String>,
+    #[serde(skip)]
+    prev: Option<String>,
+    #[serde(skip)]
+    label: String,
+}
+
+/// System sound for a transition (no bundled audio: MessageBeep respects the user's
+/// sound scheme and mute state). No-op on non-Windows.
+fn beep(attention: bool) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Diagnostics::Debug::MessageBeep;
+        use windows::Win32::UI::WindowsAndMessaging::{MB_ICONASTERISK, MB_ICONEXCLAMATION};
+        let _ = MessageBeep(if attention {
+            MB_ICONEXCLAMATION
+        } else {
+            MB_ICONASTERISK
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = attention;
+}
+
+/// Popup + sound policy (herdr-style): →blocked = attention; working/blocked→idle =
+/// background completion. Suppressed while any Castellyn window is focused — the user
+/// is already looking at the app.
+fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
+    let to_blocked = ev.state == "blocked" && ev.prev.as_deref() != Some("blocked");
+    let completed = ev.state == "idle"
+        && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"));
+    if !to_blocked && !completed {
+        return;
+    }
+    if app
+        .webview_windows()
+        .values()
+        .any(|w| w.is_focused().unwrap_or(false))
+    {
+        return;
+    }
+    let cfg = crate::read_config_file();
+    let lang = crate::cur_lang();
+    if cfg.status_sounds.unwrap_or(true) {
+        beep(to_blocked);
+    }
+    if cfg.status_notify.unwrap_or(true) {
+        use tauri_plugin_notification::NotificationExt;
+        let (tk, bk) = if to_blocked {
+            ("status.blocked_title", "status.blocked_body")
+        } else {
+            ("status.done_title", "status.done_body")
+        };
+        let _ = app
+            .notification()
+            .builder()
+            .title(crate::i18n::tr(tk, lang))
+            .body(crate::i18n::trv(bk, lang, &[("label", &ev.label)]))
+            .show();
+    }
 }
 
 fn compute(t: &Track, now: u64) -> &'static str {
@@ -212,17 +278,21 @@ pub fn start(app: tauri::AppHandle) {
                 }
                 let state = compute(t, now);
                 if t.last_emitted.as_deref() != Some(state) {
+                    let prev = t.last_emitted.take();
                     t.last_emitted = Some(state.to_string());
                     events.push(StatusEvent {
                         id: id.clone(),
                         state: state.to_string(),
                         claude_session_id: t.claude_session_id.clone(),
+                        prev,
+                        label: t.label.clone(),
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop
             });
         }
         for ev in events {
+            notify_transition(&app, &ev);
             let _ = app.emit("agent-status", ev);
         }
     });
@@ -235,6 +305,7 @@ mod tests {
     fn track(tool: &str, now: u64) -> Track {
         Track {
             tool: tool.into(),
+            label: tool.into(),
             spawned_at: now,
             last_output: now,
             exited: false,

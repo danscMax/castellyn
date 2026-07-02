@@ -50,6 +50,12 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("tray.quit",      ["Выход", "Quit", "退出"]),
     ("tray.tooltip_sessions", ["Castellyn — активных сессий: {n}", "Castellyn — active sessions: {n}", "Castellyn — 活动会话: {n}"]),
 
+    // ── agent-status notifications (Sessions) ────────────────────────────────
+    ("status.blocked_title", ["Агент ждёт решения", "Agent needs a decision", "代理等待决定"]),
+    ("status.blocked_body",  ["{label}: нужен ваш ответ в терминале", "{label}: your input is needed in the terminal", "{label}: 终端中需要你的确认"]),
+    ("status.done_title",    ["Агент закончил", "Agent finished", "代理已完成"]),
+    ("status.done_body",     ["{label}: ход завершён — можно смотреть результат", "{label}: the turn finished — ready for review", "{label}: 本轮已结束 — 可以查看结果"]),
+
     // ── config write (touched by language-preserving write_config) ───────────
     ("err.no_appdata",    ["APPDATA не найден", "APPDATA not found", "未找到 APPDATA"]),
     ("err.write_config",  ["запись config: {e}", "writing config: {e}", "写入 config: {e}"]),

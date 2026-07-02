@@ -44,6 +44,8 @@ keyring = { version = "3", features = ["windows-native"] }
 # xterm.js attach in Sessions. Re-evaluate when the flag becomes opt-out upstream.
 portable-pty = "0.8"
 tauri-plugin-process = "2"
+# OS toasts for agent-status transitions in Sessions (fired from Rust — needs no JS capability).
+tauri-plugin-notification = "2"
 toml_edit = "0.25.12"
 
 # Win32 Job Object so PTY child trees (pwsh → claude/node, ssh.exe) die with the app instead of
@@ -54,6 +56,10 @@ windows = { version = "0.58", features = [
   "Win32_Security",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
+  # MessageBeep for agent-status sounds (system sounds — no bundled audio assets).
+  # The function lives in System::Diagnostics::Debug; its MESSAGEBOX_STYLE arg needs UI feature.
+  "Win32_System_Diagnostics_Debug",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

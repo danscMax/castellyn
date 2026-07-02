@@ -21,6 +21,8 @@
     globalSessionCount,
     agentStatusHookStatus,
     agentStatusHookSet,
+    readConfig,
+    writeConfig,
     type AgentStatusHookState,
     type AgentStatusEvent
   } from '$lib/ipc';
@@ -287,6 +289,27 @@
     try {
       statusHookState = await agentStatusHookSet(enabled);
       pushToast({ kind: 'success', title: t(enabled ? 'sessions.statusHookOnToast' : 'sessions.statusHookOffToast') });
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+  }
+  // Sound / OS-toast preferences for status transitions (the backend reads them from config).
+  let statusSounds = $state(true);
+  let statusNotify = $state(true);
+  onMount(async () => {
+    try {
+      const c = await readConfig();
+      statusSounds = c.statusSounds ?? true;
+      statusNotify = c.statusNotify ?? true;
+    } catch {
+      /* defaults stand */
+    }
+  });
+  async function saveStatusPrefs() {
+    try {
+      // Read-patch-write: writeConfig persists the WHOLE config, so never send a partial.
+      const c = await readConfig();
+      await writeConfig({ ...c, statusSounds, statusNotify });
     } catch (e) {
       pushToast({ kind: 'error', title: String(e) });
     }
@@ -1214,6 +1237,15 @@
               {t('sessions.statusHookCoverage', { wired: statusHookState.wired.length, total: statusHookState.wired.length + statusHookState.unwired.length })}
             </span>
           {/if}
+          <span class="text-sw-text-muted">·</span>
+          <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusSoundHint')}>
+            <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} />
+            {t('sessions.statusSound')}
+          </label>
+          <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusToastHint')}>
+            <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} />
+            {t('sessions.statusToast')}
+          </label>
         </div>
         <div class="set-srv">
           <span class="set-k">{t('sessions.servers')}</span>

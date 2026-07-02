@@ -813,6 +813,9 @@ export type HubConfig = {
   toggleHotkey?: string | null;
   shortcuts?: Record<string, string> | null;
   language?: string | null;
+  // Agent-status notifications (Sessions). Absent = default (on).
+  statusSounds?: boolean | null;
+  statusNotify?: boolean | null;
 };
 
 /** A single entry in the global-shortcut mapping. */
