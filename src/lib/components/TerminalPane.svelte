@@ -409,7 +409,10 @@
       fontSize,
       cursorBlink: true,
       scrollback: sb,
-      theme: xtermTheme(isLight())
+      theme: xtermTheme(isLight()),
+      // Required by the Unicode11 addon below (`term.unicode` is a proposed API): without it
+      // loadAddon THROWS and aborts the whole pane mount — no spawn, no input, empty terminal.
+      allowProposedApi: true
     });
     fit = new FitAddon();
     term.loadAddon(fit);
