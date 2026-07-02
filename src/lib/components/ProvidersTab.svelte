@@ -83,6 +83,12 @@
   // Collapsible heavy sections (this screen is long) — open by default.
   let stackOpen = $state(true);
   let enginesOpen = $state(true);
+  // Redesign 2C: per-card "details" expander — PID/uptime are diagnostics, not headline info.
+  let advOpen = $state<Record<string, boolean>>({});
+  // Anchor chips: the tab is long — jump straight to a section.
+  function jumpTo(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   // F13: resolve freellmapi gateway URL from stack.json at mount; fallback to hardcoded port.
   let freellmapiUrl = $state('http://localhost:13001');
@@ -330,9 +336,16 @@
   <!-- System health (real /health probes of the stack services) -->
   <StackHealthCard {busy} onStart={(id) => onStack?.('start', id)} />
 
+  <!-- Anchor chips (redesign 2C): quick jumps down the long page. -->
+  <div class="mb-sw-4 flex flex-wrap gap-sw-2">
+    <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-stack')}>{t('providers.stackHeading')}</button>
+    <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-engines')}>{t('providers.enginesHeading')}</button>
+    <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-my')}>{t('myProviders.title')}</button>
+  </div>
+
   <!-- LLM stack (single source of truth: stack.json) -->
   {#if stackList.length}
-    <section class="mb-sw-6">
+    <section class="mb-sw-6" id="sec-stack">
       <div class="mb-sw-2 flex items-start justify-between gap-sw-2">
         <button class="flex min-w-0 items-center gap-sw-2 border-0 bg-transparent p-0 text-left" onclick={() => (stackOpen = !stackOpen)}>
           <span class="text-sw-text-muted transition-transform" class:rotate-90={stackOpen}>▸</span>
@@ -360,9 +373,15 @@
                 {#if s.running}
                   {@const pr = procByPort.get(s.port)}
                   {#if pr}
-                    <p class="truncate font-mono text-[11px] text-sw-text-muted" title={t('providers.procTitle', { pid: pr.pid })}>
-                      PID {pr.pid}{fmtUptime(pr.uptimeSec) ? ` · ${fmtUptime(pr.uptimeSec)}` : ''}
-                    </p>
+                    <!-- Diagnostics live behind "Details" — the headline stays name/port/state. -->
+                    <button class="adv-toggle" onclick={() => (advOpen[s.id] = !advOpen[s.id])} aria-expanded={!!advOpen[s.id]}>
+                      {advOpen[s.id] ? '▾' : '▸'} {t('providers.advanced')}
+                    </button>
+                    {#if advOpen[s.id]}
+                      <p class="truncate font-mono text-[11px] text-sw-text-muted" title={t('providers.procTitle', { pid: pr.pid })}>
+                        PID {pr.pid}{fmtUptime(pr.uptimeSec) ? ` · ${fmtUptime(pr.uptimeSec)}` : ''}
+                      </p>
+                    {/if}
                   {/if}
                 {/if}
               </div>
@@ -408,7 +427,7 @@
   {/if}
 
   <!-- Engines -->
-  <div class="mb-sw-2 flex items-center justify-between gap-sw-2">
+  <div class="mb-sw-2 flex items-center justify-between gap-sw-2" id="sec-engines">
     <button class="flex min-w-0 items-center gap-sw-2 border-0 bg-transparent p-0 text-left" onclick={() => (enginesOpen = !enginesOpen)}>
       <span class="text-sw-text-muted transition-transform" class:rotate-90={enginesOpen}>▸</span>
       <span class="section-title">{t('providers.enginesHeading')}</span>
@@ -534,7 +553,7 @@
   <p class="mb-sw-2 text-sw-xs text-sw-text-muted">{t('providers.perProfileMovedNote')}</p>
 
   <!-- Custom provider registry (own list; keys in Credential Manager) -->
-  <div class="mb-sw-2 mt-sw-6 flex items-center justify-between gap-sw-2">
+  <div class="mb-sw-2 mt-sw-6 flex items-center justify-between gap-sw-2" id="sec-my">
     <h2 class="section-title">{t('myProviders.title')}</h2>
     <div class="flex shrink-0 items-center gap-sw-2">
       <button class="sw-btn sw-btn-primary text-sw-xs" disabled={busy} onclick={mpAdd} title={t('myProviders.addTitle')}>
@@ -688,3 +707,29 @@
     {t('providers.footnote')}
   </p>
 </div>
+
+<style>
+  .chip-btn {
+    border: 1px solid var(--sw-border);
+    background: transparent;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .chip-btn:hover {
+    color: var(--sw-text-primary);
+    border-color: var(--sw-border-focus);
+  }
+  .adv-toggle {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font-family: inherit;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    cursor: pointer;
+    text-align: left;
+  }
+  .adv-toggle:hover {
+    color: var(--sw-text-secondary);
+  }
+</style>

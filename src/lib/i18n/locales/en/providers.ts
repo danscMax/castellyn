@@ -57,6 +57,7 @@ export default {
   openAllDashboardsTitle: 'Open the dashboards of all running engines ({n})',
   openAllDashboardsNoneTitle: 'No running engine has a dashboard — start an engine first',
   stackHeading: 'LLM stack',
+  advanced: 'Details',
   stackSub: 'Services from stack.json: the gateway + fork backends + the paid GLM router. Single source of truth.',
   stackStartAll: 'Start all',
   stackStartTip: 'start-stack.ps1 -Router — bring up the whole stack (incl. the paid GLM router on :4000)',

@@ -57,6 +57,7 @@ export default {
   openAllDashboardsTitle: 'Открыть дашборды всех запущенных движков ({n})',
   openAllDashboardsNoneTitle: 'Нет запущенных движков с дашбордом — сначала запусти движок',
   stackHeading: 'LLM-стек',
+  advanced: 'Детали',
   stackSub: 'Сервисы из stack.json: шлюз + бэкенды-форки + платный GLM-роутер. Единый источник правды.',
   stackStartAll: 'Запустить всё',
   stackStartTip: 'start-stack.ps1 -Router — поднять весь стек (вкл. платный GLM-роутер :4000)',

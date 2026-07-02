@@ -56,6 +56,7 @@ export default {
   openAllDashboardsTitle: '打开所有正在运行的引擎的仪表板（{n}）',
   openAllDashboardsNoneTitle: '没有带仪表板的运行中引擎 — 请先启动引擎',
   stackHeading: 'LLM 栈',
+  advanced: '详情',
   stackSub: '来自 stack.json 的服务：网关 + 分叉后端 + 付费 GLM 路由。单一真源。',
   stackStartAll: '全部启动',
   stackStartTip: 'start-stack.ps1 -Router — 启动整个栈（含付费 GLM 路由 :4000）',
