@@ -39,6 +39,9 @@ tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "m
 keyring = { version = "3", features = ["windows-native"] }
 # Real PTYs for the parallel-sessions tab: run each profile's `claude` in a true terminal so
 # its TUI renders (xterm.js on the frontend). Output streams as raw bytes over a Tauri channel.
+# PINNED to 0.8: 0.9.0 hardcodes PSEUDOCONSOLE_INHERIT_CURSOR, so conhost blocks waiting for a
+# DSR cursor-position reply at startup — hangs headless PTYs (pty_echo_roundtrip) and races the
+# xterm.js attach in Sessions. Re-evaluate when the flag becomes opt-out upstream.
 portable-pty = "0.8"
 tauri-plugin-process = "2"
 toml_edit = "0.25.12"
