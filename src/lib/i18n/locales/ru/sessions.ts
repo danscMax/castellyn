@@ -1,6 +1,20 @@
 export default {
   title: 'Параллельные сессии',
   subtitle: 'Запускай Claude сразу в нескольких профилях — каждый в своём терминале.',
+
+  // Agent status (herdr-style)
+  state_working: 'Агент работает',
+  state_blocked: 'Агент ждёт вашего решения',
+  state_done: 'Агент закончил — не просмотрено',
+  state_idle: 'Агент простаивает',
+  sumBlocked: '{n} ждёт',
+  sumWorking: '{n} работает',
+  sumDone: '{n} готово',
+  statusHook: 'Статусы агентов',
+  statusHookHint: 'Хук в профилях Claude Code сообщает состояние (работает / ждёт решения / закончил) — цветная точка на панели и бейдж в сайдбаре. Сессий вне Castellyn не касается.',
+  statusHookCoverage: 'хук в {wired}/{total} профилях',
+  statusHookOnToast: 'Статусы агентов включены во всех профилях',
+  statusHookOffToast: 'Статусы агентов отключены',
   layout: 'Колонок:',
   layoutCols: '{n} в ряд',
   resizeRow: 'Потяни, чтобы изменить высоту строк',

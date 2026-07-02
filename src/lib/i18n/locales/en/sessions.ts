@@ -1,6 +1,20 @@
 export default {
   title: 'Parallel sessions',
   subtitle: 'Run Claude across several profiles at once — each in its own terminal.',
+
+  // Agent status (herdr-style)
+  state_working: 'Agent is working',
+  state_blocked: 'Agent is waiting for your decision',
+  state_done: 'Agent finished — not reviewed yet',
+  state_idle: 'Agent is idle',
+  sumBlocked: '{n} blocked',
+  sumWorking: '{n} working',
+  sumDone: '{n} done',
+  statusHook: 'Agent statuses',
+  statusHookHint: 'A hook in the Claude Code profiles reports the state (working / needs a decision / finished) — a coloured pane dot and a sidebar badge. Sessions outside Castellyn are unaffected.',
+  statusHookCoverage: 'hook in {wired}/{total} profiles',
+  statusHookOnToast: 'Agent statuses enabled in all profiles',
+  statusHookOffToast: 'Agent statuses disabled',
   layout: 'Columns:',
   layoutCols: '{n} per row',
   resizeRow: 'Drag to resize rows',

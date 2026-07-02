@@ -18,8 +18,13 @@
     sshTarget,
     parseSshTarget,
     pickFolder,
-    globalSessionCount
+    globalSessionCount,
+    agentStatusHookStatus,
+    agentStatusHookSet,
+    type AgentStatusHookState,
+    type AgentStatusEvent
   } from '$lib/ipc';
+  import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
@@ -223,6 +228,68 @@
   let unread = $state<Record<string, boolean>>({});
   function onActivity(key: string) {
     if (maximized && maximized !== key) unread = { ...unread, [key]: true };
+  }
+
+  // ── Agent status (herdr-style): backend `agent-status` events → per-session state ──
+  // Keyed by SESSION id. `done` is derived here: working/blocked → idle while the pane
+  // wasn't focused (herdr's Idle+!seen); focusing the pane acknowledges it back to idle.
+  let agentStates = $state<Record<string, AgentPaneState>>({});
+  onMount(() => {
+    let un: UnlistenFn | undefined;
+    listen<AgentStatusEvent>('agent-status', (e) => {
+      const { id, state } = e.payload;
+      const prev = agentStates[id];
+      const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
+      const focused = paneKey != null && activeKey === paneKey && visible;
+      const next: AgentPaneState =
+        state === 'idle' && (prev === 'working' || prev === 'blocked') && !focused
+          ? 'done'
+          : (state as AgentPaneState);
+      agentStates = { ...agentStates, [id]: next };
+    }).then((u) => (un = u));
+    return () => un?.();
+  });
+  // Looking at a pane acknowledges its "done".
+  $effect(() => {
+    const id = activeKey ? sessionIds[activeKey] : undefined;
+    if (id && agentStates[id] === 'done') agentStates = { ...agentStates, [id]: 'idle' };
+  });
+  // Roll the counts up for the header chips + the sidebar badge (+page reads the store).
+  const statusCounts = $derived.by(() => {
+    const c = { blocked: 0, working: 0, done: 0 };
+    for (const id of Object.values(sessionIds)) {
+      const s = agentStates[id];
+      if (s === 'blocked') c.blocked++;
+      else if (s === 'working') c.working++;
+      else if (s === 'done') c.done++;
+    }
+    return c;
+  });
+  $effect(() => {
+    agentSummary.blocked = statusCounts.blocked;
+    agentSummary.working = statusCounts.working;
+    agentSummary.done = statusCounts.done;
+  });
+
+  // Agent-status lifecycle hook (Sessions ⚙ settings): wired into every claude profile.
+  let statusHookState = $state<AgentStatusHookState | null>(null);
+  const statusHookOn = $derived(
+    !!statusHookState && statusHookState.wired.length > 0 && statusHookState.unwired.length === 0
+  );
+  onMount(async () => {
+    try {
+      statusHookState = await agentStatusHookStatus();
+    } catch {
+      /* backend unavailable — toggle stays disabled */
+    }
+  });
+  async function toggleStatusHook(enabled: boolean) {
+    try {
+      statusHookState = await agentStatusHookSet(enabled);
+      pushToast({ kind: 'success', title: t(enabled ? 'sessions.statusHookOnToast' : 'sessions.statusHookOffToast') });
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
   }
 
   // Broadcast: mirror keystrokes from any pane to every running session.
@@ -994,7 +1061,16 @@
   <header class="mb-sw-3 flex items-center justify-between gap-sw-4">
     <div class="flex items-baseline gap-sw-3 min-w-0">
       <h1 class="text-lg font-semibold">{t('sessions.title')}</h1>
-      <p class="truncate text-sw-xs text-sw-text-muted">{t('sessions.subtitle')}</p>
+      {#if statusCounts.blocked || statusCounts.working || statusCounts.done}
+        <!-- herdr-style rollup: which sessions need a decision / are running / are ready to review -->
+        <span class="status-sum" role="status">
+          {#if statusCounts.blocked}<span class="ss ss-blocked">● {t('sessions.sumBlocked', { n: statusCounts.blocked })}</span>{/if}
+          {#if statusCounts.working}<span class="ss ss-working">● {t('sessions.sumWorking', { n: statusCounts.working })}</span>{/if}
+          {#if statusCounts.done}<span class="ss ss-done">● {t('sessions.sumDone', { n: statusCounts.done })}</span>{/if}
+        </span>
+      {:else}
+        <p class="truncate text-sw-xs text-sw-text-muted">{t('sessions.subtitle')}</p>
+      {/if}
     </div>
     <div class="flex shrink-0 items-center gap-sw-2">
       {#if panes.length > 1}
@@ -1129,6 +1205,16 @@
               onclick={() => (defaultArgs = toggleFlag(defaultArgs, flag))}>{flag}</button>
           {/each}
         </div>
+        <div class="set-row">
+          <span class="set-k" title={t('sessions.statusHookHint')}>{t('sessions.statusHook')}</span>
+          <Toggle checked={statusHookOn} disabled={!statusHookState} onCheckedChange={toggleStatusHook}
+            title={t('sessions.statusHookHint')} />
+          {#if statusHookState}
+            <span class="text-sw-xs text-sw-text-muted" title={statusHookState.wired.join(', ')}>
+              {t('sessions.statusHookCoverage', { wired: statusHookState.wired.length, total: statusHookState.wired.length + statusHookState.unwired.length })}
+            </span>
+          {/if}
+        </div>
         <div class="set-srv">
           <span class="set-k">{t('sessions.servers')}</span>
           <div class="srv-list">
@@ -1221,6 +1307,7 @@
             attachId={pane.attachId}
             ownsSession={pane.ownsSession ?? false}
             paneKey={pane.key}
+            agentState={agentStates[sessionIds[pane.key]] ?? null}
             visible={visible && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
             {broadcast}
@@ -1285,6 +1372,7 @@
         attachId={pane.attachId}
         ownsSession={pane.ownsSession ?? false}
         paneKey={pane.key}
+        agentState={agentStates[sessionIds[pane.key]] ?? null}
         visible={false}
         maximized={false}
         {broadcast}
@@ -1324,6 +1412,24 @@
   .broadcast-armed {
     color: var(--sw-status-warn, #e0b341);
     font-weight: 600;
+  }
+  /* Agent-status rollup chips (header): blocked / working / done counts. */
+  .status-sum {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: var(--sw-text-xs);
+    white-space: nowrap;
+  }
+  .ss-blocked {
+    color: var(--sw-danger);
+    font-weight: 600;
+  }
+  .ss-working {
+    color: var(--sw-status-warn, #e0b341);
+  }
+  .ss-done {
+    color: #2dd4bf;
   }
   .launcher {
     display: flex;

@@ -112,8 +112,10 @@
     backupAttention,
     profilesAttention,
     pluginsAttention,
-    syncAttention
+    syncAttention,
+    sessionsAttention
   } from '$lib/attention';
+  import { agentSummary } from '$lib/agentStatus.svelte';
   import { getTheme, applyTheme, type Theme } from '$lib/theme';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -1298,7 +1300,8 @@
     backup: backupAttention(backupData),
     profiles: profilesAttention(profilesData),
     sync: syncAttention(syncData),
-    extensions: pluginsAttention(pluginUpdates.length)
+    extensions: pluginsAttention(pluginUpdates.length),
+    sessions: sessionsAttention(agentSummary)
   });
 
   // Lazy-load on first open (list_plugins spawns the claude CLI).

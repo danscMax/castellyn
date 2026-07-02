@@ -794,6 +794,15 @@ export const pluginSyncSet = (enabled: boolean) =>
 // Streams into the console as component "pluginsync"; resolves with the exit code on run-done.
 export const runPluginSync = () => invoke<number>('run_plugin_sync');
 
+// Agent-status lifecycle hook (Sessions): castellyn_status.py wired into five Claude Code
+// events of every profile. `agent-status` events then drive the pane badges.
+export type AgentStatusHookState = { wired: string[]; unwired: string[] };
+export const agentStatusHookStatus = () => invoke<AgentStatusHookState>('agent_status_hook_status');
+export const agentStatusHookSet = (enabled: boolean) =>
+  invoke<AgentStatusHookState>('agent_status_hook_set', { enabled });
+/** Payload of the backend `agent-status` event (state: working | blocked | idle | unknown). */
+export type AgentStatusEvent = { id: string; state: string; claudeSessionId: string | null };
+
 // --- Settings ---
 export type HubConfig = {
   scriptsRoot?: string | null;

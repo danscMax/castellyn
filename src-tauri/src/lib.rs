@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+mod agent_status;
 mod i18n;
 use i18n::{tr, trv, Lang};
 
@@ -7325,13 +7326,17 @@ fn plugin_sync_script_path(home: &str) -> String {
     format!("{home}\\.claude\\hooks\\plugin_sync.py")
 }
 
-/// First-line "# plugin-sync-version: N" header → N (0 when absent/unparsable).
-fn plugin_sync_version(text: &str) -> u32 {
+/// First-line "# <prefix> N" version header → N (0 when absent/unparsable).
+fn script_version_header(text: &str, prefix: &str) -> u32 {
     text.lines()
         .next()
-        .and_then(|l| l.strip_prefix("# plugin-sync-version:"))
+        .and_then(|l| l.strip_prefix(prefix))
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(0)
+}
+
+fn plugin_sync_version(text: &str) -> u32 {
+    script_version_header(text, "# plugin-sync-version:")
 }
 
 /// Render the embedded script with the current profile-dir list substituted into the
@@ -7395,10 +7400,11 @@ fn plugin_sync_profiles(home: &str) -> Vec<(String, String)> {
     out
 }
 
-fn plugin_sync_hook_wired(settings: &serde_json::Value) -> bool {
+/// True when some `hooks.<event>[].hooks[].command` contains `marker`.
+fn hook_cmd_wired(settings: &serde_json::Value, event: &str, marker: &str) -> bool {
     settings
         .get("hooks")
-        .and_then(|h| h.get("SessionStart"))
+        .and_then(|h| h.get(event))
         .and_then(|s| s.as_array())
         .is_some_and(|entries| {
             entries.iter().any(|e| {
@@ -7406,16 +7412,17 @@ fn plugin_sync_hook_wired(settings: &serde_json::Value) -> bool {
                     hs.iter().any(|h| {
                         h.get("command")
                             .and_then(|c| c.as_str())
-                            .is_some_and(|c| c.contains("plugin_sync.py"))
+                            .is_some_and(|c| c.contains(marker))
                     })
                 })
             })
         })
 }
 
-/// Append the SessionStart hook entry (idempotent). Returns true when the value changed.
-fn plugin_sync_wire(settings: &mut serde_json::Value) -> bool {
-    if plugin_sync_hook_wired(settings) {
+/// Append a `{type: command}` hook entry under `hooks.<event>` (idempotent via `marker`).
+/// Returns true when the value changed.
+fn hook_cmd_wire(settings: &mut serde_json::Value, event: &str, cmd: &str, marker: &str) -> bool {
+    if hook_cmd_wired(settings, event, marker) {
         return false;
     }
     let Some(obj) = settings.as_object_mut() else {
@@ -7426,24 +7433,22 @@ fn plugin_sync_wire(settings: &mut serde_json::Value) -> bool {
     let Some(hobj) = hooks.as_object_mut() else {
         return false;
     };
-    let ss = hobj
-        .entry("SessionStart")
-        .or_insert_with(|| serde_json::json!([]));
+    let ss = hobj.entry(event).or_insert_with(|| serde_json::json!([]));
     let Some(arr) = ss.as_array_mut() else {
         return false;
     };
     arr.push(serde_json::json!({
-        "hooks": [{ "type": "command", "command": PLUGIN_SYNC_HOOK_CMD }]
+        "hooks": [{ "type": "command", "command": cmd }]
     }));
     true
 }
 
-/// Remove every plugin_sync hook command (and SessionStart entries left empty by that).
-/// Returns true when the value changed. Other hooks are never touched.
-fn plugin_sync_unwire(settings: &mut serde_json::Value) -> bool {
+/// Remove every `marker`-matching hook command under `hooks.<event>` (and entries left
+/// empty by that). Returns true when the value changed. Other hooks are never touched.
+fn hook_cmd_unwire(settings: &mut serde_json::Value, event: &str, marker: &str) -> bool {
     let Some(ss) = settings
         .get_mut("hooks")
-        .and_then(|h| h.get_mut("SessionStart"))
+        .and_then(|h| h.get_mut(event))
         .and_then(|s| s.as_array_mut())
     else {
         return false;
@@ -7455,7 +7460,7 @@ fn plugin_sync_unwire(settings: &mut serde_json::Value) -> bool {
             hs.retain(|h| {
                 !h.get("command")
                     .and_then(|c| c.as_str())
-                    .is_some_and(|c| c.contains("plugin_sync.py"))
+                    .is_some_and(|c| c.contains(marker))
             });
             changed |= hs.len() != before;
         }
@@ -7469,6 +7474,23 @@ fn plugin_sync_unwire(settings: &mut serde_json::Value) -> bool {
         });
     }
     changed
+}
+
+fn plugin_sync_hook_wired(settings: &serde_json::Value) -> bool {
+    hook_cmd_wired(settings, "SessionStart", "plugin_sync.py")
+}
+
+fn plugin_sync_wire(settings: &mut serde_json::Value) -> bool {
+    hook_cmd_wire(
+        settings,
+        "SessionStart",
+        PLUGIN_SYNC_HOOK_CMD,
+        "plugin_sync.py",
+    )
+}
+
+fn plugin_sync_unwire(settings: &mut serde_json::Value) -> bool {
+    hook_cmd_unwire(settings, "SessionStart", "plugin_sync.py")
 }
 
 #[derive(Serialize)]
@@ -7568,6 +7590,101 @@ async fn run_plugin_sync(app: AppHandle, state: State<'_, RunState>) -> Result<i
     .await
 }
 
+// --- Agent-status lifecycle hook (Sessions tab) ---
+//
+// castellyn_status.py reports Claude Code lifecycle events (working/blocked/idle) into
+// %APPDATA%\castellyn\agent-status; the agent_status module turns them into pane badges.
+// Wired into five events of every profile; a session without CASTELLYN_SESSION_ID in its
+// env makes the hook a no-op, so regular (non-Castellyn) Claude use is unaffected.
+
+const STATUS_HOOK_SCRIPT: &str = include_str!("../assets/castellyn_status.py");
+const STATUS_HOOK_CMD: &str = "py -X utf8 ~/.claude/hooks/castellyn_status.py";
+const STATUS_HOOK_MARKER: &str = "castellyn_status.py";
+const STATUS_HOOK_EVENTS: [&str; 5] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "Notification",
+    "Stop",
+    "SessionEnd",
+];
+
+/// Install/refresh the status hook script (same version-gated policy as plugin_sync).
+fn ensure_status_hook_script(home: &str) -> Result<(), String> {
+    let path = format!("{home}\\.claude\\hooks\\castellyn_status.py");
+    let ver = |t: &str| script_version_header(t, "# castellyn-status-version:");
+    let disk = std::fs::read_to_string(&path).unwrap_or_default();
+    if ver(&disk) < ver(STATUS_HOOK_SCRIPT) {
+        write_json_atomic(&path, STATUS_HOOK_SCRIPT).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentStatusHookState {
+    /// Profile dir names with ALL five lifecycle events wired.
+    wired: Vec<String>,
+    unwired: Vec<String>,
+}
+
+fn agent_status_hook_state() -> Result<AgentStatusHookState, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let (mut wired, mut unwired) = (Vec::new(), Vec::new());
+    for (name, sp) in plugin_sync_profiles(&home) {
+        let all = std::fs::read_to_string(&sp)
+            .ok()
+            .and_then(|c| parse_json_bom(&c).ok())
+            .map(|v| {
+                STATUS_HOOK_EVENTS
+                    .iter()
+                    .all(|ev| hook_cmd_wired(&v, ev, STATUS_HOOK_MARKER))
+            })
+            .unwrap_or(false);
+        if all {
+            wired.push(name);
+        } else {
+            unwired.push(name);
+        }
+    }
+    Ok(AgentStatusHookState { wired, unwired })
+}
+
+#[tauri::command]
+fn agent_status_hook_status() -> Result<AgentStatusHookState, String> {
+    agent_status_hook_state()
+}
+
+/// Wire (enable) or unwire (disable) the agent-status lifecycle hook in every profile;
+/// enable also installs/updates the hook script. Malformed settings files are skipped.
+#[tauri::command]
+fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    if enabled {
+        ensure_status_hook_script(&home)?;
+    }
+    for (_, sp) in plugin_sync_profiles(&home) {
+        let Ok(c) = std::fs::read_to_string(&sp) else {
+            continue;
+        };
+        let Ok(mut v) = parse_json_bom(&c) else {
+            continue;
+        };
+        let mut changed = false;
+        for ev in STATUS_HOOK_EVENTS {
+            changed |= if enabled {
+                hook_cmd_wire(&mut v, ev, STATUS_HOOK_CMD, STATUS_HOOK_MARKER)
+            } else {
+                hook_cmd_unwire(&mut v, ev, STATUS_HOOK_MARKER)
+            };
+        }
+        if changed {
+            let s = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+            write_json_atomic(&sp, &s).map_err(|e| format!("write {sp}: {e}"))?;
+        }
+    }
+    agent_status_hook_state()
+}
+
 #[cfg(test)]
 mod plugin_sync_tests {
     use serde_json::json;
@@ -7622,6 +7739,33 @@ mod plugin_sync_tests {
         assert_eq!(super::plugin_sync_version("import json"), 0);
         // The embedded asset must carry a parsable version (guards accidental header edits).
         assert!(super::plugin_sync_version(super::PLUGIN_SYNC_SCRIPT) >= 2);
+    }
+
+    #[test]
+    fn status_hook_wires_all_events_and_unwires_cleanly() {
+        // Wiring all five lifecycle events must be idempotent and reversible without
+        // touching an unrelated hook that shares one of the events.
+        let mut v = json!({ "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "py other.py" }] }
+        ]}});
+        for ev in super::STATUS_HOOK_EVENTS {
+            assert!(super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER));
+            assert!(!super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER));
+        }
+        assert!(super::STATUS_HOOK_EVENTS
+            .iter()
+            .all(|ev| super::hook_cmd_wired(&v, ev, super::STATUS_HOOK_MARKER)));
+        for ev in super::STATUS_HOOK_EVENTS {
+            assert!(super::hook_cmd_unwire(&mut v, ev, super::STATUS_HOOK_MARKER));
+        }
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 1);
+        assert_eq!(stop[0]["hooks"][0]["command"], "py other.py");
+        // Version header of the embedded status script parses.
+        assert!(
+            super::script_version_header(super::STATUS_HOOK_SCRIPT, "# castellyn-status-version:")
+                >= 1
+        );
     }
 
     #[test]
@@ -8673,8 +8817,14 @@ fn session_spawn(
         .map(str::trim)
         .filter(|d| !d.is_empty());
 
+    // The session id is minted BEFORE the command builds so the child can carry it in
+    // CASTELLYN_SESSION_ID — the castellyn_status.py lifecycle hook keys its report file
+    // on it (agent_status module). Sessions outside Castellyn have no id → hook no-ops.
+    let id = gen_session_id();
+
     let mut cmd = CommandBuilder::new("pwsh");
     cmd.arg("-NoLogo");
+    cmd.env("CASTELLYN_SESSION_ID", &id);
     // Over SSH the local pwsh is only a launcher for ssh.exe — skip the user's profile banner.
     if ssh.is_some() || tool == "ssh" {
         cmd.arg("-NoProfile");
@@ -8787,7 +8937,6 @@ fn session_spawn(
     // wait() and report the tool's REAL exit code instead of a hardcoded 0.
     let killer: Box<dyn ChildKiller + Send + Sync> = child.clone_killer();
 
-    let id = gen_session_id();
     let exit_event = format!("pty:exit:{id}");
 
     // Fan-out state: the spawning window's channel is the first subscriber; more windows can attach
@@ -8824,6 +8973,9 @@ fn session_spawn(
             },
         );
     }
+    // Track for agent status (skips shell/ssh; remote agents get PTY-activity only —
+    // their hooks run on the remote host and never reach the local status dir).
+    agent_status::on_spawn(&id, &tool);
 
     // Reader thread: stream PTY output as raw bytes to EVERY attached channel (no base64/JSON event
     // per chunk) until EOF, keeping a bounded scrollback; then wait for the child and signal exit.
@@ -8845,6 +8997,7 @@ fn session_spawn(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let bytes = &buf[..n];
+                    agent_status::on_output(&id_r);
                     push_bounded(
                         &mut ring_r.lock().unwrap_or_else(|e| e.into_inner()),
                         bytes,
@@ -8863,6 +9016,7 @@ fn session_spawn(
         let code = Child::wait(&mut *child)
             .map(|s| s.exit_code() as i32)
             .unwrap_or(-1);
+        agent_status::on_exit(&id_r);
         let _ = app2.emit(exit_event.as_str(), code);
         // Reap from the map: a naturally-exited but still-open pane otherwise holds its SESSION_LIMIT
         // slot + master/ring until session_kill (which only runs when the pane is explicitly closed).
@@ -9670,6 +9824,8 @@ pub fn run() {
             plugin_sync_status,
             plugin_sync_set,
             run_plugin_sync,
+            agent_status_hook_status,
+            agent_status_hook_set,
             delete_skill,
             read_schedules,
             run_schedule,
@@ -9708,6 +9864,8 @@ pub fn run() {
                 set_cur_lang(Lang::parse(&lang));
             }
             build_tray(app.handle())?;
+            // Agent-status engine for Sessions panes (hook files + PTY activity → events).
+            agent_status::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();
             let cfg = read_config_file();

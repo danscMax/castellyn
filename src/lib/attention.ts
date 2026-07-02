@@ -56,6 +56,13 @@ export function pluginsAttention(updateCount: number): Attention | null {
   return updateCount > 0 ? { level: 'info', count: updateCount } : null;
 }
 
+/** Sessions: agents waiting for input (warn) or finished-but-unseen (info). */
+export function sessionsAttention(s: { blocked: number; done: number }): Attention | null {
+  if (s.blocked > 0) return { level: 'warn', count: s.blocked };
+  if (s.done > 0) return { level: 'info', count: s.done };
+  return null;
+}
+
 /** Deployed .stignore drifted from the configured sync whitelist. */
 export function syncAttention(data: SyncStatus | null | undefined): Attention | null {
   if (!data || !data.stignoreExists) return null;

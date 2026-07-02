@@ -42,6 +42,7 @@
     attachId = undefined,
     ownsSession = false,
     paneKey = '',
+    agentState = null,
     visible = true,
     maximized = false,
     broadcast = false,
@@ -70,6 +71,8 @@
     attachId?: string;
     ownsSession?: boolean;
     paneKey?: string;
+    /** Semantic agent state from SessionsTab (working|blocked|done|idle|unknown) or null. */
+    agentState?: string | null;
     displayName?: string;
     onRename?: (key: string, name: string) => void;
     visible?: boolean;
@@ -585,7 +588,14 @@
       class:dead={exited}
       class:err={!!error}
       class:connecting={isSsh && !gotData && !exited && !error}
-      title={isSsh && !exited ? (gotData ? t('sessions.sshConnected') : t('sessions.sshConnecting')) : undefined}
+      class:working={!exited && !error && agentState === 'working'}
+      class:blocked={!exited && !error && agentState === 'blocked'}
+      class:done={!exited && !error && agentState === 'done'}
+      title={!exited && !error && agentState && agentState !== 'unknown'
+        ? t(`sessions.state_${agentState}`)
+        : isSsh && !exited
+          ? (gotData ? t('sessions.sshConnected') : t('sessions.sshConnecting'))
+          : undefined}
     ></span>
     {#if renaming}
       <input class="rename-input" bind:this={renameInput} bind:value={editName}
@@ -739,6 +749,19 @@
   .dot.connecting {
     background: var(--sw-status-warn, #e0b341);
     animation: dot-pulse 1.1s ease-in-out infinite;
+  }
+  /* Agent status (herdr-style): working = pulsing warn, blocked = pulsing danger,
+     done = steady teal (finished, not yet looked at). Idle keeps the default green. */
+  .dot.working {
+    background: var(--sw-status-warn, #e0b341);
+    animation: dot-pulse 1.1s ease-in-out infinite;
+  }
+  .dot.blocked {
+    background: var(--sw-danger, #f85149);
+    animation: dot-pulse 0.7s ease-in-out infinite;
+  }
+  .dot.done {
+    background: #2dd4bf;
   }
   @keyframes dot-pulse {
     0%,

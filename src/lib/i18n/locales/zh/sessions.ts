@@ -1,6 +1,20 @@
 export default {
   title: '并行会话',
   subtitle: '同时在多个配置中运行 Claude — 每个都有自己的终端。',
+
+  // Agent status (herdr-style)
+  state_working: '代理工作中',
+  state_blocked: '代理等待你的决定',
+  state_done: '代理已完成 — 尚未查看',
+  state_idle: '代理空闲',
+  sumBlocked: '{n} 个等待',
+  sumWorking: '{n} 个工作中',
+  sumDone: '{n} 个完成',
+  statusHook: '代理状态',
+  statusHookHint: 'Claude Code 配置中的钩子上报状态（工作中 / 需要决定 / 已完成）— 面板彩色圆点和侧边栏徽章。Castellyn 之外的会话不受影响。',
+  statusHookCoverage: '钩子覆盖 {wired}/{total} 个配置',
+  statusHookOnToast: '已在所有配置中启用代理状态',
+  statusHookOffToast: '已禁用代理状态',
   layout: '列数：',
   layoutCols: '每行 {n} 个',
   resizeRow: '拖动以调整行高',
