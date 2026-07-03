@@ -678,6 +678,9 @@
   }
 
   function toggleBackground(key: string) {
+    // A backgrounded pane leaves activePanes; if it's the maximized one the grid would render
+    // nothing (dead grid) — mirror closePane and drop the maximize when sending TO background.
+    if (maximized === key && !panes.find((p) => p.key === key)?.background) maximized = null;
     panes = panes.map((p) => (p.key === key ? { ...p, background: !p.background } : p));
   }
 
@@ -1340,7 +1343,7 @@
        one-click reachable so you never lose track of running sessions. -->
   {#if maximized}
     <div class="maxbar">
-      {#each panes as p (p.key)}
+      {#each activePanes as p (p.key)}
         <button class="maxchip" class:active={maximized === p.key}
           onclick={() => { maximized = p.key; unread = { ...unread, [p.key]: false }; }} title={paneLabel(p)}>
           <span class="maxchip-dot" class:unread={unread[p.key] && maximized !== p.key}></span>{paneLabel(p)}

@@ -365,6 +365,11 @@
       await listen<number>(`pty:exit:${id}`, () => {
         exited = true;
         term?.writeln(`\r\n\x1b[90m${t('sessions.ended')}\x1b[0m`);
+        // Drop the dead session from SessionsTab's target set so broadcast / send-to-all / status
+        // counts stop hitting it. The child is already gone, so relaunch()'s pre-respawn kill guard
+        // (`if (id && !attachId)`) just skips a redundant kill; start() then reassigns a fresh id.
+        onIdChange?.(paneKey, null);
+        id = null;
       })
     );
   }

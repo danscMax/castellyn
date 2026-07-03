@@ -446,6 +446,65 @@ impl Drop for BulkSlot {
     }
 }
 
+/// RAII for the GLOBAL forks-sweep flag (mirrors RunSlot/BulkSlot): `reserve` sets FORKS_GLOBAL true;
+/// `Drop` ALWAYS stores false — so a dropped `run_forks` future (webview reload mid-await) can't wedge
+/// the whole Forks tab into a permanent "busy". Keeps the original ordering: the flag is set FIRST,
+/// then `run_forks` checks the per-repo map and returns Err (letting Drop clear) if any repo is active.
+struct ForksGlobalSlot;
+impl ForksGlobalSlot {
+    fn reserve() -> Self {
+        FORKS_GLOBAL.store(true, Ordering::SeqCst);
+        ForksGlobalSlot
+    }
+}
+impl Drop for ForksGlobalSlot {
+    fn drop(&mut self) {
+        FORKS_GLOBAL.store(false, Ordering::SeqCst);
+    }
+}
+
+/// RAII reservation of one repo path in the ForkRuns map (mirrors the guards above): `reserve` runs the
+/// locked global-busy + already-running checks and inserts `path`→0; `set_pid` records the child pid so
+/// cancel_fork_repo can target it; `Drop` ALWAYS removes the path — so a dropped `run_fork_repo` future
+/// (or its spawn-error path) can't strand a repo as permanently "busy".
+struct ForkRepoSlot<'a> {
+    runs: &'a ForkRuns,
+    path: String,
+}
+impl<'a> ForkRepoSlot<'a> {
+    fn reserve(runs: &'a ForkRuns, path: String) -> Result<Self, String> {
+        let mut m = runs.0.lock().unwrap_or_else(|e| e.into_inner());
+        // A global run_forks sweep is in flight — it processes every repo, so running this one now would
+        // double-fetch it. Reject (the residual set-vs-check race is backstopped by git's .lock).
+        if FORKS_GLOBAL.load(Ordering::SeqCst) {
+            return Err(tr("err.fork_busy", cur_lang()).into());
+        }
+        if m.contains_key(&path) {
+            return Err(tr("err.fork_busy", cur_lang()).into());
+        }
+        m.insert(path.clone(), 0);
+        drop(m);
+        Ok(ForkRepoSlot { runs, path })
+    }
+    /// Record the real child pid so cancel_fork_repo can target it (slot still clears on drop).
+    fn set_pid(&self, pid: u32) {
+        self.runs
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(self.path.clone(), pid);
+    }
+}
+impl Drop for ForkRepoSlot<'_> {
+    fn drop(&mut self) {
+        self.runs
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.path);
+    }
+}
+
 #[derive(Serialize, Clone)]
 struct LogLine {
     component: String,
@@ -830,16 +889,14 @@ async fn run_forks(
         args.push(t.to_string());
     }
     let script = abs_with_fallback(&comp.script_rel, FORKS_SCRIPT_FALLBACK);
-    // Claim the global slot, then bail if any per-repo run is active (would `git fetch` the same repo
-    // concurrently). Order: set the flag first so a per-repo run starting now sees it; reset on reject.
-    FORKS_GLOBAL.store(true, Ordering::SeqCst);
+    // Claim the global slot (Drop clears it even if this future is dropped mid-await), then bail if any
+    // per-repo run is active (would `git fetch` the same repo concurrently). Order: the flag is set first
+    // so a per-repo run starting now sees it.
+    let _global = ForksGlobalSlot::reserve();
     if !runs.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
-        FORKS_GLOBAL.store(false, Ordering::SeqCst);
         return Err(tr("err.fork_busy", cur_lang()).to_string());
     }
-    let r = spawn_streamed(app, state, "forks".to_string(), script, args).await;
-    FORKS_GLOBAL.store(false, Ordering::SeqCst);
-    r
+    spawn_streamed(app, state, "forks".to_string(), script, args).await
 }
 
 /// Run a Forks action scoped to ONE repo, concurrently and independently of other repos and of
@@ -867,19 +924,9 @@ async fn run_fork_repo(
         .find(|c| c.id == "forks")
         .ok_or(tr("err.forks_missing", cur_lang()))?;
     let script = abs_with_fallback(&comp.script_rel, FORKS_SCRIPT_FALLBACK);
-    // Reserve this repo (reject a second concurrent run on the same one).
-    {
-        let mut m = runs.0.lock().unwrap_or_else(|e| e.into_inner());
-        // A global run_forks sweep is in flight — it processes every repo, so running this one now
-        // would double-fetch it. Reject (the residual set-vs-check race is backstopped by git's .lock).
-        if FORKS_GLOBAL.load(Ordering::SeqCst) {
-            return Err(tr("err.fork_busy", cur_lang()).into());
-        }
-        if m.contains_key(&path) {
-            return Err(tr("err.fork_busy", cur_lang()).into());
-        }
-        m.insert(path.clone(), 0);
-    }
+    // Reserve this repo (Drop removes it even if this future is dropped mid-run). Rejects a second run
+    // on the same repo, or any run while a global sweep is in flight.
+    let slot = ForkRepoSlot::reserve(&runs, path.clone())?;
     // Strict single-repo run: only this repo is processed, and its result is written to a per-repo
     // JSON (not the shared fork-sync.last.json) — so concurrent repo runs never race the file.
     let out_file = fork_repo_out_file(&path).unwrap_or_default();
@@ -911,25 +958,14 @@ async fn run_fork_repo(
     cmd.creation_flags(CREATE_NO_WINDOW);
     let child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => {
-            runs.0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&path);
-            return Err(trv("err.pwsh_failed", cur_lang(), &[("e", &e)]));
-        }
+        // `slot` Drop removes the path on this early return.
+        Err(e) => return Err(trv("err.pwsh_failed", cur_lang(), &[("e", &e)])),
     };
     if let Some(pid) = child.id() {
-        runs.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(path.clone(), pid);
+        slot.set_pid(pid);
     }
     let code = pump_and_wait(app, path.clone(), child, "fork-log", "fork-done").await;
-    runs.0
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&path);
+    // `slot` Drop removes the path when this function returns.
     Ok(code)
 }
 
@@ -3985,6 +4021,57 @@ fn delete_my_provider(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Transactional append of one key to a provider's rotation pool, parameterized over the key-store so
+/// it is unit-testable with an in-memory map. On the first add it migrates the legacy single key
+/// (`provider:{id}`) into slot 0, but deletes the legacy entry ONLY after `write` succeeds — so a
+/// failed write rolls back cleanly (new slot + migrated slot 0 removed) and leaves the legacy key
+/// intact instead of orphaning it. `write` receives the new key count, must persist it, and returns
+/// Err to trigger rollback. Returns the new key count.
+fn append_key_txn(
+    id: &str,
+    key: &str,
+    count: u64,
+    get: impl Fn(&str) -> Option<String>,
+    set: impl Fn(&str, &str) -> Result<(), String>,
+    del: impl Fn(&str),
+    write: impl FnOnce(u64) -> Result<(), String>,
+) -> Result<u64, String> {
+    let mut count = count;
+    // First add: fold the legacy single key (if any) into slot 0. Keep the legacy entry until the write
+    // lands, so a write failure rolls back to it instead of losing the key.
+    let migrated = if count == 0 {
+        if let Some(legacy) = get(&format!("provider:{id}")) {
+            set(&format!("provider:{id}:0"), &legacy)?;
+            count = 1;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    let new_slot = count;
+    set(&format!("provider:{id}:{new_slot}"), key)?;
+    let new_count = new_slot + 1;
+    match write(new_count) {
+        Ok(()) => {
+            // Write landed — now it is safe to drop the migrated legacy entry.
+            if migrated {
+                del(&format!("provider:{id}"));
+            }
+            Ok(new_count)
+        }
+        Err(e) => {
+            // Roll back what this call wrote; the legacy `provider:{id}` is still intact.
+            del(&format!("provider:{id}:{new_slot}"));
+            if migrated {
+                del(&format!("provider:{id}:0"));
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Append a key to a provider's rotation pool. On the first add we migrate the legacy single key
 /// (`provider:<id>`) into slot 0 so the pool subsumes it. The new key is appended (it does not
 /// become active — rotation is explicit via next_provider_key). `api_key` arrives over Tauri IPC.
@@ -3997,25 +4084,20 @@ fn add_provider_key(id: String, api_key: String) -> Result<MyProvider, String> {
     }
     let mut list = read_myproviders_checked()?;
     let idx = find_provider_idx(&list, &id).ok_or(tr("err.provider_not_found", cur_lang()))?;
-    let (mut count, active) = key_pool_meta(&list[idx]);
-    // First add: fold the legacy single key (if any) into slot 0 so nothing is orphaned.
-    if count == 0 {
-        if let Some(legacy) = kr_get(KR_PROVIDERS, &format!("provider:{id}")) {
-            kr_set(KR_PROVIDERS, &format!("provider:{id}:0"), &legacy)?;
-            kr_delete(KR_PROVIDERS, &format!("provider:{id}"));
-            count = 1;
-        }
-    }
-    kr_set(KR_PROVIDERS, &format!("provider:{id}:{count}"), key)?;
-    count += 1;
-    list[idx]["keyCount"] = serde_json::json!(count);
-    list[idx]["activeKey"] = serde_json::json!(active.min(count - 1));
-    // Transactional: if the JSON write fails, roll back the slot we just wrote so a crash here
-    // doesn't strand an orphan secret with a keyCount that never counted it.
-    if let Err(e) = write_myproviders_raw(&list) {
-        kr_delete(KR_PROVIDERS, &format!("provider:{id}:{}", count - 1));
-        return Err(e);
-    }
+    let (count, active) = key_pool_meta(&list[idx]);
+    append_key_txn(
+        &id,
+        key,
+        count,
+        |u| kr_get(KR_PROVIDERS, u),
+        |u, s| kr_set(KR_PROVIDERS, u, s),
+        |u| kr_delete(KR_PROVIDERS, u),
+        |new_count| {
+            list[idx]["keyCount"] = serde_json::json!(new_count);
+            list[idx]["activeKey"] = serde_json::json!(active.min(new_count - 1));
+            write_myproviders_raw(&list)
+        },
+    )?;
     Ok(myprovider_from_entry(&list[idx]))
 }
 
@@ -4444,9 +4526,55 @@ fn provider_auth_headers(protocol: &str, key: &str) -> Vec<(&'static str, String
     h
 }
 
+/// Guard for the outbound probe: `valid_base_url` (scheme + SSRF/metadata) plus an https requirement.
+/// The probe sends `Authorization: Bearer <key>`, so a plaintext http:// to a non-loopback host would
+/// leak the key on the wire — http:// is allowed only for genuine loopback (localhost / 127.0.0.0/8 / ::1).
+fn probe_url_allowed(base_url: &str) -> Result<(), String> {
+    valid_base_url(base_url)?;
+    if let Some(rest) = base_url.trim().strip_prefix("http://") {
+        let host_port = rest.split('/').next().unwrap_or("");
+        // Same host extraction as valid_base_url (handle an [::1] IPv6 literal without splitting on its
+        // inner colons).
+        let host = if host_port.starts_with('[') {
+            host_port
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or("")
+        } else {
+            host_port
+                .rsplit_once(':')
+                .map(|(h, _)| h)
+                .unwrap_or(host_port)
+        };
+        let hl = host.to_ascii_lowercase();
+        // Only exact "localhost" or a host that parses as a loopback IP counts. A prefix/substring
+        // test (`starts_with("127.")`) would wrongly allow a non-IP hostname like `127.0.0.1.evil.com`
+        // or userinfo like `127.0.0.1@evil.com` (real host = evil.com) — leaking the bearer key over
+        // http to an attacker-influenced DNS name. Parsing rejects anything that isn't a bare IP.
+        let loopback = hl == "localhost"
+            || hl
+                .parse::<std::net::Ipv4Addr>()
+                .map(|a| a.is_loopback())
+                .unwrap_or(false)
+            || hl
+                .parse::<std::net::Ipv6Addr>()
+                .map(|a| a.is_loopback())
+                .unwrap_or(false);
+        if !loopback {
+            return Err(tr("err.https_required", cur_lang()).into());
+        }
+    }
+    Ok(())
+}
+
 /// Native provider liveness probe (was Check-Provider.ps1). Blocking — call via spawn_blocking.
 /// GET {root}/v1/models with the optional key; returns `{ ok, detail, count? }` (same shape as before).
 fn probe_provider(base_url: &str, protocol: &str, api_key: &str) -> serde_json::Value {
+    // Validate the target before sending the bearer key (SSRF + https-only, loopback excepted).
+    if let Err(e) = probe_url_allowed(base_url) {
+        return serde_json::json!({ "ok": false, "detail": e });
+    }
     // Normalize: strip a trailing /v1, then always query /v1/models (works with or without /v1).
     let root = base_url.trim_end_matches('/');
     let root = root.strip_suffix("/v1").unwrap_or(root);
@@ -6499,6 +6627,17 @@ fn codex_mcp_add_args(name: &str, def: &serde_json::Value) -> Option<Vec<String>
     Some(argv)
 }
 
+/// `run_codex_mcp` runs `cmd /C codex <argv>`; cmd re-parses that line, so any of these metacharacters
+/// in an argv element (command, args, env values, server name — all user-editable in .mcp.json) would
+/// let a field inject a second command. Reject the whole server if any element carries one. The name
+/// sits at argv[2], so checking the built argv covers it too.
+fn cmd_argv_safe(argv: &[String]) -> bool {
+    const UNSAFE: &[char] = &['&', '|', '<', '>', '^', '%', '"'];
+    !argv
+        .iter()
+        .any(|a| a.chars().any(|c| UNSAFE.contains(&c)))
+}
+
 /// Fan out the canonical MCP servers (.mcp.json) into Codex via the official `codex mcp add`
 /// CLI — Codex owns its config.toml format/validation, so we never hand-edit TOML. Verified
 /// live 2026-07-02 (upstream #3441 is closed): servers registered this way load in a session
@@ -6523,6 +6662,12 @@ fn run_codex_mcp() -> Result<usize, String> {
         let Some(argv) = codex_mcp_add_args(name, def) else {
             continue;
         };
+        // cmd re-parses `cmd /C codex <argv>`, so reject (don't silently skip) any server whose argv
+        // carries cmd metacharacters — a .mcp.json field could otherwise inject a second command.
+        if !cmd_argv_safe(&argv) {
+            errs.push(trv("err.mcp_unsafe_chars", cur_lang(), &[("name", &name)]));
+            continue;
+        }
         // codex is an npm .cmd shim on Windows — must go through cmd /C. Simple canonical
         // args (npx/urls/paths) survive cmd's re-parse; cmd metacharacters would not.
         let mut cmd = std::process::Command::new("cmd");
@@ -6770,6 +6915,168 @@ mod opencode_fanout_tests {
         assert_eq!(target["npm"], "@ai-sdk/openai-compatible");
         assert!(target["models"].get("user-model").is_some());
         assert!(target["models"].get("MiniMax-M3").is_some());
+    }
+}
+
+#[cfg(test)]
+mod codex_cmd_safety_tests {
+    use serde_json::json;
+
+    fn safe(command: &str, arg: &str, env_val: &str, name: &str) -> bool {
+        let def = json!({ "command": command, "args": [arg], "env": { "FOO": env_val } });
+        let argv = super::codex_mcp_add_args(name, &def).expect("valid def");
+        super::cmd_argv_safe(&argv)
+    }
+
+    #[test]
+    fn plain_canonical_argv_passes() {
+        assert!(safe("npx", "chrome-devtools-mcp@latest", "C:/Users/User/x.json", "chrome-devtools"));
+    }
+
+    #[test]
+    fn cmd_metachars_are_rejected_in_every_argv_position() {
+        // command, args, env value, and server name each reach `cmd /C codex` — each must be guarded.
+        for bad in ["a&b", "a|b", "a%b", "a\"b"] {
+            assert!(!safe(bad, "ok", "ok", "srv"), "command {bad:?} should be unsafe");
+            assert!(!safe("npx", bad, "ok", "srv"), "arg {bad:?} should be unsafe");
+            assert!(!safe("npx", "ok", bad, "srv"), "env value {bad:?} should be unsafe");
+            assert!(!safe("npx", "ok", "ok", bad), "name {bad:?} should be unsafe");
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe_url_tests {
+    #[test]
+    fn https_and_loopback_http_allowed() {
+        assert!(super::probe_url_allowed("https://api.example.com").is_ok());
+        assert!(super::probe_url_allowed("http://localhost:8080").is_ok());
+        assert!(super::probe_url_allowed("http://127.0.0.1:1234").is_ok());
+        assert!(super::probe_url_allowed("http://[::1]:9").is_ok());
+    }
+
+    #[test]
+    fn plaintext_nonloopback_and_bad_schemes_rejected() {
+        assert!(super::probe_url_allowed("http://api.example.com").is_err());
+        assert!(super::probe_url_allowed("http://192.168.1.10:1234").is_err());
+        assert!(super::probe_url_allowed("ftp://x").is_err());
+        // SSRF/metadata host is caught by valid_base_url before the https rule.
+        assert!(super::probe_url_allowed("http://169.254.169.254").is_err());
+    }
+
+    // Regression: a prefix/substring loopback test wrongly allowed these, leaking the bearer key over
+    // http to an attacker-influenced host. The strict IP-parse must reject every one.
+    #[test]
+    fn loopback_lookalikes_are_rejected() {
+        assert!(super::probe_url_allowed("http://127.0.0.1.evil.com").is_err());
+        assert!(super::probe_url_allowed("http://127.foo").is_err());
+        assert!(super::probe_url_allowed("http://0x7f.0.0.1").is_err());
+        assert!(super::probe_url_allowed("http://localhost.evil.com").is_err());
+        // Userinfo trick: real host is evil.com, not 127.0.0.1.
+        assert!(super::probe_url_allowed("http://127.0.0.1@evil.com").is_err());
+        // Genuine loopback across the whole 127.0.0.0/8 block still passes.
+        assert!(super::probe_url_allowed("http://127.5.6.7:8080").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod fork_slot_tests {
+    use super::{ForkRepoSlot, ForkRuns, ForksGlobalSlot, FORKS_GLOBAL};
+    use std::sync::atomic::Ordering;
+
+    // One test: FORKS_GLOBAL is a shared static, so keep all its mutations sequential in a single fn.
+    #[test]
+    fn slots_clear_on_drop_and_reject_while_held() {
+        // Global slot: set on reserve, cleared on drop.
+        {
+            let _g = ForksGlobalSlot::reserve();
+            assert!(FORKS_GLOBAL.load(Ordering::SeqCst));
+        }
+        assert!(!FORKS_GLOBAL.load(Ordering::SeqCst));
+
+        // Per-repo slot: reserve inserts, a second reserve of the same path is rejected, drop removes.
+        let runs = ForkRuns::default();
+        {
+            let s = ForkRepoSlot::reserve(&runs, "C:/repo".to_string()).expect("first reserve");
+            assert!(runs.0.lock().unwrap().contains_key("C:/repo"));
+            assert!(ForkRepoSlot::reserve(&runs, "C:/repo".to_string()).is_err());
+            s.set_pid(4242);
+            assert_eq!(*runs.0.lock().unwrap().get("C:/repo").unwrap(), 4242);
+        }
+        assert!(runs.0.lock().unwrap().is_empty());
+        // Drop freed the path → reserving it again works.
+        let _s2 = ForkRepoSlot::reserve(&runs, "C:/repo".to_string()).expect("reserve after drop");
+
+        // A global sweep in flight blocks a per-repo reserve until the global slot drops.
+        let runs2 = ForkRuns::default();
+        {
+            let _g = ForksGlobalSlot::reserve();
+            assert!(ForkRepoSlot::reserve(&runs2, "C:/x".to_string()).is_err());
+        }
+        assert!(ForkRepoSlot::reserve(&runs2, "C:/x".to_string()).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod add_key_txn_tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    // (a) write fails on first add → legacy entry still present, no orphan slots.
+    #[test]
+    fn write_failure_keeps_legacy_and_leaves_no_orphans() {
+        let store = RefCell::new(HashMap::<String, String>::new());
+        store.borrow_mut().insert("provider:acme".into(), "LEGACY".into());
+        let r = super::append_key_txn(
+            "acme",
+            "NEWKEY",
+            0,
+            |u| store.borrow().get(u).cloned(),
+            |u, s| {
+                store.borrow_mut().insert(u.into(), s.into());
+                Ok(())
+            },
+            |u| {
+                store.borrow_mut().remove(u);
+            },
+            |_new_count| Err("disk full".to_string()),
+        );
+        assert_eq!(r, Err("disk full".to_string()));
+        let s = store.borrow();
+        assert_eq!(s.get("provider:acme").map(String::as_str), Some("LEGACY"));
+        assert!(s.get("provider:acme:0").is_none());
+        assert!(s.get("provider:acme:1").is_none());
+    }
+
+    // (b) write succeeds → legacy gone, slot0 = legacy value, slot1 = new key.
+    #[test]
+    fn write_success_migrates_legacy_and_appends() {
+        let store = RefCell::new(HashMap::<String, String>::new());
+        store.borrow_mut().insert("provider:acme".into(), "LEGACY".into());
+        let mut written = 0u64;
+        let r = super::append_key_txn(
+            "acme",
+            "NEWKEY",
+            0,
+            |u| store.borrow().get(u).cloned(),
+            |u, s| {
+                store.borrow_mut().insert(u.into(), s.into());
+                Ok(())
+            },
+            |u| {
+                store.borrow_mut().remove(u);
+            },
+            |new_count| {
+                written = new_count;
+                Ok(())
+            },
+        );
+        assert_eq!(r, Ok(2));
+        assert_eq!(written, 2);
+        let s = store.borrow();
+        assert!(s.get("provider:acme").is_none());
+        assert_eq!(s.get("provider:acme:0").map(String::as_str), Some("LEGACY"));
+        assert_eq!(s.get("provider:acme:1").map(String::as_str), Some("NEWKEY"));
     }
 }
 
