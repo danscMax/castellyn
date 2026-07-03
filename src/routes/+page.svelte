@@ -112,6 +112,7 @@
     forksAttention,
     backupAttention,
     profilesAttention,
+    profileHasMissingLink,
     pluginsAttention,
     syncAttention,
     sessionsAttention
@@ -916,7 +917,9 @@
       case 'repair-profiles': {
         // F23: repair every broken profile's links in one run (backend loops the repair script).
         if (running) break;
-        const broken = (profilesData?.profiles ?? []).filter((p) => !p.linksIntact).map((p) => p.name);
+        // Only profiles whose DIR exists but has a missing link — same predicate as the sidebar badge
+        // (attention.ts). A missing-dir profile needs 'create', not link-repair (Repair exits 1 on it).
+        const broken = (profilesData?.profiles ?? []).filter((p) => p.exists && profileHasMissingLink(p)).map((p) => p.name);
         if (!broken.length) break;
         running = 'profiles';
         log = [t('page.prof_log', { verb: t('page.prof_verb_repair', { name: t('page.home_repairAll') }) })];

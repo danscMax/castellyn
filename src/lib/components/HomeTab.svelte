@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t, plural, pFile } from '$lib/i18n';
   import { statusTextClass } from '$lib/statusColor';
+  import { profileHasMissingLink } from '$lib/attention';
   import type { SyncStatus, ConfigDriftStatus, ProfilesStatus, SchedulesStatus, StackService } from '$lib/ipc';
 
   // USE-1: single-pane "is my Claude setup healthy?" overview. Pure aggregation of data the
@@ -69,12 +70,25 @@
     }
 
     if (profiles?.profiles?.length) {
-      const broken = profiles.profiles.filter((p) => !p.linksIntact).length;
+      // Split the two distinct problems, using the SAME predicates as the sidebar badge
+      // (attention.ts) so Home and the sidebar never show different counts:
+      //  · broken  = dir exists but a shared link is missing  → repairable
+      //  · missing = the profile dir doesn't exist            → needs Create (Profiles tab, #17)
+      const broken = profiles.profiles.filter((p) => p.exists && profileHasMissingLink(p)).length;
+      const missing = profiles.profiles.filter((p) => !p.exists).length;
+      const brokenTxt = broken > 0
+        ? `${broken} ${plural(broken, t('page.home_brokenLink_one'), t('page.home_brokenLink_few'), t('page.home_brokenLink_many'))}`
+        : '';
+      const missingTxt = missing > 0 ? `${missing} ${t('page.home_missingDirs')}` : '';
+      const value = broken || missing
+        ? [brokenTxt, missingTxt].filter(Boolean).join(' · ')
+        : t('page.home_profilesOk', { n: profiles.profiles.length });
       out.push({
         key: 'profiles', tab: 'profiles', title: t('page.home_profiles'),
-        value: broken > 0 ? `${broken} ${plural(broken, t('page.home_brokenLink_one'), t('page.home_brokenLink_few'), t('page.home_brokenLink_many'))}` : t('page.home_profilesOk', { n: profiles.profiles.length }),
-        level: broken > 0 ? 'bad' : 'ok',
-        // F23: one-click repair of every broken profile's links (parent loops the repair script).
+        value,
+        level: broken || missing ? 'bad' : 'ok',
+        // F23: one-click repair of existing broken profiles. A missing DIR needs Create (Repair exits
+        // 1 on it), so no repair button then — clicking the chip deep-links to the Profiles tab.
         action: broken > 0 ? { id: 'repair-profiles', label: t('page.home_repairAll') } : undefined
       });
     }

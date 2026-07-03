@@ -18,6 +18,7 @@ export default {
   home_brokenLink_one: 'broken link',
   home_brokenLink_few: 'broken links',
   home_brokenLink_many: 'broken links',
+  home_missingDirs: 'missing',
   home_conflicts: 'Conflicts',
   home_busy: 'Another operation is running — wait for it to finish',
   home_lastMaint: 'last run: {time}',

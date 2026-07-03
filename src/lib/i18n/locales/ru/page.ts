@@ -18,6 +18,7 @@ export default {
   home_brokenLink_one: 'битая связь',
   home_brokenLink_few: 'битые связи',
   home_brokenLink_many: 'битых связей',
+  home_missingDirs: 'без каталога',
   home_conflicts: 'Конфликты',
   home_busy: 'Идёт другая операция — дождитесь завершения',
   home_lastMaint: 'последний прогон: {time}',

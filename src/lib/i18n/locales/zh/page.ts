@@ -18,6 +18,7 @@ export default {
   home_brokenLink_one: '个链接损坏',
   home_brokenLink_few: '个链接损坏',
   home_brokenLink_many: '个链接损坏',
+  home_missingDirs: '缺失',
   home_conflicts: '冲突',
   home_busy: '另一个操作正在进行——请等待完成',
   home_lastMaint: '最近运行：{time}',
