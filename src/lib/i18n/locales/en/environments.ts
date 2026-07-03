@@ -43,6 +43,8 @@ export default {
   addProviderTip: 'No providers — open the Providers tab',
   mcp: 'MCP',
   openMcpTip: 'Open the MCP tab',
+  mcpDrift: 'stale',
+  mcpDriftTip: 'MCP servers drifted from canon (a canon server is missing or a removed one lingers) — press "Deploy MCP"',
   errorRead: 'Config read error',
   openConfigTitle: 'Open config folder',
   installHow: 'How to install',

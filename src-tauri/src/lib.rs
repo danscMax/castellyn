@@ -90,6 +90,18 @@ fn set_cur_lang(l: Lang) {
 // the PowerShell tooling never desync.
 const MANIFEST_FALLBACK: &str = include_str!("../../manifest/maintenance-manifest.json");
 
+/// Per-harness list of MCP server NAMES that Castellyn deployed (item Gap-2). Deploy uses it to
+/// reconcile: a name we deployed before but that's no longer in canon (.mcp.json) is removed from the
+/// harness; a user-added server is never in this list, so it's never touched.
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ManagedMcp {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opencode: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    codex: Option<Vec<String>>,
+}
+
 /// Persistent hub settings (%APPDATA%\castellyn\config.json).
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct HubConfig {
@@ -175,6 +187,14 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     limit_mode: Option<String>,
+    // Gap-2: MCP server names Castellyn has deployed to each harness — the reconcile ledger (see
+    // ManagedMcp). Written by the OpenCode/Codex MCP fan-out; not user-facing.
+    #[serde(
+        rename = "managedMcp",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    managed_mcp: Option<ManagedMcp>,
 }
 
 fn config_path() -> Option<String> {
@@ -6283,7 +6303,8 @@ fn rtk_plugin_path_ok(content: &str) -> bool {
 
 /// Count distinct TOML table keys under `[prefix` (e.g. "[model_providers.") — skips comments and
 /// dedups dotted sub-tables, replacing the fragile `.matches().count()` heuristic.
-fn count_toml_tables(text: &str, prefix: &str) -> usize {
+/// Distinct table names under `prefix` (e.g. `[mcp_servers.` → the server names) in a TOML text.
+fn toml_table_names(text: &str, prefix: &str) -> Vec<String> {
     let mut set = std::collections::BTreeSet::new();
     for line in text.lines() {
         let l = line.trim();
@@ -6301,7 +6322,58 @@ fn count_toml_tables(text: &str, prefix: &str) -> usize {
             }
         }
     }
-    set.len()
+    set.into_iter().collect()
+}
+
+fn count_toml_tables(text: &str, prefix: &str) -> usize {
+    toml_table_names(text, prefix).len()
+}
+
+/// Gap-2 drift: a harness's MCP set has drifted from canon when a canon server is MISSING from it,
+/// OR a server WE deployed (managed) is still present but no longer in canon (a de-canonized tail).
+/// A user-added server (present, not in canon, not in managed) is NOT drift.
+fn mcp_drift(canon: &[String], harness: &[String], managed: &[String]) -> bool {
+    let hset: std::collections::HashSet<&str> = harness.iter().map(|s| s.as_str()).collect();
+    if canon.iter().any(|n| !hset.contains(n.as_str())) {
+        return true;
+    }
+    let cset: std::collections::HashSet<&str> = canon.iter().map(|s| s.as_str()).collect();
+    managed
+        .iter()
+        .any(|n| hset.contains(n.as_str()) && !cset.contains(n.as_str()))
+}
+
+#[cfg(test)]
+mod mcp_reconcile_tests {
+    #[test]
+    fn stale_names_removes_only_decanonized_managed() {
+        let managed = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let canon = vec!["b".to_string(), "c".to_string(), "d".to_string()];
+        // 'a' was ours and dropped from canon → remove; 'd' is new canon (not ours yet) → not here.
+        assert_eq!(super::mcp_stale_names(&managed, &canon), vec!["a".to_string()]);
+        // a user server never entered `managed`, so nothing is returned:
+        assert!(super::mcp_stale_names(&[], &canon).is_empty());
+        // nothing de-canonized → empty:
+        assert!(super::mcp_stale_names(&["b".to_string()], &canon).is_empty());
+    }
+
+    #[test]
+    fn drift_flags_missing_and_tail_but_not_user_servers() {
+        let canon = vec!["a".to_string(), "b".to_string()];
+        let both = vec!["a".to_string(), "b".to_string()];
+        // in sync (harness == canon, ledger == canon) → no drift
+        assert!(!super::mcp_drift(&canon, &both, &both));
+        // a canon server missing from the harness → drift
+        assert!(super::mcp_drift(&canon, &["a".to_string()], &both));
+        // a de-canonized tail we deployed is still present → drift
+        assert!(super::mcp_drift(&["a".to_string()], &both, &both));
+        // a USER-added server (present, not canon, not in our ledger) → NOT drift
+        assert!(!super::mcp_drift(
+            &["a".to_string()],
+            &["a".to_string(), "user".to_string()],
+            &["a".to_string()]
+        ));
+    }
 }
 
 #[derive(Serialize)]
@@ -6317,6 +6389,9 @@ struct EnvInfo {
     shareable_gap: usize,
     providers: usize,
     mcp_servers: usize,
+    /// Gap-2: the harness's MCP set drifted from canon (missing canon server or a de-canonized tail
+    /// we deployed) → the "Среды" card shows a "stale — Deploy" hint. User-added servers don't count.
+    mcp_drift: bool,
     rtk: bool,
     rtk_available: bool,
     config_ok: bool,
@@ -6391,6 +6466,38 @@ fn read_environments() -> Vec<EnvInfo> {
         .map(|t| count_toml_tables(t, "[mcp_servers."))
         .unwrap_or(0);
 
+    // Gap-2 drift per harness: canon (.mcp.json) names vs the harness's current names vs our ledger.
+    let hub = read_config_file();
+    let canon_mcp: Vec<String> = read_mcp()
+        .map(|m| m.source.iter().map(|s| s.name.clone()).collect())
+        .unwrap_or_default();
+    let opencode_names: Vec<String> = opencode_json
+        .as_ref()
+        .and_then(|v| v.get("mcp").or_else(|| v.get("mcpServers")))
+        .and_then(|m| m.as_object())
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default();
+    let opencode_drift = mcp_drift(
+        &canon_mcp,
+        &opencode_names,
+        &hub.managed_mcp
+            .as_ref()
+            .and_then(|m| m.opencode.clone())
+            .unwrap_or_default(),
+    );
+    let codex_names: Vec<String> = codex_txt
+        .as_deref()
+        .map(|t| toml_table_names(t, "[mcp_servers."))
+        .unwrap_or_default();
+    let codex_drift = mcp_drift(
+        &canon_mcp,
+        &codex_names,
+        &hub.managed_mcp
+            .as_ref()
+            .and_then(|m| m.codex.clone())
+            .unwrap_or_default(),
+    );
+
     let zcode_installed = std::path::Path::new(&format!("{home}\\.zcode")).is_dir()
         || std::path::Path::new(&format!("{home}\\.config\\zcode")).is_dir();
 
@@ -6406,6 +6513,7 @@ fn read_environments() -> Vec<EnvInfo> {
             shareable_gap: 0, // sharing targets ~/.agents/skills, which Claude does not read
             providers: read_providers().len(),
             mcp_servers: claude_mcp,
+            mcp_drift: false, // Claude self-reconciles via read_mcp extras / mcp_remove_extra
             rtk: claude_rtk,
             rtk_available: rtk_present,
             config_ok: true,
@@ -6421,6 +6529,7 @@ fn read_environments() -> Vec<EnvInfo> {
             shareable_gap: oc_gap,
             providers: opencode_providers,
             mcp_servers: opencode_mcp,
+            mcp_drift: opencode_drift,
             rtk: opencode_rtk,
             rtk_available: rtk_present,
             config_ok: opencode_config_ok,
@@ -6436,6 +6545,7 @@ fn read_environments() -> Vec<EnvInfo> {
             shareable_gap: cx_gap,
             providers: codex_providers,
             mcp_servers: codex_mcp,
+            mcp_drift: codex_drift,
             rtk: false,
             rtk_available: false,
             config_ok: codex_installed,
@@ -6451,6 +6561,7 @@ fn read_environments() -> Vec<EnvInfo> {
             shareable_gap: 0,
             providers: 0,
             mcp_servers: 0,
+            mcp_drift: false,
             rtk: false,
             rtk_available: false,
             config_ok: true,
@@ -6682,6 +6793,17 @@ fn run_opencode_rtk(action: String) -> Result<bool, String> {
 /// shape (`{type:"local", command:[…], enabled:true, environment}`). Merge-patch: overwrites the
 /// canonical names, preserves any user-added servers. Returns the count written. Atomic write + .bak.
 /// (Codex has its own fan-out via `run_codex_mcp` — the official `codex mcp add` CLI.)
+/// Gap-2 reconcile diff: names we deployed before (`managed`) that are no longer in `canon` → to
+/// remove. Pure + unit-tested. A user-added server was never in `managed`, so it's never returned.
+fn mcp_stale_names(managed: &[String], canon: &[String]) -> Vec<String> {
+    let keep: std::collections::HashSet<&str> = canon.iter().map(|s| s.as_str()).collect();
+    managed
+        .iter()
+        .filter(|n| !keep.contains(n.as_str()))
+        .cloned()
+        .collect()
+}
+
 #[tauri::command]
 fn run_opencode_mcp() -> Result<usize, String> {
     use serde_json::{json, Value};
@@ -6713,6 +6835,7 @@ fn run_opencode_mcp() -> Result<usize, String> {
     }
     let mcp = obj.get_mut("mcp").unwrap().as_object_mut().unwrap();
 
+    let canon_names: Vec<String> = servers.keys().cloned().collect();
     let mut count = 0usize;
     for (name, def) in servers {
         let command = def
@@ -6737,8 +6860,23 @@ fn run_opencode_mcp() -> Result<usize, String> {
         count += 1;
     }
 
+    // Gap-2 reconcile: drop entries we deployed on a previous run that are no longer in canon. A
+    // user-added server was never in our ledger (managed_mcp.opencode), so it's never removed.
+    let mut hub = read_config_file();
+    let prev = hub
+        .managed_mcp
+        .as_ref()
+        .and_then(|m| m.opencode.clone())
+        .unwrap_or_default();
+    for stale in mcp_stale_names(&prev, &canon_names) {
+        mcp.remove(&stale);
+    }
+
     let serialized = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     write_json_atomic(&cfg_path, &serialized).map_err(|e| format!("write opencode.json: {e}"))?;
+    // Update the ledger to the current canon (best-effort: opencode.json is already written).
+    hub.managed_mcp.get_or_insert_default().opencode = Some(canon_names);
+    let _ = write_config_file(&hub);
     Ok(count)
 }
 
@@ -6974,6 +7112,30 @@ fn run_codex_mcp() -> Result<usize, String> {
             Err(e) => errs.push(format!("{name}: {e}")),
         }
     }
+
+    // Gap-2 reconcile: remove servers we deployed on a previous run that are no longer in canon via
+    // `codex mcp remove <name>` (subcommand confirmed in the Codex CLI docs). Names come from our own
+    // ledger, but re-validate for cmd safety anyway. A "no such server" (already gone) is fine →
+    // best-effort, never fails the deploy. User-added servers were never in the ledger, so untouched.
+    let canon_names: Vec<String> = servers.keys().cloned().collect();
+    let mut hub = read_config_file();
+    let prev = hub
+        .managed_mcp
+        .as_ref()
+        .and_then(|m| m.codex.clone())
+        .unwrap_or_default();
+    for stale in mcp_stale_names(&prev, &canon_names) {
+        if !cmd_argv_safe(std::slice::from_ref(&stale)) {
+            continue;
+        }
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/C").arg("codex").arg("mcp").arg("remove").arg(&stale);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.output();
+    }
+    hub.managed_mcp.get_or_insert_default().codex = Some(canon_names);
+    let _ = write_config_file(&hub);
+
     if !errs.is_empty() {
         return Err(errs.join(" · "));
     }

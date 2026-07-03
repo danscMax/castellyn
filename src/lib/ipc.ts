@@ -739,6 +739,7 @@ export type EnvInfo = {
   shareableGap: number; // skills "share skills" would newly make visible here (0 = nothing left)
   providers: number;
   mcpServers: number;
+  mcpDrift: boolean; // MCP set drifted from canon (missing canon server or a de-canonized tail) → Deploy
   rtk: boolean;
   rtkAvailable: boolean; // false → no RTK integration path for this harness yet
   configOk: boolean; // false → config file exists but failed to parse

@@ -43,6 +43,8 @@ export default {
   addProviderTip: '没有提供商——打开「提供商」标签',
   mcp: 'MCP',
   openMcpTip: '打开 MCP 标签',
+  mcpDrift: '已过时',
+  mcpDriftTip: 'MCP 服务器与规范不一致（缺少规范服务器或残留已删除的）——请点击「部署 MCP」',
   errorRead: '配置读取错误',
   openConfigTitle: '打开配置文件夹',
   installHow: '如何安装',

@@ -185,6 +185,9 @@
                   {:else}
                     <button class="badge badge-muted" onclick={onOpenMcp} title={t('environments.openMcpTip')}>{t('environments.none')}</button>
                   {/if}
+                  {#if e.mcpDrift}
+                    <span class="badge badge-warn" title={t('environments.mcpDriftTip')}>{t('environments.mcpDrift')}</span>
+                  {/if}
                 </div>
               </div>
 
