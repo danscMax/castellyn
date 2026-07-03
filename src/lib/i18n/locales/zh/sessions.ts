@@ -22,6 +22,8 @@ export default {
   restoreOffer: '上次运行：{n} 个会话。恢复该组合？Claude 面板将恢复对话（--resume）。',
   restoreDo: '恢复',
   restoreDismiss: '忽略',
+  restoredPartial: '已恢复 {m} 个中的 {n} 个 — 已达会话上限',
+  activeFor: '活动 {d}',
   layout: '列数：',
   layoutCols: '每行 {n} 个',
   resizeRow: '拖动以调整行高',

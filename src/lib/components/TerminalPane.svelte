@@ -480,6 +480,9 @@
       }
       if (id && !exited) sessionWrite(id, d);
     });
+    // A shell BEL (\a) is an explicit attention signal — mark the pane unread even when it's
+    // on screen (unlike off-screen output). The marker self-clears when the pane is focused.
+    term.onBell(() => onActivity?.(paneKey));
     // Windows-Terminal-style copy/paste so plain Ctrl+C/V behave as users expect (and so apps that
     // inject text via a simulated Ctrl+V, e.g. Sweet Whisper, land in the PTY): Ctrl+C copies when
     // there's a selection else falls through as SIGINT; Ctrl+V always pastes. Ctrl+Shift+C/V kept
@@ -752,13 +755,13 @@
     background: var(--sw-status-down);
   }
   .dot.connecting {
-    background: var(--sw-status-warn, #e0b341);
+    background: var(--sw-status-warn);
     animation: dot-pulse 1.1s ease-in-out infinite;
   }
   /* Agent status (herdr-style): working = pulsing warn, blocked = pulsing danger,
      done = steady teal (finished, not yet looked at). Idle keeps the default green. */
   .dot.working {
-    background: var(--sw-status-warn, #e0b341);
+    background: var(--sw-status-warn);
     animation: dot-pulse 1.1s ease-in-out infinite;
   }
   .dot.blocked {
@@ -766,7 +769,7 @@
     animation: dot-pulse 0.7s ease-in-out infinite;
   }
   .dot.done {
-    background: #2dd4bf;
+    background: var(--sw-status-done);
   }
   @keyframes dot-pulse {
     0%,

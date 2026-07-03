@@ -665,38 +665,25 @@ async fn pump_and_wait(
 ) -> i32 {
     let mut handles = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        let (a, i) = (app.clone(), id.clone());
-        handles.push(tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let _ = a.emit(
-                    log_event,
-                    LogLine {
-                        component: i.clone(),
-                        stream: "out".into(),
-                        line,
-                    },
-                );
-            }
-        }));
+        handles.push(tokio::spawn(pump_stream(
+            app.clone(),
+            id.clone(),
+            log_event,
+            "out",
+            BufReader::new(stdout).lines(),
+        )));
     }
     if let Some(stderr) = child.stderr.take() {
-        let (a, i) = (app.clone(), id.clone());
-        handles.push(tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let _ = a.emit(
-                    log_event,
-                    LogLine {
-                        component: i.clone(),
-                        stream: "err".into(),
-                        line,
-                    },
-                );
-            }
-        }));
+        handles.push(tokio::spawn(pump_stream(
+            app.clone(),
+            id.clone(),
+            log_event,
+            "err",
+            BufReader::new(stderr).lines(),
+        )));
     }
     let status = child.wait().await;
+    // Await the pumps so their final coalesced flush lands BEFORE run-done — no lost tail lines.
     for h in handles {
         let _ = h.await;
     }
@@ -709,6 +696,109 @@ async fn pump_and_wait(
         },
     );
     code
+}
+
+/// Coalesce a FIFO batch of one stream's buffered lines into a single run-log payload (joined by
+/// '\n'). Pure + extracted so the batching/ordering contract the frontend splits on stays tested.
+fn coalesce_batch(lines: &[String]) -> String {
+    lines.join("\n")
+}
+
+/// Emit one coalesced run-log event for a stream's buffered lines, then clear the buffer.
+fn flush_batch(
+    app: &AppHandle,
+    log_event: &str,
+    id: &str,
+    stream: &'static str,
+    batch: &mut Vec<String>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        log_event,
+        LogLine {
+            component: id.to_string(),
+            stream: stream.to_string(),
+            line: coalesce_batch(batch),
+        },
+    );
+    batch.clear();
+}
+
+/// Pump ONE stream, coalescing rapid lines into a single run-log event flushed at ~30ms cadence (or
+/// once the buffer hits MAX_BATCH lines) instead of one IPC event per line. Per-stream batching keeps
+/// each stream's lines in FIFO order and never interleaves stdout/stderr within an event. Cross-stream
+/// merge into one arrival-ordered event would need an mpsc/select! path (tokio `sync` isn't enabled);
+/// separate OS pipes carry no cross-pipe ordering guarantee anyway, so per-stream is the honest unit.
+/// `Lines::next_line` is cancellation-safe (its partial-line buffer lives in `Lines`, not the future),
+/// so wrapping it in `timeout_at` cannot drop a line.
+async fn pump_stream<R>(
+    app: AppHandle,
+    id: String,
+    log_event: &'static str,
+    stream: &'static str,
+    mut lines: tokio::io::Lines<R>,
+) where
+    R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
+{
+    const FLUSH_MS: u64 = 30;
+    const MAX_BATCH: usize = 64;
+    let mut batch: Vec<String> = Vec::new();
+    // Deadline for the current (non-empty) batch: flush FLUSH_MS after its FIRST line, bounding
+    // console latency regardless of how steadily lines arrive.
+    let mut deadline: Option<tokio::time::Instant> = None;
+    loop {
+        let read = match deadline {
+            None => lines.next_line().await,
+            Some(dl) => match tokio::time::timeout_at(dl, lines.next_line()).await {
+                Ok(r) => r,
+                Err(_) => {
+                    flush_batch(&app, log_event, &id, stream, &mut batch);
+                    deadline = None;
+                    continue;
+                }
+            },
+        };
+        match read {
+            Ok(Some(line)) => {
+                batch.push(line);
+                if deadline.is_none() {
+                    deadline = Some(
+                        tokio::time::Instant::now() + std::time::Duration::from_millis(FLUSH_MS),
+                    );
+                }
+                if batch.len() >= MAX_BATCH {
+                    flush_batch(&app, log_event, &id, stream, &mut batch);
+                    deadline = None;
+                }
+            }
+            // EOF (None) or a read error: flush the tail and stop.
+            _ => {
+                flush_batch(&app, log_event, &id, stream, &mut batch);
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::coalesce_batch;
+
+    #[test]
+    fn coalesce_preserves_order_and_round_trips() {
+        // Empty batch → empty payload (flush_batch skips it, but the join must not panic).
+        assert_eq!(coalesce_batch(&[]), "");
+        // A single line passes through unchanged.
+        assert_eq!(coalesce_batch(&["only".to_string()]), "only");
+        // Multiple lines join with '\n' in FIFO order; splitting recovers them exactly — the frontend
+        // relies on this to re-explode one coalesced run-log event back into ordered rows.
+        let lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let payload = coalesce_batch(&lines);
+        assert_eq!(payload, "a\nb\nc");
+        assert_eq!(payload.split('\n').collect::<Vec<_>>(), vec!["a", "b", "c"]);
+    }
 }
 
 /// Run a NATIVE job under the single-slot RunState guard, mirroring `spawn_streamed`'s contract so a

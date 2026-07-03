@@ -100,6 +100,10 @@
   --sw-danger: #f87171;
   --sw-warn: #f59e0b;
   --sw-success: #34d399;
+  /* Agent-status dots (Sessions): warn = working/connecting, done = a session finished but
+     not yet reviewed. `warn` follows the shared --sw-warn; `done` is a teal darkened in light. */
+  --sw-status-warn: var(--sw-warn);
+  --sw-status-done: #2dd4bf;
 
   --sw-space-1: 0.25rem;
   --sw-space-2: 0.5rem;
@@ -148,6 +152,9 @@
   --sw-sidebar-bg: rgba(248, 250, 252, 0.98);
   --sw-sidebar-item-hover: rgba(226, 232, 240, 0.8);
   --sw-sidebar-item-active: rgba(59, 130, 246, 0.12);
+  /* Darker teal so the "done" dot clears contrast on the near-white surface (#2dd4bf is too pale).
+     --sw-status-warn stays inheriting --sw-warn (not overridden in light — the chain resolves). */
+  --sw-status-done: #0d9488;
 }
 
 @layer base {

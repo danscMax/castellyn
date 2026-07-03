@@ -4,6 +4,8 @@
   import FolderField from './FolderField.svelte';
   import Toggle from './Toggle.svelte';
   import DropdownMenu from './DropdownMenu.svelte';
+  import EmptyState from './EmptyState.svelte';
+  import { SquareTerminal } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import {
     sessionWrite,
@@ -137,7 +139,7 @@
           const alive = new Set(await sessionList());
           for (const s of savedLive) {
             if (alive.has(s.id)) {
-              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true });
+              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name });
             }
           }
           // Dead entries = a full app restart (the PTYs died with it). Offer to rebuild
@@ -242,11 +244,15 @@
   // claude conversation ids (from the lifecycle hook) — persisted with the live-pane
   // list so a restore after an app restart can respawn with `--resume <id>`.
   let claudeSids = $state<Record<string, string>>({});
+  // Session spawn times (unix ms) from the backend StatusEvent — static; "active for N" is
+  // derived from `Date.now() - spawnedAt[id]` on render.
+  let spawnedAt = $state<Record<string, number>>({});
   onMount(() => {
     let un: UnlistenFn | undefined;
     listen<AgentStatusEvent>('agent-status', (e) => {
       const { id, state } = e.payload;
       if (e.payload.claudeSessionId) claudeSids = { ...claudeSids, [id]: e.payload.claudeSessionId };
+      if (e.payload.spawnedAt && !spawnedAt[id]) spawnedAt = { ...spawnedAt, [id]: e.payload.spawnedAt };
       const prev = agentStates[id];
       const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
       const focused = paneKey != null && activeKey === paneKey && visible;
@@ -336,7 +342,7 @@
   }
   // ── Reload survival (#5): persist spawned-here sessions, re-attach the ones still alive on mount ──
   const LIVE_KEY = 'cmh-sessions-live';
-  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string };
+  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string };
   // Captured synchronously at init — BEFORE the persist effect first runs and overwrites it with the
   // (empty) fresh panes — so a webview reload still sees the pre-reload session list.
   const savedLive: LivePane[] = (() => {
@@ -350,7 +356,7 @@
     try {
       const live: LivePane[] = panes
         .filter((p) => !p.attachId && sessionIds[p.key])
-        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]] }));
+        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]], name: p.name }));
       localStorage.setItem(LIVE_KEY, JSON.stringify(live));
     } catch {
       /* ignore */
@@ -532,12 +538,12 @@
       /* ignore */
     }
   }
-  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean }) {
+  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string }) {
     // Don't block re-attaching an EXISTING session (e.g. a pane returned from a monitor) on the cap —
     // it's not a new spawn. Only new spawns count against MAX_PANES.
     if (atLimit && !v.attachId) return;
     const key = `${v.tool}:${v.profile || 'sh'}#${seq++}`;
-    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession }];
+    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
     rememberRecent(v.cwd);
     // Auto-focus the new pane's terminal so the user can type immediately (the obvious next action
@@ -691,6 +697,17 @@
     if (p.tool === 'claude') return p.profile || 'claude';
     const folder = p.cwd ? p.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '' : '';
     return folder ? `${p.tool} · ${folder}` : p.tool;
+  }
+  // Humanize a duration to minute granularity: "Nm" under an hour, else "Nh Mm".
+  function humanizeMs(ms: number): string {
+    const m = Math.floor(ms / 60000);
+    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  }
+  // Pane hover title with the session's elapsed time appended (when the backend reported a spawn).
+  function paneTitleElapsed(p: Pane): string {
+    const id = sessionIds[p.key];
+    const spawn = id ? spawnedAt[id] : undefined;
+    return spawn ? `${paneLabel(p)} · ${t('sessions.activeFor', { d: humanizeMs(Date.now() - spawn) })}` : paneLabel(p);
   }
 
   // ─── Settings (⚙): projects root + default args + SSH servers — all in one place, no dialogs ───
@@ -1046,12 +1063,18 @@
     wsName = '';
   }
   function launchWorkspace(name: string) {
-    for (const c of workspaces[name] ?? []) addPane(c);
+    const list = workspaces[name] ?? [];
+    const before = panes.length;
+    for (const c of list) addPane(c);
+    const restored = panes.length - before;
+    if (restored < list.length) pushToast({ kind: 'info', title: t('sessions.restoredPartial', { n: restored, m: list.length }) });
   }
 
   // ── Restore after an app restart: rebuild the last session set (Wave 3) ──
   let restorable = $state<LivePane[]>([]);
   function restoreLast() {
+    const before = panes.length;
+    const total = restorable.length;
     for (const s of restorable) {
       let args = s.args;
       // Resume the conversation only for a LOCAL claude with a captured id and no
@@ -1063,8 +1086,11 @@
       ) {
         args = `${args} --resume ${s.claudeSid}`.trim();
       }
-      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget });
+      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name });
     }
+    // addPane's cap guard silently drops panes past the limit — tell the user how many landed.
+    const restored = panes.length - before;
+    if (restored < total) pushToast({ kind: 'info', title: t('sessions.restoredPartial', { n: restored, m: total }) });
     restorable = [];
   }
   function deleteWorkspace(name: string) {
@@ -1210,7 +1236,7 @@
         <span class="ssh-hint" title={t('sessions.sshToolHint', { tool: lEnv })}>{t('sessions.sshToolHint', { tool: lEnv })}</span>
       {/if}
       <button type="button" class="sw-btn sw-btn-ghost star" onclick={pinCurrent} title={t('sessions.pin')} aria-label={t('sessions.pin')}>★</button>
-      <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={launchPhrase} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
+      <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
     </div>
 
     <!-- Favorites (pinned phrases) + save-workspace -->
@@ -1298,7 +1324,7 @@
             <input class="sw-input grow font-mono text-sw-xs" bind:value={srvTarget} placeholder={t('sessions.dlgSshTargetPlaceholder')} spellcheck="false" autocomplete="off" />
             <input class="sw-input font-mono text-sw-xs" style="width:170px" bind:value={srvDir} placeholder={t('sessions.dlgSshRemoteDir')} spellcheck="false" autocomplete="off" />
             <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!srvTarget.trim() || srvTesting} onclick={testServer}>{t('sessions.dlgSshTest')}</button>
-            {#if srvTest === 'ok'}<span class="text-sw-xs" style="color:#3fb950">✓ {t('sessions.dlgSshTestOk')}</span>{/if}
+            {#if srvTest === 'ok'}<span class="text-sw-xs" style="color:var(--sw-status-up)">✓ {t('sessions.dlgSshTestOk')}</span>{/if}
             {#if srvTest === 'fail'}<span class="text-sw-xs" style="color:var(--sw-danger)">✕ {t('sessions.dlgSshTestFail')}</span>{/if}
             <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!srvTarget.trim()} onclick={addServer}>{t('sessions.serverAdd')}</button>
           </div>
@@ -1345,7 +1371,7 @@
     <div class="maxbar">
       {#each activePanes as p (p.key)}
         <button class="maxchip" class:active={maximized === p.key}
-          onclick={() => { maximized = p.key; unread = { ...unread, [p.key]: false }; }} title={paneLabel(p)}>
+          onclick={() => { maximized = p.key; unread = { ...unread, [p.key]: false }; }} title={paneTitleElapsed(p)}>
           <span class="maxchip-dot" class:unread={unread[p.key] && maximized !== p.key}></span>{paneLabel(p)}
         </button>
       {/each}
@@ -1459,14 +1485,8 @@
   </div>
 
   {#if !activePanes.length && !bgPanes.length}
-    <div class="empty">
-      <div class="empty-icon">▦</div>
-      <div class="font-medium text-sw-text">{t('sessions.emptyTitle')}</div>
-      <div class="text-sw-sm text-sw-text-muted">{t('sessions.emptyHint')}</div>
-      <button class="sw-btn sw-btn-primary text-sw-xs mt-sw-2" onclick={launchPhrase} title={t('sessions.phLaunch')}>
-        ▶ {t('sessions.phLaunch')}
-      </button>
-    </div>
+    <EmptyState icon={SquareTerminal} title={t('sessions.emptyTitle')} description={t('sessions.emptyHint')}
+      action={launchPhrase} actionLabel={t('sessions.phLaunch')} />
   {/if}
 </div>
 
@@ -1480,7 +1500,7 @@
   }
   /* Broadcast armed: warn-coloured so "every keystroke goes to all panes" isn't an invisible state. */
   .broadcast-armed {
-    color: var(--sw-status-warn, #e0b341);
+    color: var(--sw-status-warn);
     font-weight: 600;
   }
   /* Restore-last-session offer bar. */
@@ -1507,10 +1527,10 @@
     font-weight: 600;
   }
   .ss-working {
-    color: var(--sw-status-warn, #e0b341);
+    color: var(--sw-status-warn);
   }
   .ss-done {
-    color: #2dd4bf;
+    color: var(--sw-status-done);
   }
   .launcher {
     display: flex;
@@ -1885,18 +1905,6 @@
     grid-auto-rows: minmax(80px, 1fr);
     overflow: hidden;
     padding-bottom: var(--sw-space-2);
-  }
-  .empty {
-    flex: 1;
-    display: grid;
-    place-content: center;
-    text-align: center;
-    gap: 4px;
-    color: var(--sw-text-muted);
-  }
-  .empty-icon {
-    font-size: 2rem;
-    opacity: 0.5;
   }
   .active {
     background: var(--sw-accent-glow);

@@ -58,10 +58,15 @@
     if (revealSignal > 0) collapsed = false;
   });
 
-  // Autoscroll to bottom on new lines (when visible).
+  // Autoscroll to bottom on new lines (when visible). Defer the layout write to the next frame so
+  // rapid batched appends coalesce into one scroll per frame instead of thrashing layout (item 7).
   $effect(() => {
     log.length;
-    if (logEl && !collapsed) logEl.scrollTop = logEl.scrollHeight;
+    if (logEl && !collapsed)
+      requestAnimationFrame(() => {
+        // The element can unmount (tab switch / collapse) before the frame fires — re-guard the ref.
+        if (logEl && !collapsed) logEl.scrollTop = logEl.scrollHeight;
+      });
   });
 
   function toggle() {

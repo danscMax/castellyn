@@ -73,6 +73,7 @@ export default {
   log_component: '▶ {name}: {verb}…',
   log_error: '✖ Ошибка: {e}',
   log_warn: '⚠ {e}',
+  busy_running: 'Занято: выполняется «{name}» — повторите, когда завершится',
   log_done: '■ Готово (код {code}).',
   verb_apply: 'применение',
   verb_check: 'проверка',

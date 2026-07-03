@@ -22,6 +22,8 @@ export default {
   restoreOffer: 'Сессий из прошлого запуска: {n}. Восстановить набор? Claude-панели продолжат свой разговор (--resume).',
   restoreDo: 'Восстановить',
   restoreDismiss: 'Скрыть',
+  restoredPartial: 'Восстановлено {n} из {m} — достигнут лимит сессий',
+  activeFor: 'активна {d}',
   layout: 'Колонок:',
   layoutCols: '{n} в ряд',
   resizeRow: 'Потяни, чтобы изменить высоту строк',

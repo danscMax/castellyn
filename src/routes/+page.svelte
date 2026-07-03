@@ -156,6 +156,12 @@
   let log = $state<string[]>([]);
   /** Cap the console buffer so a chatty/stuck script can't grow it without bound. */
   const MAX_LOG = 5000;
+  /** Append one line to the console buffer, trimming the oldest past MAX_LOG. Svelte 5 $state array:
+   *  push/splice mutate reactively and avoid rebuilding the whole array per line (item 7 perf). */
+  function appendLog(line: string) {
+    log.push(line);
+    if (log.length > MAX_LOG) log.splice(0, log.length - MAX_LOG);
+  }
   // R2: restore the saved tab HERE, in the state initializer — the persist $effect below is created
   // before onMount runs, so restoring in onMount let the effect overwrite the key with the default
   // first (the app always opened on one tab). U12: default landing tab is the Home overview.
@@ -254,7 +260,7 @@
   // Surface an invoke/IPC failure both in the log and as a glanceable error toast (#150).
   function toastErr(e: unknown, title?: string) {
     const msg = String((e as { message?: string })?.message ?? e);
-    log = [...log, t('page.log_error', { e: msg })].slice(-MAX_LOG);
+    appendLog(t('page.log_error', { e: msg }));
     pushToast({ kind: 'error', title: title ?? t('page.toast_generic_error'), detail: msg });
   }
 
@@ -263,7 +269,7 @@
   // line in one place. String(e) so the typed t() slot receives a string, not a raw Error.
   function onSpawnErr(e: unknown) {
     running = null;
-    log = [...log, t('page.log_error', { e: String(e) })].slice(-MAX_LOG);
+    appendLog(t('page.log_error', { e: String(e) }));
     // R5: a failed spawn must be visible — the log dock is collapsed by default, so a silent
     // append reads as "the click did nothing". Toast + reveal the console.
     toastErr(String(e));
@@ -342,7 +348,8 @@
     lastRunMode = mode;
     const verb = mode === 'apply' ? t('page.verb_apply') : t('page.verb_check');
     const line = t('page.log_component', { name: comp?.name ?? id, verb });
-    log = (append ? [...log, line] : [line]).slice(-MAX_LOG);
+    if (append) appendLog(line);
+    else log = [line];
     runComponent(id, mode).catch(onSpawnErr);
   }
 
@@ -452,7 +459,7 @@
     if (forkRuns[path]?.running) return;
     forkRuns = { ...forkRuns, [path]: { line: t('page.forks_starting'), running: true, code: null } };
     runForkRepo(action, path).catch((e) => {
-      log = [...log, t('page.log_error', { e })].slice(-MAX_LOG);
+      appendLog(t('page.log_error', { e }));
       forkRuns = { ...forkRuns, [path]: { line: String(e), running: false, code: -1 } };
     });
   }
@@ -1148,14 +1155,14 @@
   }
   function onSetFreellmapiAuth(email: string, password: string, token: string) {
     setFreellmapiAuth(email || undefined, password || undefined, token || undefined)
-      .then(() => (log = [...log, t('myProviders.loginSaved')]))
+      .then(() => appendLog(t('myProviders.loginSaved')))
       .catch(toastErr);
   }
   // C2: clear one stored freellmapi credential. UI fires after a confirm dialog in ProvidersTab.
   function onDeleteFreellmapiAuth(key: 'email' | 'password' | 'token') {
     deleteFreellmapiAuth(key)
       .then(() => {
-        log = [...log, t('myProviders.authDeleted', { key })];
+        appendLog(t('myProviders.authDeleted', { key }));
         reloadProviders();
       })
       .catch(toastErr);
@@ -1409,7 +1416,7 @@
     try {
       await runPluginsBulk(action, ids);
     } catch (e) {
-      log = [...log, t('page.log_error', { e: String(e) })];
+      appendLog(t('page.log_error', { e: String(e) }));
     } finally {
       bulkActive = false;
       reloadExtensions();
@@ -1473,7 +1480,7 @@
     try {
       await cancelRun();
     } catch (e) {
-      log = [...log, t('page.log_warn', { e: String(e) })];
+      appendLog(t('page.log_warn', { e: String(e) }));
     }
   }
 
@@ -1483,7 +1490,7 @@
     try {
       await cancelAll();
     } catch (e) {
-      log = [...log, t('page.log_warn', { e: String(e) })];
+      appendLog(t('page.log_warn', { e: String(e) }));
     }
   }
 
@@ -1549,6 +1556,16 @@
       highlightTarget = null;
     });
   });
+  // Item 14: palette run verbs self-guard on the run lock and silently no-op while busy — a dead
+  // Enter with no feedback. Wrap them so a busy run instead surfaces an info toast naming what's
+  // running. The underlying start* guards stay (defense in depth); UI toggles/stops aren't wrapped.
+  function runOrToast(fn: () => void) {
+    if (running) {
+      pushToast({ kind: 'info', title: t('page.busy_running', { name: opName(running) }) });
+      return;
+    }
+    fn();
+  }
   const paletteCommands = $derived([
     // Mirror the Ctrl+1..9 jumps (first 9 tabs) as visible hints so the shortcuts are discoverable.
     // U1: both follow the SIDEBAR's live order (navOrder), so the numbers match what's on screen.
@@ -1570,11 +1587,11 @@
     },
     // High-frequency verbs so the daily loop is Ctrl+K → type → Enter (each handler self-guards on
     // the run lock, so a no-op while busy is harmless).
-    { id: 'act:checkall', label: t('page.cmd_check_all'), run: () => startRun('all', 'check') },
-    { id: 'act:forks', label: t('page.cmd_refresh_forks'), run: () => startForks('check') },
-    { id: 'act:backup', label: t('page.cmd_backup_now'), run: () => startBackup('backup') },
-    { id: 'act:stack_start', label: t('page.cmd_stack_start'), run: () => onStack('start') },
-    { id: 'act:stack_stop', label: t('page.cmd_stack_stop'), run: () => onStack('stop') },
+    { id: 'act:checkall', label: t('page.cmd_check_all'), run: () => runOrToast(() => startRun('all', 'check')) },
+    { id: 'act:forks', label: t('page.cmd_refresh_forks'), run: () => runOrToast(() => startForks('check')) },
+    { id: 'act:backup', label: t('page.cmd_backup_now'), run: () => runOrToast(() => startBackup('backup')) },
+    { id: 'act:stack_start', label: t('page.cmd_stack_start'), run: () => runOrToast(() => onStack('start')) },
+    { id: 'act:stack_stop', label: t('page.cmd_stack_stop'), run: () => runOrToast(() => onStack('stop')) },
     { id: 'act:log', label: t('page.cmd_open_log'), run: () => consoleReveal++ },
     // U9: the palette could start runs but not stop them; new-session was likewise unreachable.
     { id: 'act:cancel_all', label: t('page.cmd_cancel_all'), run: () => cancelAllNow() },
@@ -1584,10 +1601,10 @@
     // Per-component check/apply so "check rtk" / "apply plugins" are one Ctrl+K away, not a tab hunt.
     ...components.flatMap((c) => {
       const verbs = [
-        { id: `check:${c.id}`, label: `${t('common.check')}: ${c.name}`, run: () => startRun(c.id, 'check') }
+        { id: `check:${c.id}`, label: `${t('common.check')}: ${c.name}`, run: () => runOrToast(() => startRun(c.id, 'check')) }
       ];
       if (c.supportsApply) {
-        verbs.push({ id: `apply:${c.id}`, label: `${t('common.apply')}: ${c.name}`, run: () => startRun(c.id, 'apply') });
+        verbs.push({ id: `apply:${c.id}`, label: `${t('common.apply')}: ${c.name}`, run: () => runOrToast(() => startRun(c.id, 'apply')) });
       }
       return verbs;
     }),
@@ -1701,12 +1718,15 @@
     unlisten.push(
       await listen<{ component: string; stream: string; line: string }>('run-log', (e) => {
         const p = e.payload;
-        log = [...log, (p.stream === 'err' ? '⚠ ' : '') + p.line].slice(-MAX_LOG);
+        // Backend coalesces rapid lines into one event joined by '\n' (item 7): split back so each
+        // gets its own row and the per-line '⚠ ' err prefix, preserving FIFO order.
+        const prefix = p.stream === 'err' ? '⚠ ' : '';
+        for (const ln of p.line.split('\n')) appendLog(prefix + ln);
       })
     );
     unlisten.push(
       await listen<{ component: string; code: number }>('run-done', async (e) => {
-        log = [...log, t('page.log_done', { code: e.payload.code })].slice(-MAX_LOG);
+        appendLog(t('page.log_done', { code: e.payload.code }));
         // During a bulk plugin op, runBulkPlugins awaits the single backend call and does the reload
         // itself afterward — skip this handler's per-item lifecycle for the bulk's run-done.
         if (e.payload.component === 'plugin-mgr' && bulkActive) return;
@@ -1751,7 +1771,7 @@
         }
         // Auto-recheck after a mutating fork action so the cards reflect the new state.
         if (id === 'forks' && code === 0 && forkAct && forkAct !== 'check' && forkAct !== 'plan') {
-          log = [...log, t('page.forks_recheck')];
+          appendLog(t('page.forks_recheck'));
           startForks('check');
           return;
         }
@@ -1836,7 +1856,7 @@
         running = null;
         forkRuns = {};
         bulkActive = false;
-        log = [...log, t('page.cancel_all_done')].slice(-MAX_LOG);
+        appendLog(t('page.cancel_all_done'));
         pushToast({ kind: 'info', title: t('page.cancel_all_done') });
       })
     );
@@ -1845,7 +1865,9 @@
       await listen<{ component: string; stream: string; line: string }>('fork-log', (e) => {
         const p = e.payload;
         const name = p.component.split(/[\\/]/).pop() || p.component;
-        log = [...log, `[${name}] ${p.stream === 'err' ? '⚠ ' : ''}${p.line}`].slice(-MAX_LOG);
+        // Same coalesced-event split as run-log: one row per line, repo tag + err prefix per line.
+        const prefix = `[${name}] ${p.stream === 'err' ? '⚠ ' : ''}`;
+        for (const ln of p.line.split('\n')) appendLog(prefix + ln);
         const prev = forkRuns[p.component];
         forkRuns = { ...forkRuns, [p.component]: { line: p.line, running: true, code: prev?.code ?? null } };
       })
@@ -1855,7 +1877,7 @@
         const path = e.payload.component;
         const code = e.payload.code;
         const name = path.split(/[\\/]/).pop() || path;
-        log = [...log, `[${name}] ${t('page.log_done', { code })}`].slice(-MAX_LOG);
+        appendLog(`[${name}] ${t('page.log_done', { code })}`);
         const prev = forkRuns[path];
         forkRuns = { ...forkRuns, [path]: { line: prev?.line ?? '', running: false, code } };
         // Merge ONLY this repo's fresh state (from its per-repo JSON) — no full rescan, no race.
@@ -1898,7 +1920,7 @@
         // DIAGNOSTIC: this is the ONLY code path that force-switches to Updates. If the tab jumps
         // without you clicking the tray's "Проверить всё", this line will show in the log — proving
         // a spurious tray event is the source.
-        log = [...log, `[diag] tray-check-all @ ${new Date().toLocaleTimeString()}`];
+        appendLog(`[diag] tray-check-all @ ${new Date().toLocaleTimeString()}`);
         active = 'updates';
         startRun('all', 'check');
       })

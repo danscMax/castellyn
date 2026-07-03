@@ -22,6 +22,8 @@ export default {
   restoreOffer: 'Previous run: {n} sessions. Restore the set? Claude panes resume their conversation (--resume).',
   restoreDo: 'Restore',
   restoreDismiss: 'Dismiss',
+  restoredPartial: 'Restored {n} of {m} — session limit reached',
+  activeFor: 'active {d}',
   layout: 'Columns:',
   layoutCols: '{n} per row',
   resizeRow: 'Drag to resize rows',

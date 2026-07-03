@@ -73,6 +73,7 @@ export default {
   log_component: '▶ {name}：{verb}…',
   log_error: '✖ 错误：{e}',
   log_warn: '⚠ {e}',
+  busy_running: '忙碌：“{name}”正在运行 — 完成后再试',
   log_done: '■ 完成（退出码 {code}）。',
   verb_apply: '应用中',
   verb_check: '检查中',

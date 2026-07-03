@@ -112,6 +112,9 @@ struct StatusEvent {
     id: String,
     state: String,
     claude_session_id: Option<String>,
+    /// Session spawn time (unix ms), static per session — the frontend derives "active for N"
+    /// from `now - spawnedAt` on render (no ticking backend events).
+    spawned_at: u64,
     #[serde(skip)]
     prev: Option<String>,
     #[serde(skip)]
@@ -302,6 +305,7 @@ pub fn start(app: tauri::AppHandle) {
                         id: id.clone(),
                         state: state.to_string(),
                         claude_session_id: t.claude_session_id.clone(),
+                        spawned_at: t.spawned_at,
                         prev,
                         label: t.label.clone(),
                         exited: t.exited,
@@ -370,5 +374,24 @@ mod tests {
         // Hook-working self-heals to idle on silence (Esc interrupt fires no Stop hook).
         t.hook_state = Some("working".into());
         assert_eq!(compute(&t, t.last_output + ACTIVITY_IDLE_MS + 1), "idle");
+    }
+
+    #[test]
+    fn status_event_carries_spawned_at() {
+        // The poll-loop push site copies the track's spawn time into the emitted event so the
+        // frontend can render "active for N". Guard against it landing as 0.
+        let now = now_ms();
+        let t = track("claude", now);
+        let ev = StatusEvent {
+            id: "s1".into(),
+            state: "working".into(),
+            claude_session_id: None,
+            spawned_at: t.spawned_at,
+            prev: None,
+            label: t.label.clone(),
+            exited: t.exited,
+        };
+        assert_ne!(ev.spawned_at, 0);
+        assert_eq!(ev.spawned_at, now);
     }
 }

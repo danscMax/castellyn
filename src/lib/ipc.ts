@@ -800,8 +800,9 @@ export type AgentStatusHookState = { wired: string[]; unwired: string[] };
 export const agentStatusHookStatus = () => invoke<AgentStatusHookState>('agent_status_hook_status');
 export const agentStatusHookSet = (enabled: boolean) =>
   invoke<AgentStatusHookState>('agent_status_hook_set', { enabled });
-/** Payload of the backend `agent-status` event (state: working | blocked | idle | unknown). */
-export type AgentStatusEvent = { id: string; state: string; claudeSessionId: string | null };
+/** Payload of the backend `agent-status` event (state: working | blocked | idle | unknown).
+ * `spawnedAt` is the session's spawn time (unix ms), static — the UI derives elapsed on render. */
+export type AgentStatusEvent = { id: string; state: string; claudeSessionId: string | null; spawnedAt?: number };
 
 // --- Settings ---
 export type HubConfig = {
