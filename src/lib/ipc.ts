@@ -204,6 +204,13 @@ export type ProfileMgmtArgs = {
   description?: string;
   enabled?: string[];
 };
+// Orphan dirs: ~/.claude-<name> on disk that aren't canon profiles (abandoned/foreign CC configs).
+export type OrphanInfo = { name: string; modified: number };
+export const readOrphanProfiles = () => invoke<OrphanInfo[]>('read_orphan_profiles');
+// Move an orphan dir to the Recycle Bin (reversible; guarded against canon profiles server-side).
+export const deleteOrphanProfile = (name: string) =>
+  invoke<void>('delete_orphan_profile', { name });
+
 export const readProfilesConfig = () => invoke<ProfilesConfig | null>('read_profiles_config');
 export const runProfileMgmt = (a: ProfileMgmtArgs) =>
   invoke<number>('run_profile_mgmt', {

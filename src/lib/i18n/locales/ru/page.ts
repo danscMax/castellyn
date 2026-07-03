@@ -149,6 +149,10 @@ export default {
   confirm_prof_remove_msg:
     'Каталог ~/.claude-{name} будет удалён вместе с сохранённым входом и настройками этого профиля. Общий контент (skills/projects и т.д.) не пострадает. Действие необратимо.',
   confirm_prof_remove_btn: 'Удалить',
+  confirm_orphan_del_title: 'Удалить посторонний каталог?',
+  confirm_orphan_del_msg:
+    'Каталог ~/.claude-{name} будет перемещён в Корзину (обратимо). Это не канонический профиль — он не связан с общим контентом. Если это чужой инструмент — отмените.',
+  confirm_orphan_del_btn: 'В Корзину',
   confirm_reinstall_title: 'Переустановить профили?',
   confirm_reinstall_msg:
     'Install-ClaudeProfiles.ps1 -Force пересоздаст junction’ы/симлинки всех профилей и потребует прав администратора (UAC). Продолжить?',

@@ -8282,6 +8282,135 @@ fn claude_settings_all(home: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Foreign `.claude-*` siblings that belong to OTHER tools, not abandoned Claude Code profiles.
+/// Denylisted from orphan detection so we never offer to adopt/delete another tool's state dir.
+/// (The `.claude.json` marker gate below already excludes most, but this is belt-and-suspenders.)
+const ORPHAN_DENYLIST: &[&str] = &["mem", "code-router", "code-templates", "router-logs"];
+
+/// Pure predicate: is `dirname` an abandoned Claude Code profile dir (adoptable/deletable)?
+/// True when it is a `.claude-<suffix>` dir (not the base `.claude`), the suffix is NOT a canon
+/// profile, NOT a known foreign tool, and the dir carries a Claude Code marker (`.claude.json`).
+/// The marker is what separates a real orphaned CC config dir from a foreign sibling like
+/// `.claude-mem` (which has no `.claude.json`). Unit-tested.
+fn is_orphan_profile_dir(dirname: &str, has_claude_json: bool, canon: &[String]) -> bool {
+    let Some(suffix) = dirname.strip_prefix(".claude-") else {
+        return false;
+    };
+    if suffix.is_empty() || !has_claude_json {
+        return false;
+    }
+    if ORPHAN_DENYLIST.contains(&suffix) {
+        return false;
+    }
+    !canon.iter().any(|n| n == suffix)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrphanInfo {
+    /// Profile name = dir suffix after `.claude-` (e.g. "oldtest" for `~/.claude-oldtest`).
+    name: String,
+    /// Last-modified unix seconds of the dir (0 if unavailable) — lets the user judge staleness.
+    modified: u64,
+}
+
+/// List `~/.claude-<name>` dirs that are NOT canon profiles yet carry a Claude Code marker
+/// (`.claude.json`) — abandoned/foreign profile dirs the user can Adopt or Delete. Foreign tool
+/// dirs (`.claude-mem` etc.) are excluded via the marker + denylist. Read-only.
+/// ponytail: no recursive size — walking a profile dir would follow the shared-folder junctions
+/// (projects/, plugins/ …) into real, possibly huge/cyclic trees. Modified date + "open folder"
+/// is enough to judge; add a bounded, symlink-skipping size only if the date proves insufficient.
+#[tauri::command]
+fn read_orphan_profiles() -> Result<Vec<OrphanInfo>, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let canon = profile_names();
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&home) else {
+        return Ok(out);
+    };
+    for e in entries.flatten() {
+        if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        let dir = e.path();
+        let has_claude_json = dir.join(".claude.json").is_file();
+        if !is_orphan_profile_dir(&name, has_claude_json, &canon) {
+            continue;
+        }
+        let suffix = name.strip_prefix(".claude-").unwrap_or(&name).to_string();
+        let modified = std::fs::metadata(&dir)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        out.push(OrphanInfo {
+            name: suffix,
+            modified,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Move an orphan profile dir (`~/.claude-<name>`) to the Recycle Bin (reversible).
+/// Hard guards: the name must NOT be a canon profile (canon profiles are removed via
+/// `run_profile_mgmt('remove')`, never here), must carry no path separators, must currently
+/// qualify as an orphan, and must not be a live session. No charset gate: an orphan dirname may
+/// legitimately be off-charset (e.g. a trailing space) — we only need to locate and recycle the
+/// exact dir, and the guards below already close the traversal/wrong-target risks.
+#[tauri::command]
+fn delete_orphan_profile(name: String) -> Result<(), String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    // Defense-in-depth: a real read_dir name is a single component, but a hand-crafted IPC call
+    // could smuggle separators/`..` — reject those so the join can't escape the home dir.
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+        return Err(trv("err.orphan_bad_name", cur_lang(), &[("n", &name)]));
+    }
+    let canon = profile_names();
+    // Never let this path touch a canon profile — that is what run_profile_mgmt('remove') is for.
+    if canon.iter().any(|n| n == &name) {
+        return Err(trv("err.orphan_is_canon", cur_lang(), &[("n", &name)]));
+    }
+    let dirname = format!(".claude-{name}");
+    let dir = std::path::Path::new(&home).join(&dirname);
+    let has_claude_json = dir.join(".claude.json").is_file();
+    if !is_orphan_profile_dir(&dirname, has_claude_json, &canon) {
+        return Err(trv("err.orphan_not_found", cur_lang(), &[("n", &name)]));
+    }
+    if profile_session_active(&name) {
+        return Err(trv("err.orphan_session_active", cur_lang(), &[("n", &name)]));
+    }
+    recycle_dir(&dir.to_string_lossy())
+}
+
+/// Move a directory to the Windows Recycle Bin via the .NET VisualBasic helper (no extra crate).
+/// The path is passed through an env var (not string-interpolated) so trailing spaces / special
+/// chars survive verbatim and there is no quoting to escape.
+fn recycle_dir(path: &str) -> Result<(), String> {
+    let script = "Add-Type -AssemblyName Microsoft.VisualBasic; \
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($env:CASTELLYN_DEL_PATH, \
+        'OnlyErrorDialogs', 'SendToRecycleBin')";
+    let out = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("CASTELLYN_DEL_PATH", path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr);
+        let msg = msg.trim();
+        Err(if msg.is_empty() {
+            "recycle failed".to_string()
+        } else {
+            msg.to_string()
+        })
+    }
+}
+
 /// True when some `hooks.<event>[].hooks[].command` contains `marker`.
 fn hook_cmd_wired(settings: &serde_json::Value, event: &str, marker: &str) -> bool {
     settings
@@ -8663,6 +8792,24 @@ mod plugin_sync_tests {
         assert!(!super::is_claude_profile_dirname("claude"));
         assert!(!super::is_claude_profile_dirname(".config"));
         assert!(!super::is_claude_profile_dirname(".claudex")); // no separator → not a profile dir
+    }
+
+    #[test]
+    fn orphan_profile_predicate() {
+        let canon: Vec<String> = ["cc1", "ccmy"].iter().map(|s| s.to_string()).collect();
+        // Real orphan: .claude-<name>, not canon, has the .claude.json marker → adoptable.
+        assert!(super::is_orphan_profile_dir(".claude-oldtest", true, &canon));
+        // Off-charset dirname (trailing space) is still a valid orphan to surface/delete.
+        assert!(super::is_orphan_profile_dir(".claude-cc1 ", true, &canon));
+        // Canon profile → never an orphan (delete via run_profile_mgmt('remove')).
+        assert!(!super::is_orphan_profile_dir(".claude-cc1", true, &canon));
+        // No .claude.json marker → not an (adoptable) CC profile dir.
+        assert!(!super::is_orphan_profile_dir(".claude-oldtest", false, &canon));
+        // Foreign tool dir on the denylist → excluded even with a marker present.
+        assert!(!super::is_orphan_profile_dir(".claude-mem", true, &canon));
+        // Base dir and non-profile names are never orphans.
+        assert!(!super::is_orphan_profile_dir(".claude", true, &canon));
+        assert!(!super::is_orphan_profile_dir(".config", true, &canon));
     }
 
     #[test]
@@ -10737,6 +10884,8 @@ pub fn run() {
             repair_all_profiles,
             read_profiles_config,
             run_profile_mgmt,
+            read_orphan_profiles,
+            delete_orphan_profile,
             repair_profile_elevated,
             relaunch_as_admin,
             open_profile_dir,

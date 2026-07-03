@@ -149,6 +149,10 @@ export default {
   confirm_prof_remove_msg:
     'The ~/.claude-{name} directory will be deleted along with this profile’s saved login and settings. Shared content (skills/projects, etc.) is unaffected. This is irreversible.',
   confirm_prof_remove_btn: 'Delete',
+  confirm_orphan_del_title: 'Delete foreign directory?',
+  confirm_orphan_del_msg:
+    'The ~/.claude-{name} directory will be moved to the Recycle Bin (reversible). It is not a canon profile — nothing links to shared content. If it belongs to another tool, cancel.',
+  confirm_orphan_del_btn: 'To Recycle Bin',
   confirm_reinstall_title: 'Reinstall profiles?',
   confirm_reinstall_msg:
     'Install-ClaudeProfiles.ps1 -Force will recreate the junctions/symlinks of all profiles and requires administrator rights (UAC). Continue?',

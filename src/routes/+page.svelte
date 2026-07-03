@@ -16,6 +16,8 @@
     repairAllProfiles,
     readProfilesConfig,
     runProfileMgmt,
+    readOrphanProfiles,
+    deleteOrphanProfile,
     repairProfileElevated,
     relaunchAsAdmin,
     openProfileDir,
@@ -89,6 +91,7 @@
     type ProfilesStatus,
     type ProfilesConfig,
     type ProfileMgmtArgs,
+    type OrphanInfo,
     type LaunchConfigStatus,
     type McpStatus,
     type SyncStatus,
@@ -183,6 +186,7 @@
   let theme = $state<Theme>('dark');
   let backupData = $state<BackupList | null>(null);
   let profilesData = $state<ProfilesStatus | null>(null);
+  let orphansData = $state<OrphanInfo[]>([]);
   let profilesConfig = $state<ProfilesConfig | null>(null);
   let launchConfig = $state<LaunchConfigStatus | null>(null);
   let mcpData = $state<McpStatus | null>(null);
@@ -553,6 +557,11 @@
     } catch {
       launchConfig = null;
     }
+    try {
+      orphansData = await readOrphanProfiles();
+    } catch {
+      orphansData = [];
+    }
   }
 
   async function onSaveLaunch(
@@ -598,6 +607,27 @@
     } else {
       run();
     }
+  }
+
+  // Delete an orphan dir (~/.claude-<name> not in canon) to the Recycle Bin. Direct native invoke
+  // (not a streamed run), so toast + reload here. Adopt reuses onProfileMgmt({action:'add'}).
+  function onDeleteOrphan(name: string) {
+    if (running) return;
+    askConfirm(
+      t('page.confirm_orphan_del_title', { name }),
+      t('page.confirm_orphan_del_msg', { name }),
+      t('page.confirm_orphan_del_btn'),
+      async () => {
+        try {
+          await deleteOrphanProfile(name);
+          pushToast({ kind: 'success', title: t('profiles.orphanDeleted', { name }) });
+        } catch (e) {
+          pushToast({ kind: 'error', title: t('profiles.orphanDeleteError', { name }), detail: String(e) });
+        }
+        await reloadProfiles();
+      },
+      { danger: true }
+    );
   }
 
   function startProfiles(action: ProfileAction, name?: string) {
@@ -2067,6 +2097,8 @@
           {running}
           onAction={onProfileAction}
           onMgmt={onProfileMgmt}
+          orphans={orphansData}
+          {onDeleteOrphan}
           onOpen={onProfileOpen}
           onLaunch={onProfileLaunch}
           {onSaveLaunch}

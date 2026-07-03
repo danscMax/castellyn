@@ -148,6 +148,10 @@ export default {
   confirm_prof_remove_msg:
     '目录 ~/.claude-{name} 将连同该配置已保存的登录信息和设置一并删除。共享内容（skills/projects 等）不受影响。此操作不可逆。',
   confirm_prof_remove_btn: '删除',
+  confirm_orphan_del_title: '删除外来目录？',
+  confirm_orphan_del_msg:
+    '目录 ~/.claude-{name} 将被移入回收站（可恢复）。它不是规范配置——不与共享内容关联。若它属于其他工具，请取消。',
+  confirm_orphan_del_btn: '移入回收站',
   confirm_reinstall_title: '重新安装配置？',
   confirm_reinstall_msg:
     'Install-ClaudeProfiles.ps1 -Force 将重建所有配置的 junction/符号链接，并需要管理员权限（UAC）。是否继续？',

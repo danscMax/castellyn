@@ -9,7 +9,8 @@
     ProfileProvider,
     EngineStatus,
     ProviderArgs,
-    MyProvider
+    MyProvider,
+    OrphanInfo
   } from '$lib/ipc';
   import { pProfile, t } from '$lib/i18n';
   import { readProfileFile } from '$lib/ipc';
@@ -37,6 +38,8 @@
     running,
     onAction,
     onMgmt,
+    orphans = [],
+    onDeleteOrphan,
     onOpen,
     onLaunch,
     onSaveLaunch,
@@ -55,6 +58,8 @@
     running: string | null;
     onAction: (action: ProfileAction, name?: string) => void;
     onMgmt: (args: ProfileMgmtArgs) => void;
+    orphans?: OrphanInfo[];
+    onDeleteOrphan: (name: string) => void;
     onOpen: (name: string) => void;
     onLaunch: (name: string, mode: 'terminal' | 'vscode') => void;
     onSaveLaunch: (name: string, mode: 'full' | 'lean', mcp: string[], claudeMd: boolean) => Promise<void>;
@@ -448,6 +453,34 @@
         <span class="text-sw-sm text-sw-text-secondary">{t('profiles.allGoodHint')}</span>
       </div>
     {/if}
+  {/if}
+
+  <!-- Orphan dirs: ~/.claude-<name> on disk that aren't canon profiles (abandoned/foreign CC configs) -->
+  {#if orphans.length > 0}
+    <div class="sw-card mb-sw-4 border border-amber-500/40">
+      <div class="mb-sw-1 font-medium status-warn">{t('profiles.orphansTitle', { n: orphans.length })}</div>
+      <p class="mb-sw-3 text-sw-sm text-sw-text-secondary">{t('profiles.orphansHint')}</p>
+      <ul class="space-y-2 text-sw-sm">
+        {#each orphans as o (o.name)}
+          <li class="flex flex-wrap items-center justify-between gap-sw-2">
+            <span class="min-w-0 break-all">
+              <code class="text-sw-text">.claude-{o.name}</code>
+              {#if o.modified > 0}
+                <span class="text-sw-xs text-sw-text-muted"> · {t('profiles.orphanModified', { time: relTime(new Date(o.modified * 1000).toISOString()) })}</span>
+              {/if}
+            </span>
+            <div class="flex flex-wrap gap-sw-2">
+              <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => onOpen(o.name)}
+                title={t('profiles.folderTip', { name: o.name })}>{t('profiles.folder')}</button>
+              <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => onMgmt({ action: 'add', name: o.name })}
+                title={t('profiles.orphanAdoptTip', { name: o.name })}>{t('profiles.orphanAdopt')}</button>
+              <button class="sw-btn sw-btn-danger text-sw-xs shrink-0" disabled={busy} onclick={() => onDeleteOrphan(o.name)}
+                title={t('profiles.orphanDeleteTip', { name: o.name })}>{t('profiles.orphanDelete')}</button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
 
   {#if data === null}
