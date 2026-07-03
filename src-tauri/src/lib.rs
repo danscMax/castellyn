@@ -93,6 +93,9 @@ const MANIFEST_FALLBACK: &str = include_str!("../../manifest/maintenance-manifes
 /// Per-harness list of MCP server NAMES that Castellyn deployed (item Gap-2). Deploy uses it to
 /// reconcile: a name we deployed before but that's no longer in canon (.mcp.json) is removed from the
 /// harness; a user-added server is never in this list, so it's never touched.
+/// LIMITATION (accepted): the ledger is name-keyed, so if Castellyn deployed name N, N is later
+/// dropped from canon, and the user independently adds their OWN server also named N, the next deploy
+/// removes it. A name collision on a de-canonized name is the (rare) cost of a name-based ledger.
 #[derive(Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ManagedMcp {
@@ -6301,9 +6304,8 @@ fn rtk_plugin_path_ok(content: &str) -> bool {
     true
 }
 
-/// Count distinct TOML table keys under `[prefix` (e.g. "[model_providers.") — skips comments and
-/// dedups dotted sub-tables, replacing the fragile `.matches().count()` heuristic.
-/// Distinct table names under `prefix` (e.g. `[mcp_servers.` → the server names) in a TOML text.
+/// Distinct TOML table names under `prefix` (e.g. `[mcp_servers.` → the server names) — skips
+/// comments and dedups dotted sub-tables. Replaces the fragile `.matches().count()` heuristic.
 fn toml_table_names(text: &str, prefix: &str) -> Vec<String> {
     let mut set = std::collections::BTreeSet::new();
     for line in text.lines() {
@@ -6468,8 +6470,16 @@ fn read_environments() -> Vec<EnvInfo> {
 
     // Gap-2 drift per harness: canon (.mcp.json) names vs the harness's current names vs our ledger.
     let hub = read_config_file();
+    // Deployable canon only (a commandless server is never fanned out → excluding it keeps drift from
+    // false-flagging "missing canon server" right after a clean deploy).
     let canon_mcp: Vec<String> = read_mcp()
-        .map(|m| m.source.iter().map(|s| s.name.clone()).collect())
+        .map(|m| {
+            m.source
+                .iter()
+                .filter(|s| !s.command.is_empty())
+                .map(|s| s.name.clone())
+                .collect()
+        })
         .unwrap_or_default();
     let opencode_names: Vec<String> = opencode_json
         .as_ref()
@@ -6835,7 +6845,17 @@ fn run_opencode_mcp() -> Result<usize, String> {
     }
     let mcp = obj.get_mut("mcp").unwrap().as_object_mut().unwrap();
 
-    let canon_names: Vec<String> = servers.keys().cloned().collect();
+    // Canon = DEPLOYABLE servers only (commandless entries are skipped below and never inserted), so
+    // the ledger + drift match what actually lands in opencode.json.
+    let canon_names: Vec<String> = servers
+        .iter()
+        .filter(|(_, def)| {
+            def.get("command")
+                .and_then(|c| c.as_str())
+                .is_some_and(|c| !c.is_empty())
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
     let mut count = 0usize;
     for (name, def) in servers {
         let command = def
@@ -7117,24 +7137,47 @@ fn run_codex_mcp() -> Result<usize, String> {
     // `codex mcp remove <name>` (subcommand confirmed in the Codex CLI docs). Names come from our own
     // ledger, but re-validate for cmd safety anyway. A "no such server" (already gone) is fine →
     // best-effort, never fails the deploy. User-added servers were never in the ledger, so untouched.
-    let canon_names: Vec<String> = servers.keys().cloned().collect();
+    // Canon = the DEPLOYABLE servers only (codex_mcp_add_args returns None for a commandless entry, so
+    // it's never added) — the ledger + drift must match what actually gets deployed.
+    let canon_names: Vec<String> = servers
+        .iter()
+        .filter(|(name, def)| codex_mcp_add_args(name, def).is_some())
+        .map(|(name, _)| name.clone())
+        .collect();
     let mut hub = read_config_file();
     let prev = hub
         .managed_mcp
         .as_ref()
         .and_then(|m| m.codex.clone())
         .unwrap_or_default();
-    for stale in mcp_stale_names(&prev, &canon_names) {
-        if !cmd_argv_safe(std::slice::from_ref(&stale)) {
+    let stale = mcp_stale_names(&prev, &canon_names);
+    for name in &stale {
+        if !cmd_argv_safe(std::slice::from_ref(name)) {
             continue;
         }
         let mut cmd = std::process::Command::new("cmd");
-        cmd.arg("/C").arg("codex").arg("mcp").arg("remove").arg(&stale);
+        cmd.arg("/C").arg("codex").arg("mcp").arg("remove").arg(name);
         cmd.creation_flags(CREATE_NO_WINDOW);
         let _ = cmd.output();
     }
-    hub.managed_mcp.get_or_insert_default().codex = Some(canon_names);
-    let _ = write_config_file(&hub);
+    // Advance the ledger ONLY on a clean deploy (else a broken/absent codex, whose `add`s all failed,
+    // would record canon as "deployed" though nothing was). Re-read config.toml so a stale server that
+    // FAILED to remove stays in the ledger — the next deploy retries it and drift keeps flagging it
+    // (self-heal), instead of it being silently reclassified as a user server and lingering forever.
+    if errs.is_empty() {
+        let now = std::fs::read_to_string(format!("{home}\\.codex\\config.toml"))
+            .ok()
+            .map(|t| toml_table_names(&t, "[mcp_servers."))
+            .unwrap_or_default();
+        let mut ledger = canon_names;
+        for name in stale {
+            if now.contains(&name) {
+                ledger.push(name); // remove didn't take → keep managing it
+            }
+        }
+        hub.managed_mcp.get_or_insert_default().codex = Some(ledger);
+        let _ = write_config_file(&hub);
+    }
 
     if !errs.is_empty() {
         return Err(errs.join(" · "));
