@@ -2037,13 +2037,54 @@ fn write_json_atomic_retry(path: &str, content: &str) -> std::io::Result<()> {
 }
 
 // --- Syncthing local REST (best-effort; mirrors Get-SyncthingStatus) ---
-fn syncthing_api_key() -> Option<String> {
+
+/// GUI base URL (`http://host:port`) from config.xml's `<gui>` `<address>`, so a non-default port or
+/// bind address works instead of the hardcoded `127.0.0.1:8384`. `<address>` ALSO appears under
+/// `<device>`, so we scope strictly to the `<gui>…</gui>` block. A wildcard bind (`0.0.0.0` / `[::]`)
+/// is mapped to loopback — that's where the local REST is actually reachable. Falls back to the
+/// default on any parse miss. NOTE: a tls-enabled GUI (non-default `<gui tls="true">`, self-signed
+/// https) stays unsupported — a pre-existing limitation, not a regression (the old code also used http).
+fn syncthing_gui_base(xml: &str) -> String {
+    const DEFAULT: &str = "http://127.0.0.1:8384";
+    let Some(g) = xml.find("<gui") else {
+        return DEFAULT.to_string();
+    };
+    let rest = &xml[g..];
+    let Some(e) = rest.find("</gui>") else {
+        return DEFAULT.to_string();
+    };
+    let gui = &rest[..e];
+    let Some(s) = gui.find("<address>").map(|i| i + "<address>".len()) else {
+        return DEFAULT.to_string();
+    };
+    let Some(en) = gui[s..].find("</address>").map(|i| i + s) else {
+        return DEFAULT.to_string();
+    };
+    let Some((host, port)) = gui[s..en].trim().rsplit_once(':') else {
+        return DEFAULT.to_string();
+    };
+    let (host, port) = (host.trim(), port.trim());
+    if port.is_empty() {
+        return DEFAULT.to_string();
+    }
+    let host = match host {
+        "0.0.0.0" | "::" | "[::]" | "" => "127.0.0.1",
+        h => h,
+    };
+    format!("http://{host}:{port}")
+}
+
+/// Read Syncthing's config.xml ONCE → (api_key, gui_base_url). None when no API key is configured.
+fn syncthing_conn() -> Option<(String, String)> {
     let local = std::env::var("LOCALAPPDATA").ok()?;
     let cfg = std::fs::read_to_string(format!("{local}\\Syncthing\\config.xml")).ok()?;
     let start = cfg.find("<apikey>")? + "<apikey>".len();
     let end = cfg[start..].find("</apikey>")? + start;
     let key = cfg[start..end].trim().to_string();
-    (!key.is_empty()).then_some(key)
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, syncthing_gui_base(&cfg)))
 }
 
 fn st_agent() -> ureq::Agent {
@@ -2053,8 +2094,8 @@ fn st_agent() -> ureq::Agent {
         .into()
 }
 
-fn st_get(agent: &ureq::Agent, key: &str, path: &str) -> Option<serde_json::Value> {
-    let url = format!("http://127.0.0.1:8384{path}");
+fn st_get(agent: &ureq::Agent, base: &str, key: &str, path: &str) -> Option<serde_json::Value> {
+    let url = format!("{base}{path}");
     let mut resp = agent.get(&url).header("X-API-Key", key).call().ok()?;
     let s = resp.body_mut().read_to_string().ok()?;
     serde_json::from_str(&s).ok()
@@ -2071,10 +2112,10 @@ fn normalize_path(p: &str) -> String {
 }
 
 /// Syncthing id of the folder whose path == ~/.claude (folder ids are per-machine).
-fn st_claude_folder(agent: &ureq::Agent, key: &str) -> Option<serde_json::Value> {
+fn st_claude_folder(agent: &ureq::Agent, base: &str, key: &str) -> Option<serde_json::Value> {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     let claude = normalize_path(&format!("{home}\\.claude"));
-    let folders = st_get(agent, key, "/rest/config/folders")?;
+    let folders = st_get(agent, base, key, "/rest/config/folders")?;
     folders
         .as_array()?
         .iter()
@@ -2090,23 +2131,23 @@ fn st_claude_folder(agent: &ureq::Agent, key: &str) -> Option<serde_json::Value>
 fn syncthing_status() -> serde_json::Value {
     let mut out = serde_json::Map::new();
     out.insert("available".into(), serde_json::json!(false));
-    let Some(key) = syncthing_api_key() else {
+    let Some((key, base)) = syncthing_conn() else {
         return serde_json::Value::Object(out); // no API key configured at all
     };
     // We have a key → let the UI tell "configured but not answering" apart from "not configured".
     out.insert("keyConfigured".into(), serde_json::json!(true));
     let agent = st_agent();
-    if st_get(&agent, &key, "/rest/system/ping").is_none() {
+    if st_get(&agent, &base, &key, "/rest/system/ping").is_none() {
         // available stays false; keyConfigured:true signals daemon-down / wrong-key vs unconfigured.
         return serde_json::Value::Object(out);
     }
     out.insert("available".into(), serde_json::json!(true));
-    if let Some(ver) = st_get(&agent, &key, "/rest/system/version")
+    if let Some(ver) = st_get(&agent, &base, &key, "/rest/system/version")
         .and_then(|v| v.get("version").and_then(|x| x.as_str()).map(String::from))
     {
         out.insert("version".into(), serde_json::json!(ver));
     }
-    let Some(folder) = st_claude_folder(&agent, &key) else {
+    let Some(folder) = st_claude_folder(&agent, &base, &key) else {
         out.insert("folderShared".into(), serde_json::json!(false));
         return serde_json::Value::Object(out); // ~/.claude not a Syncthing folder here
     };
@@ -2120,7 +2161,7 @@ fn syncthing_status() -> serde_json::Value {
         .unwrap_or("")
         .to_string();
     out.insert("folderId".into(), serde_json::json!(fid));
-    if let Some(st) = st_get(&agent, &key, &format!("/rest/db/status?folder={fid}")) {
+    if let Some(st) = st_get(&agent, &base, &key, &format!("/rest/db/status?folder={fid}")) {
         if let Some(state) = st.get("state").and_then(|x| x.as_str()) {
             out.insert("state".into(), serde_json::json!(state));
         }
@@ -2144,7 +2185,7 @@ fn syncthing_status() -> serde_json::Value {
     } else {
         out.insert("state".into(), serde_json::json!("unknown"));
     }
-    if let Some(conns) = st_get(&agent, &key, "/rest/system/connections") {
+    if let Some(conns) = st_get(&agent, &base, &key, "/rest/system/connections") {
         let connected = conns
             .get("connections")
             .and_then(|c| c.as_object())
@@ -2165,15 +2206,40 @@ fn syncthing_status() -> serde_json::Value {
 
 /// Ask Syncthing to rescan the ~/.claude folder so a fresh .stignore applies now (best-effort).
 fn syncthing_rescan() {
-    let Some(key) = syncthing_api_key() else {
+    let Some((key, base)) = syncthing_conn() else {
         return;
     };
     let agent = st_agent();
-    if let Some(fid) = st_claude_folder(&agent, &key)
+    if let Some(fid) = st_claude_folder(&agent, &base, &key)
         .and_then(|f| f.get("id").and_then(|x| x.as_str()).map(String::from))
     {
-        let url = format!("http://127.0.0.1:8384/rest/db/scan?folder={fid}");
+        let url = format!("{base}/rest/db/scan?folder={fid}");
         let _ = agent.post(&url).header("X-API-Key", &key).send_empty();
+    }
+}
+
+#[cfg(test)]
+mod syncthing_tests {
+    #[test]
+    fn gui_base_parses_scopes_and_maps() {
+        let d = "http://127.0.0.1:8384";
+        assert_eq!(super::syncthing_gui_base("<gui><address>127.0.0.1:8384</address></gui>"), d);
+        assert_eq!(
+            super::syncthing_gui_base("<gui enabled=\"true\"><address>192.168.1.5:9090</address></gui>"),
+            "http://192.168.1.5:9090"
+        );
+        // wildcard bind → loopback (that's where the local REST is reachable)
+        assert_eq!(
+            super::syncthing_gui_base("<gui><address>0.0.0.0:8080</address></gui>"),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(super::syncthing_gui_base("<gui><address>[::]:8384</address></gui>"), d);
+        // <address> under <device> must NOT be picked up — only the <gui> one
+        let multi = "<device><address>dynamic</address></device><gui><address>10.0.0.1:7070</address></gui>";
+        assert_eq!(super::syncthing_gui_base(multi), "http://10.0.0.1:7070");
+        // missing / malformed → default
+        assert_eq!(super::syncthing_gui_base("<gui></gui>"), d);
+        assert_eq!(super::syncthing_gui_base(""), d);
     }
 }
 
