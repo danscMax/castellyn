@@ -142,6 +142,7 @@ export default {
   prof_verb_check: 'checking',
   prof_verb_clean: 'removing sync conflicts',
   prof_verb_repair: 'repairing links {name}',
+  prof_verb_create: 'creating profile {name}',
   prof_verb_reinstall: 'reinstalling profiles',
   confirm_prof_remove_title: 'Delete profile “{name}”?',
   confirm_prof_remove_msg:

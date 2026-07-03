@@ -423,10 +423,14 @@
             </li>
           {/if}
           {#if missing.length > 0}
-            <li class="flex items-center justify-between gap-sw-2">
+            <li class="flex flex-wrap items-center justify-between gap-sw-2">
               <span>{t('profiles.missingDirs', { names: missing.map((p) => p.name).join(', ') })}</span>
-              <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => onAction('reinstall')}
-                title={t('profiles.createTip')}>{t('profiles.create')}</button>
+              <div class="flex flex-wrap gap-sw-2">
+                {#each missing as p (p.name)}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => onAction('create', p.name)}
+                    title={t('profiles.createNameTip', { name: p.name })}>{t('profiles.createName', { name: p.name })}</button>
+                {/each}
+              </div>
             </li>
           {/if}
           {#if conflictCount > 0}

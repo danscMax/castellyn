@@ -26,8 +26,8 @@ export default {
   elevateRelaunch: 'Перезапустить приложение от администратора',
   elevateRelaunchTip: 'Перезапустить Castellyn с правами администратора — дальше всё работает без отдельных запросов UAC',
   missingDirs: 'Отсутствуют каталоги профилей: {names}.',
-  create: 'Создать',
-  createTip: 'Переустановить профили — создаст недостающие',
+  createName: 'Создать {name}',
+  createNameTip: 'Создать профиль «{name}» и связать общие папки — без переустановки остальных',
   syncConflicts: 'Sync-конфликты Syncthing: {n} (файлы-дубли *.sync-conflict-*).',
   cleanConflicts: 'Удалить дубли',
   cleanConflictsTip:

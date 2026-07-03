@@ -145,7 +145,7 @@ export const runBackup = (action: BackupAction, opts: RestoreOpts = {}) =>
   });
 
 // --- Profiles tab ---
-export type ProfileAction = 'check' | 'clean-conflicts' | 'reinstall' | 'repair';
+export type ProfileAction = 'check' | 'clean-conflicts' | 'reinstall' | 'repair' | 'create';
 
 export type ProfileInfo = {
   name: string;

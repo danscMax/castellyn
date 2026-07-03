@@ -141,6 +141,7 @@ export default {
   prof_verb_check: '检查中',
   prof_verb_clean: '删除同步冲突',
   prof_verb_repair: '修复链接 {name}',
+  prof_verb_create: '创建配置 {name}',
   prof_verb_reinstall: '重新安装配置',
   confirm_prof_remove_title: '删除配置「{name}」？',
   confirm_prof_remove_msg:

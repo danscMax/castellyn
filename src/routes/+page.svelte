@@ -605,7 +605,9 @@
           ? t('page.prof_verb_clean')
           : action === 'repair'
             ? t('page.prof_verb_repair', { name: name ?? '' })
-            : t('page.prof_verb_reinstall');
+            : action === 'create'
+              ? t('page.prof_verb_create', { name: name ?? '' })
+              : t('page.prof_verb_reinstall');
     log = [t('page.prof_log', { verb })];
     runProfiles(action, name).catch(onSpawnErr);
   }
@@ -613,6 +615,9 @@
   function onProfileAction(action: ProfileAction, name?: string) {
     if (action === 'repair') {
       startProfiles('repair', name);
+    } else if (action === 'create') {
+      // Additive (creates one missing profile) — no destructive-reinstall confirmation.
+      startProfiles('create', name);
     } else if (action === 'reinstall') {
       askConfirm(
         t('page.confirm_reinstall_title'),

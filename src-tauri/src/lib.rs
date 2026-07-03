@@ -1389,7 +1389,8 @@ fn read_profiles() -> Result<Option<serde_json::Value>, String> {
 }
 
 /// Run a Profiles-tab action: refresh status, clean sync-conflict files, reinstall all profiles,
-/// or repair the links of a single profile (`repair` requires `name`).
+/// create a single missing profile (`create`), or repair the links of a single profile (`repair`).
+/// `create` and `repair` require `name`.
 #[tauri::command]
 async fn run_profiles(
     app: AppHandle,
@@ -1412,6 +1413,23 @@ async fn run_profiles(
             if !profile_names().iter().any(|x| x == &n) {
                 return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
             }
+            (REPAIR_SCRIPT_REL, vec!["-Name".to_string(), n])
+        }
+        "create" => {
+            let n = name.unwrap_or_default();
+            if !valid_profile_name(&n) {
+                return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &n)]));
+            }
+            if !profile_names().iter().any(|x| x == &n) {
+                return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
+            }
+            // Rust-native dir creation (no admin) so a single missing profile can be created without a
+            // full -Force reinstall that re-touches every profile and re-runs the global CLI/RTK steps.
+            // Repair-ProfileLinks then makes just this profile's shared-folder links (folder symlinks
+            // need admin → surfaced as broken-links + the existing one-UAC elevated repair afterwards).
+            let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+            let dir = format!("{home}\\.claude-{n}");
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir}: {e}"))?;
             (REPAIR_SCRIPT_REL, vec!["-Name".to_string(), n])
         }
         _ => {

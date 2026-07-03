@@ -142,6 +142,7 @@ export default {
   prof_verb_check: 'проверка',
   prof_verb_clean: 'удаление sync-конфликтов',
   prof_verb_repair: 'починка связей {name}',
+  prof_verb_create: 'создание профиля {name}',
   prof_verb_reinstall: 'переустановка профилей',
   confirm_prof_remove_title: 'Удалить профиль «{name}»?',
   confirm_prof_remove_msg:

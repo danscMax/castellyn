@@ -26,8 +26,8 @@ export default {
   elevateRelaunch: 'Relaunch the app as administrator',
   elevateRelaunchTip: 'Restart Castellyn elevated — afterwards everything works without separate UAC prompts',
   missingDirs: 'Missing profile directories: {names}.',
-  create: 'Create',
-  createTip: 'Reinstall profiles — will create the missing ones',
+  createName: 'Create {name}',
+  createNameTip: 'Create the «{name}» profile and link its shared folders — without reinstalling the others',
   syncConflicts: 'Syncthing sync conflicts: {n} (duplicate *.sync-conflict-* files).',
   cleanConflicts: 'Delete duplicates',
   cleanConflictsTip:
