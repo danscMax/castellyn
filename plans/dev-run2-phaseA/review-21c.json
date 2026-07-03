@@ -1,0 +1,36 @@
+{
+  "verdict": "APPROVE",
+  "reviewer": "independent-review-21c",
+  "commit": "321e1bf",
+  "summary": "maybeAutoContinue is correct: the once-per-episode guarantee holds, re-arm only fires when the pane has LEFT 'limited', the reset gate rejects null/invalid h5Reset, jitter is assigned once per episode, the config field round-trips through HubConfig, and SessionsTab stays mounted (display-toggled, not {#if}) so the interval keeps ticking in the background. No blocking findings. Two low, non-blocking notes below.",
+  "findings": [
+    {
+      "severity": "low",
+      "rubricLine": "4",
+      "file": "src/lib/components/SessionsTab.svelte",
+      "line": 363,
+      "finding": "Config first-tick race (benign): the interval-starting onMount (line 284) registers before the readConfig onMount (line 358) resolves. autoContinueOn defaults to $state(true), so a tick in the first ~12s could act on 'true' before an on-disk 'false' is loaded. In practice config resolves in well under 12s and no pane can be both 'limited' AND past-reset+jitter within the first tick, so this cannot mis-fire. No change required.",
+      "evidence": "let autoContinueOn = $state(true); ... const c = await readConfig(); autoContinueOn = c.autoContinueOnReset ?? true;",
+      "fix": "None needed. Optionally gate the interval start on config load if paranoia warranted; not worth the complexity."
+    },
+    {
+      "severity": "low",
+      "rubricLine": "8",
+      "file": "src/lib/components/SessionsTab.svelte",
+      "line": 312,
+      "finding": "Deliberate dead-pane omission is safe. If a limited pane's PTY somehow exited without a terminal state change, agentStates[id] could stay 'limited' and one sessionWrite would be sent to a dead pty. sessionWrite is fire-and-forget (unawaited), so a rejected promise is an unhandled rejection, not a crash — and autoContinued.add() guarantees it happens at most ONCE, never a loop. This matches the existing unawaited sessionWrite pattern at lines 420 and 444. The documented premise (Claude waits on a 5h limit, does not die) makes this path rare. No half-state loop. Acceptable as documented.",
+      "evidence": "sessionWrite(id, t('sessions.autoContinueText') + '\\r'); // unawaited, same as broadcast at line 420",
+      "fix": "None needed; consistent with existing pattern."
+    }
+  ],
+  "rubricChecks": {
+    "1_no_auto_input_loop": "PASS — autoContinued.add(p.key) at line 311 fires before the send; the guard at line 305 (autoContinued.has) skips every subsequent tick while the pane stays 'limited'. Even in the adversarial case where the continuation does not clear the limit, exactly one send occurs per continuous limited-streak.",
+    "2_rearm_correctness": "PASS — the only re-arm path (lines 299-304) is gated on agentStates[id] !== 'limited', so it can NEVER re-arm while still limited. A later separate limit episode (state goes limited->recovered->limited) gets a fresh attempt with a fresh jitter.",
+    "3_reset_time_gate": "PASS — resetStr null/undefined or an unparseable string -> Date.parse -> NaN -> !Number.isFinite -> continue (no premature fire). Jitter assigned once per episode via `if (contJitterMs[p.key] == null)` and only re-randomised when deleted on re-arm; it does not drift on every tick.",
+    "4_config_gate_and_default": "PASS — c.autoContinueOnReset ?? true is correct. Rust field Option<bool>, default None, skip_serializing_if none => absent = default true. write_config serializes HubConfig verbatim and the field is now part of the struct, so read-patch-write via the {...c} spread in saveStatusPrefs preserves it. Same read-patch-write contract as statusSounds/statusNotify.",
+    "5_lifecycle_cleanup": "PASS — onMount returns a cleanup that unlistens and clearInterval. +page.svelte:2160-2172 renders SessionsTab under {#if sessionsEverOpened} then display-toggles with the `hidden` class (line 2161), NOT {#if active==='sessions'} — so once opened the component stays mounted and the interval keeps ticking across tab switches. Assumption in the task is correct.",
+    "6_pane_reset_mapping": "PASS — limitsByProfile[p.profile] keys the per-profile limits event by profile name; the limits-status listener keys by e.payload.profile (same profile-name space). A pane on a profile with no limits event yields undefined?.h5Reset -> NaN -> safely skipped.",
+    "7_injection_safety": "PASS — the injected text is a controlled i18n literal (continue/продолжай/继续) + '\\r'. No user or untrusted data flows into sessionWrite here.",
+    "8_dead_pane_omission": "PASS (documented) — see low finding above; no half-state loop, at most one no-op write, consistent with existing unawaited sessionWrite pattern."
+  }
+}

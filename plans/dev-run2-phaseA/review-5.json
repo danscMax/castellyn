@@ -1,0 +1,13 @@
+{
+  "verdict": "APPROVE",
+  "findings": [],
+  "notes": [
+    "Rubric 1 (correctness): PASS. Disable reaches orphans — claude_settings_all(home) enumerates every on-disk ~/.claude* sibling via std::fs::read_dir (lib.rs:7958-7975), not the profiles.json list, so a renamed/removed profile's dir is still swept. Enable stays current-only — both plugin_sync_set (lib.rs:8119) and agent_status_hook_set (lib.rs:8264) select plugin_sync_profiles(&home) when enabled, which is profiles.json-derived (lib.rs:7932-7945).",
+    "Rubric 2 (foreign-dir safety): PASS, PROVEN. The only write is write_json_atomic_retry(&sp,&s) guarded by `if changed` (lib.rs:8137 and 8285). `changed` is set solely by plugin_sync_unwire / hook_cmd_unwire, and hook_cmd_unwire flips changed only when hs.len()!=before (lib.rs:8040), i.e. a marker-matching command was actually removed. A dir with no Castellyn marker (e.g. ~/.claude-mem) yields changed=false → no write. Reading its settings.json is the only touch. The new unit test unwire_leaves_foreign_only_settings_untouched (lib.rs:8362-8377) asserts exactly this.",
+    "Rubric 3 (no script deletion): PASS. Diff only alters the target-set selection and adds two pure functions + tests; no .py removal path introduced. Disable unwires settings.json hook entries only.",
+    "Rubric 4 (atomic write / retry): PASS, no regression. Write path is byte-for-byte the pre-existing write_json_atomic_retry (lib.rs:1999 → with_sharing_retry → write_json_atomic), same continue-on-error loop (`continue` on unreadable/malformed, errs collected and surfaced after the full sweep). The diff changed only the iterator source, not the loop body.",
+    "Rubric 5 (edge cases): PASS. Symlinked settings.json — claude_settings_all uses symlink_metadata + is_file() (lib.rs:7969-7970), so a symlink is skipped (never written), matching the original plugin_sync_profiles behavior. Malformed JSON — parse_json_bom Err → continue (lib.rs:8129). `.claude` itself — is_claude_profile_dirname(\".claude\")==true (lib.rs:7951). `.claude-x` dir with no settings.json — symlink_metadata Err → skipped (lib.rs:7969). Predicate is permissive (a file like `.claude-backup.zip` matches the name test) but the settings.json probe filters non-dirs out, so it is benign and self-documented as deliberate.",
+    "Rubric 6 (enumeration robustness): PASS. read_dir returns Result handled by let-else → empty Vec (lib.rs:7960-7962); entries.flatten() drops Err entries; to_string_lossy tolerates non-UTF8 names. No unwrap/panic path.",
+    "Minor (non-blocking): Windows-only path join `format!(\"{home}\\\\{name}\\\\settings.json\")` matches the existing plugin_sync_profiles convention; consistent, and this is a Windows desktop app."
+  ]
+}
