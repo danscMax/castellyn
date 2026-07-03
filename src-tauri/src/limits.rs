@@ -74,7 +74,9 @@ fn take_alert(
     }
     // A new window for this (profile, window): drop the prior window's fired levels so it re-arms.
     let suffix = format!("\x1f{win}");
-    fired.retain(|k| !(k.starts_with(&prefix) && !k.ends_with(&suffix)));
+    // Keep keys that aren't a prior window of this (profile, window): either a different group, or
+    // already the current window. (De Morgan of `!(starts_with && !ends_with)`.)
+    fired.retain(|k| !k.starts_with(&prefix) || k.ends_with(&suffix));
     fired.insert(key);
     Some(level)
 }
