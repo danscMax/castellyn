@@ -794,6 +794,12 @@
       })
     );
   }
+  // #11: reachability shown as a design-system `.dot` (ok/fail/checking-pulse) instead of an emoji
+  // traffic-light. Title gives a text alt so it isn't colour-only.
+  const reachDotClass = (s?: 'checking' | 'ok' | 'fail') =>
+    s === 'ok' ? 'dot-ok' : s === 'fail' ? 'dot-fail' : 'dot-checking';
+  const reachTitle = (s?: 'checking' | 'ok' | 'fail') =>
+    s === 'ok' ? t('sessions.reachOk') : s === 'fail' ? t('sessions.reachFail') : t('sessions.reachChecking');
   // ─── Launcher: environment × location × folder × args, read as a phrase (№20 + №8) ───
   type Env = 'claude' | 'opencode' | 'codex' | 'shell';
   const ENVS: { id: Env; label: string; title: string; icon: string }[] = [
@@ -861,7 +867,7 @@
     ...sshHostList.map((h) => ({
       value: h.id,
       label: h.name,
-      icon: sshReach[h.id] === 'ok' ? '🟢' : sshReach[h.id] === 'fail' ? '🔴' : '⚪',
+      iconHtml: `<span class="dot ${reachDotClass(sshReach[h.id])}" title="${reachTitle(sshReach[h.id])}"></span>`,
       hint: h.source === 'sshconfig' ? '~/.ssh/config' : undefined
     })),
     { value: LOC_ADD, label: t('sessions.locAdd'), icon: '＋' }
@@ -1324,7 +1330,7 @@
           <div class="srv-list">
             {#each sshHostList as h (h.id)}
               <span class="srv-chip">
-                <span>{sshReach[h.id] === 'ok' ? '🟢' : sshReach[h.id] === 'fail' ? '🔴' : '⚪'}</span>
+                <span class="dot {reachDotClass(sshReach[h.id])}" title={reachTitle(sshReach[h.id])}></span>
                 <span class="srv-n">{h.name}</span>
                 <span class="srv-t font-mono">{sshTargetLabel(h)}</span>
                 {#if h.source === 'saved'}

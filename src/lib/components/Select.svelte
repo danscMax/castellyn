@@ -2,7 +2,8 @@
   // A styled replacement for the native <select>: app-themed trigger + chevron, a floating panel
   // with hover/keyboard highlight, a check on the current value, optional icons/hints. Bindable.
   import { anchored } from '$lib/floating';
-  type Opt = { value: string; label: string; icon?: string; hint?: string };
+  // `iconHtml` renders trusted markup (e.g. a status `.dot`); callers pass controlled literals only.
+  type Opt = { value: string; label: string; icon?: string; iconHtml?: string; hint?: string };
 
   let {
     value = $bindable(''),
@@ -94,7 +95,7 @@
     aria-activedescendant={open ? activeId : undefined}
   >
     <span class="val" class:placeholder={!selected}>
-      {#if selected?.icon}<span class="ic">{selected.icon}</span>{/if}
+      {#if selected?.iconHtml}<span class="ic">{@html selected.iconHtml}</span>{:else if selected?.icon}<span class="ic">{selected.icon}</span>{/if}
       {selected ? selected.label : placeholder}
     </span>
     <span class="chev" class:up={open} aria-hidden="true">▾</span>
@@ -114,7 +115,7 @@
             role="option"
             aria-selected={o.value === value}
           >
-            {#if o.icon}<span class="ic">{o.icon}</span>{/if}
+            {#if o.iconHtml}<span class="ic">{@html o.iconHtml}</span>{:else if o.icon}<span class="ic">{o.icon}</span>{/if}
             <span class="opt-label">{o.label}</span>
             {#if o.hint}<span class="opt-hint">{o.hint}</span>{/if}
             {#if o.value === value}<span class="check">✓</span>{/if}
