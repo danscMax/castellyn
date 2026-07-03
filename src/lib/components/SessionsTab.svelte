@@ -833,8 +833,18 @@
   // what makes editing "default args" in settings actually flow into the phrase (#16 — was seeded once).
   let argsTouched = $state(false);
   $effect(() => {
-    if (!argsTouched) lArgs = defaultArgs;
+    // Seed per-harness: the ⚙ default-args are Claude-oriented (--dangerously-skip-permissions etc.),
+    // so only Claude inherits them. codex/opencode/shell start empty — otherwise codex is launched
+    // with a Claude flag it rejects (error: unexpected argument '--dangerously-skip-permissions').
+    if (!argsTouched) lArgs = lEnv === 'claude' ? defaultArgs : '';
   });
+  // Switching harness re-seeds the args field (unless the user already edited it) so a leftover Claude
+  // flag doesn't leak into codex/opencode — and can't get pinned into a favorite mid-switch.
+  function selectEnv(id: Env) {
+    if (id === lEnv) return;
+    lEnv = id;
+    argsTouched = false;
+  }
   function rememberRemote(dir: string) {
     const d = dir.trim();
     if (!d) return;
@@ -1205,7 +1215,7 @@
     <div class="launchhead">
       <div class="envseg" role="tablist" aria-label={t('sessions.dlgTool')}>
         {#each ENVS as e (e.id)}
-          <button type="button" class="env-btn" class:sel={lEnv === e.id} onclick={() => (lEnv = e.id)}
+          <button type="button" class="env-btn" class:sel={lEnv === e.id} onclick={() => selectEnv(e.id)}
             title={e.title} role="tab" aria-selected={lEnv === e.id}>
             <span class="env-ic">{@html e.icon}</span>{e.label}
           </button>

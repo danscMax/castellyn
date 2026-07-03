@@ -412,8 +412,16 @@
     } catch {
       /* ignore */
     }
+    // Load the bundled Nerd Font BEFORE the terminal measures glyphs: xterm's WebGL renderer bakes a
+    // glyph atlas at open time, so if the font isn't ready it caches missing-glyph tofu for the
+    // statusline icons (Nerd Font PUA / powerline) and keeps showing it until a resize (live-smoke).
+    try {
+      await document.fonts.load(`${fontSize}px 'Cascadia Code NF'`);
+    } catch {
+      /* font unavailable → xterm falls back to Cascadia Code / Consolas */
+    }
     term = new Terminal({
-      fontFamily: "'Cascadia Code', 'Consolas', monospace",
+      fontFamily: "'Cascadia Code NF', 'Cascadia Code', 'Consolas', monospace",
       fontSize,
       cursorBlink: true,
       scrollback: sb,
@@ -491,6 +499,17 @@
     // xterm/PTY don't also receive the chord.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
+      // Shift+Enter → insert a newline instead of submitting. xterm collapses both Enter and
+      // Shift+Enter to a bare CR (it branches only on Alt), so Claude Code sees \r and submits.
+      // Emit ESC+CR (\x1b\r) — the sequence Claude reads as "newline" (the same bytes Alt+Enter
+      // sends); route it like onData so broadcast panes mirror it. return false → xterm won't also
+      // send CR. Harmless in a plain shell (reads as Alt+Enter, which has no standard action).
+      if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        const seq = '\x1b\r';
+        if (broadcast && onInput) onInput(seq);
+        else if (id && !exited) sessionWrite(id, seq);
+        return false;
+      }
       if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
         if (term?.hasSelection()) {
           copySelection();
@@ -500,6 +519,10 @@
         return true; // no selection → let Ctrl+C through as SIGINT (interrupt)
       }
       if (e.ctrlKey && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+        // Cancel the browser's native paste, else its ClipboardEvent also triggers xterm's built-in
+        // paste listener and the text lands twice. Our paste() is still needed (WebView2 clipboard /
+        // synthetic Ctrl+V from Sweet Whisper / right-click / snippets all route through it).
+        e.preventDefault();
         paste();
         return false;
       }
@@ -508,6 +531,7 @@
         return false;
       }
       if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+        e.preventDefault(); // see Ctrl+V above — prevent the duplicate native paste
         paste();
         return false;
       }

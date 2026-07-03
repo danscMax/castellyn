@@ -5019,6 +5019,11 @@ struct ProfileUsage {
 #[derive(Default)]
 struct UsageCache(Mutex<std::collections::HashMap<String, (std::time::Instant, ProfileUsage)>>);
 
+/// After a cache entry goes stale (>60s), a FAILED re-fetch serves the last-good value instead of
+/// blanking the badge (flicker fix, live-smoke 2026-07-03) — but only until it is this old, so a
+/// genuinely logged-out/removed profile eventually clears instead of showing forever-stale numbers.
+const USAGE_STALE_MAX_SECS: u64 = 900; // 15 min
+
 /// Blocking: read a profile's OAuth token and query the usage endpoint. None on any failure
 /// (not logged in / token expired / offline) so the UI just omits the badge.
 fn fetch_profile_usage(profile: &str) -> Option<ProfileUsage> {
@@ -5090,14 +5095,23 @@ async fn read_profile_usage(
         .await
         .ok()
         .flatten();
-    if let Some(u) = &fetched {
-        cache
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(profile, (std::time::Instant::now(), u.clone()));
+    let mut map = cache.0.lock().unwrap_or_else(|e| e.into_inner());
+    match fetched {
+        Some(u) => {
+            map.insert(profile, (std::time::Instant::now(), u.clone()));
+            Ok(Some(u))
+        }
+        // A transient re-fetch failure (rate-limit / offline / a busy account under load) must NOT
+        // blank the badge — that oscillation was the flicker (live-smoke 2026-07-03). Serve the
+        // last-good value until it ages past USAGE_STALE_MAX_SECS, then a truly gone profile clears.
+        // ponytail: 401 is treated like any transient error here (stale ≤15 min, then clears); a
+        // precise "token revoked → clear now" would need fetch to return Ok/expired/transient rather
+        // than collapsing every error to None. Not worth the surface for the flicker fix.
+        None => Ok(map
+            .get(&profile)
+            .filter(|(at, _)| at.elapsed().as_secs() < USAGE_STALE_MAX_SECS)
+            .map(|(_, u)| u.clone())),
     }
-    Ok(fetched)
 }
 
 /// opencode's global config path: $OPENCODE_CONFIG → $XDG_CONFIG_HOME\opencode → ~/.config/opencode.

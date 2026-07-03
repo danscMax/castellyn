@@ -24,6 +24,12 @@ const POLL_MS: u64 = 500;
 const STARTUP_GRACE_MS: u64 = 3_000;
 /// No PTY output for this long → not actively working.
 const ACTIVITY_IDLE_MS: u64 = 4_000;
+/// A hook-reported `working` self-heals to idle only after this long of silence — the fallback for a
+/// turn that ended WITHOUT a Stop hook (Esc-interrupt / crashed hook). Far longer than
+/// ACTIVITY_IDLE_MS: real turns go quiet well past 4s (deep thinking, a long tool/MCP call, a network
+/// wait), and treating those as "done" fired a false completion toast (live-smoke 2026-07-03). The
+/// real end-of-turn signal is the Stop hook (Some("idle")); this is only the hookless backstop.
+const WORKING_SELFHEAL_MS: u64 = 35_000;
 /// Grace after a hook-reported `blocked` within which PTY output counts as the prompt box
 /// painting itself, not a real resume — used by the time backstop below.
 const BLOCKED_RESUME_MS: u64 = 1_500;
@@ -198,6 +204,13 @@ struct StatusEvent {
     label: String,
     #[serde(skip)]
     exited: bool,
+    /// The hook reported `idle` (a real Stop) at this emit — gates the completion toast so a
+    /// hookless activity-lull can't fire a false "finished" (live-smoke 2026-07-03). Backend-only.
+    #[serde(skip)]
+    hook_idle: bool,
+    /// Tool of the emitting session — codex/opencode have no hook, so they keep activity-based "done".
+    #[serde(skip)]
+    tool: String,
 }
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
@@ -227,8 +240,13 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
         return;
     }
     let to_blocked = ev.state == "blocked" && ev.prev.as_deref() != Some("blocked");
+    // "Finished" toast only on a real end-of-turn. For claude that means the Stop hook fired
+    // (hook_idle); an activity-lull idle greys the dot but must NOT claim "done" — that was the
+    // false "Агент закончил" mid-work (live-smoke 2026-07-03). codex/opencode have no hook, so they
+    // keep the activity-based idle they already used.
     let completed = ev.state == "idle"
-        && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"));
+        && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"))
+        && (ev.hook_idle || ev.tool != "claude");
     if !to_blocked && !completed {
         return;
     }
@@ -286,10 +304,12 @@ fn compute(t: &Track, now: u64) -> &'static str {
                 "blocked"
             }
         }
-        // A silent "working" self-heals to idle: Esc-interrupts end a turn without a
-        // Stop hook firing.
+        // A silent "working" self-heals to idle ONLY after a long backstop: the real end-of-turn
+        // signal is the Stop hook (→ Some("idle") below). This branch just recovers a turn that
+        // ended without one (Esc-interrupt / crashed hook). A short output gap (<WORKING_SELFHEAL_MS)
+        // is still an active turn — flipping it to idle at 4s fired a false "done" (live-smoke).
         Some("working") => {
-            if silent {
+            if now.saturating_sub(last_output) > WORKING_SELFHEAL_MS {
                 "idle"
             } else {
                 "working"
@@ -420,6 +440,8 @@ pub fn start(app: tauri::AppHandle) {
                         prev,
                         label: t.label.clone(),
                         exited: t.exited,
+                        hook_idle: t.hook_state.as_deref() == Some("idle"),
+                        tool: t.tool.clone(),
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop
@@ -533,10 +555,15 @@ mod tests {
         t.hook_state = Some("idle".into());
         t.last_output.store(now + 10_000, Ordering::Relaxed);
         assert_eq!(compute(&t, now + 10_100), "idle");
-        // Hook-working self-heals to idle on silence (Esc interrupt fires no Stop hook).
+        // Hook-working self-heals to idle only after the LONG backstop (Esc interrupt fires no Stop
+        // hook). A short 4s gap is still an active turn — flipping it fired a false "done".
         t.hook_state = Some("working".into());
         assert_eq!(
             compute(&t, t.last_output.load(Ordering::Relaxed) + ACTIVITY_IDLE_MS + 1),
+            "working"
+        );
+        assert_eq!(
+            compute(&t, t.last_output.load(Ordering::Relaxed) + WORKING_SELFHEAL_MS + 1),
             "idle"
         );
     }
@@ -555,6 +582,8 @@ mod tests {
             prev: None,
             label: t.label.clone(),
             exited: t.exited,
+            hook_idle: false,
+            tool: t.tool.clone(),
         };
         assert_ne!(ev.spawned_at, 0);
         assert_eq!(ev.spawned_at, now);

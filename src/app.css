@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+/* Bundled Nerd Font for terminal panes: Claude Code's statusline uses Nerd Font / powerline glyphs
+   (icons in the Unicode PUA + box-drawing) that no system font covers, so they rendered as tofu
+   boxes inside our terminals (live-smoke 2026-07-03). Variable weight axis (100–900) → one ~1 MB
+   file serves regular + bold. SIL OFL 1.1 — static/fonts/CascadiaCode-LICENSE.txt. */
+@font-face {
+  font-family: 'Cascadia Code NF';
+  src: url('/fonts/CascadiaCodeNF.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Tailwind v4 theme (migrated from tailwind.config.js). These map the project's `sw-*`
    utility names onto the design tokens defined in :root / .light below, so every existing
    class (text-sw-text-muted, p-sw-6, bg-sw-bg-card, rounded-sw-md, w-sw-sidebar,
