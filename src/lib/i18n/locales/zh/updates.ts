@@ -7,6 +7,7 @@ export default {
   groupHeld: '保留中（{count}）',
   groupErrors: '有错误（{count}）',
   summaryChecked: '检查于 {time}',
+  updatingNow: '当前：{step}',
   checkAllBtn: '全部检查',
   updateAllBtn: '全部更新',
 

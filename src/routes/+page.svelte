@@ -332,6 +332,10 @@
   // as "update available" — a fresh check is the authoritative signal).
   let lastRunMode: 'check' | 'apply' = 'check';
 
+  // #15: live per-component step during an "Обновить всё" run. Update-All.ps1 prints a `>>> <label>`
+  // header before each component; we surface the latest label as progress. Cleared when `all` finishes.
+  let allProgress = $state<string | null>(null);
+
   // True while a bulk plugin op is in flight. F17: the bulk run now lives in its OWN backend domain
   // (run_plugins_bulk), so it does NOT take the global `running` lock — only plugin-tab buttons are
   // gated (via the derived prop below), leaving backup/forks/etc. usable. The run-done listener still
@@ -1724,6 +1728,13 @@
     unlisten.push(
       await listen<{ component: string; stream: string; line: string }>('run-log', (e) => {
         const p = e.payload;
+        // #15: track the current orchestrator step for the Updates progress line ('>>> <label>').
+        if (p.component === 'all' && p.stream !== 'err') {
+          for (const ln of p.line.split('\n')) {
+            const m = ln.match(/^>>>\s+(.+)$/);
+            if (m) allProgress = m[1].trim();
+          }
+        }
         // Backend coalesces rapid lines into one event joined by '\n' (item 7): split back so each
         // gets its own row and the per-line '⚠ ' err prefix, preserving FIFO order.
         const prefix = p.stream === 'err' ? '⚠ ' : '';
@@ -1787,6 +1798,14 @@
           startRun(c.id, 'check', true);
           return;
         }
+        // #15: "Обновить всё" auto re-checks the whole stack after a clean apply so every card
+        // reflects the new state (apply scripts report applied counts, not availability). Progress
+        // stays visible across the apply→check chain; cleared when the follow-up check finishes.
+        if (id === 'all' && wasApply && code === 0) {
+          startRun('all', 'check');
+          return;
+        }
+        if (id === 'all') allProgress = null;
         // Auto-recheck after a mutating fork action so the cards reflect the new state.
         if (id === 'forks' && code === 0 && forkAct && forkAct !== 'check' && forkAct !== 'plan') {
           appendLog(t('page.forks_recheck'));
@@ -2030,7 +2049,7 @@
           stack={stackData} sessionCount={homeSessionCount} busy={!!running} {components} {statuses}
           onOpen={(id) => (active = id)} onRefresh={reloadHome} onAction={onHomeAction} />
       {:else if active === 'updates'}
-        <UpdatesTab {components} {statuses} {running} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
+        <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
       {:else if active === 'forks'}
         <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} />
       {:else if active === 'backup'}

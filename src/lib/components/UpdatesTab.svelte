@@ -8,6 +8,7 @@
     components,
     statuses,
     running,
+    allProgress = null,
     onCheck,
     onApply,
     onOpenTab
@@ -15,6 +16,7 @@
     components: Component[];
     statuses: Record<string, any>;
     running: string | null;
+    allProgress?: string | null;
     onCheck: (id: string) => void;
     onApply: (comp: Component) => void;
     onOpenTab?: (id: string) => void;
@@ -73,7 +75,9 @@
         ? t('updates.groupErrors', { count: errors.length })
         : t('updates.groupHasUpdate', { count: avail.length })}
     </span>
-    {#if lastChecked}
+    {#if running === 'all' && allProgress}
+      <span class="text-sw-sm text-sw-text-secondary">⏳ {t('updates.updatingNow', { step: allProgress })}</span>
+    {:else if lastChecked}
       <span class="text-sw-sm text-sw-text-muted">{t('updates.summaryChecked', { time: lastChecked })}</span>
     {/if}
     {#if allComp}

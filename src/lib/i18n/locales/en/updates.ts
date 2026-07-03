@@ -7,6 +7,7 @@ export default {
   groupHeld: 'Held ({count})',
   groupErrors: 'With errors ({count})',
   summaryChecked: 'checked {time}',
+  updatingNow: 'now: {step}',
   checkAllBtn: 'Check all',
   updateAllBtn: 'Update all',
 

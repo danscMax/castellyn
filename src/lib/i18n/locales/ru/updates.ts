@@ -7,6 +7,7 @@ export default {
   groupHeld: 'На удержании ({count})',
   groupErrors: 'С ошибками ({count})',
   summaryChecked: 'проверено {time}',
+  updatingNow: 'сейчас: {step}',
   checkAllBtn: 'Проверить всё',
   updateAllBtn: 'Обновить всё',
 
