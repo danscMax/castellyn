@@ -4181,7 +4181,15 @@ fn append_key_txn(
         false
     };
     let new_slot = count;
-    set(&format!("provider:{id}:{new_slot}"), key)?;
+    // If the migration set slot 0 but THIS set fails, roll that slot back before returning — else an
+    // orphan `provider:{id}:0` (a duplicate of the still-intact legacy secret) would linger with a
+    // JSON keyCount that never counted it.
+    if let Err(e) = set(&format!("provider:{id}:{new_slot}"), key) {
+        if migrated {
+            del(&format!("provider:{id}:0"));
+        }
+        return Err(e);
+    }
     let new_count = new_slot + 1;
     match write(new_count) {
         Ok(()) => {
@@ -7207,6 +7215,39 @@ mod add_key_txn_tests {
         assert!(s.get("provider:acme").is_none());
         assert_eq!(s.get("provider:acme:0").map(String::as_str), Some("LEGACY"));
         assert_eq!(s.get("provider:acme:1").map(String::as_str), Some("NEWKEY"));
+    }
+
+    // (c) first add, migration set slot 0 SUCCEEDS but the new-key set FAILS → the migrated slot 0
+    // is rolled back (no orphan) and the legacy entry stays intact.
+    #[test]
+    fn migration_set_ok_but_new_key_set_fails_leaves_no_orphan() {
+        let store = RefCell::new(HashMap::<String, String>::new());
+        store.borrow_mut().insert("provider:acme".into(), "LEGACY".into());
+        let calls = std::cell::Cell::new(0);
+        let r = super::append_key_txn(
+            "acme",
+            "NEWKEY",
+            0,
+            |u| store.borrow().get(u).cloned(),
+            |u, s| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 {
+                    // The second set (the new key at slot 1) fails after slot 0 migration succeeded.
+                    return Err("keyring busy".into());
+                }
+                store.borrow_mut().insert(u.into(), s.into());
+                Ok(())
+            },
+            |u| {
+                store.borrow_mut().remove(u);
+            },
+            |_new_count| Ok(()),
+        );
+        assert_eq!(r, Err("keyring busy".to_string()));
+        let s = store.borrow();
+        assert_eq!(s.get("provider:acme").map(String::as_str), Some("LEGACY")); // legacy intact
+        assert!(s.get("provider:acme:0").is_none()); // migrated slot rolled back — no orphan
+        assert!(s.get("provider:acme:1").is_none());
     }
 }
 
