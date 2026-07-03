@@ -26,7 +26,8 @@
     readConfig,
     writeConfig,
     type AgentStatusHookState,
-    type AgentStatusEvent
+    type AgentStatusEvent,
+    type LimitsStatusEvent
   } from '$lib/ipc';
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
@@ -269,6 +270,49 @@
     const id = activeKey ? sessionIds[activeKey] : undefined;
     if (id && agentStates[id] === 'done') agentStates = { ...agentStates, [id]: 'idle' };
   });
+
+  // ── #21c: auto-continue a limited pane once its 5h window resets ─────────────────────────────
+  // When Claude Code hits the 5h limit it prints "limit reached" and WAITS — the session stays alive
+  // (marked `limited` by the status hook), it does not exit. We watch each profile's reset time
+  // (limits-status.h5Reset) and, once it passes (+ a 30–90s jitter so N panes don't fire at once),
+  // send the continuation text — localised to the UI language — into the live pane, exactly once per
+  // limit episode. Config-gated (autoContinueOn) for rollback. (A pane whose session actually EXITED
+  // is not the limit case — Claude waits, it doesn't die — so respawn-resume is deliberately omitted.)
+  let limitsByProfile = $state<Record<string, LimitsStatusEvent>>({});
+  const autoContinued = new Set<string>(); // pane keys already continued this limit episode
+  const contJitterMs: Record<string, number> = {};
+  onMount(() => {
+    let un: UnlistenFn | undefined;
+    listen<LimitsStatusEvent>('limits-status', (e) => {
+      limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
+    }).then((u) => (un = u));
+    const tick = setInterval(maybeAutoContinue, 12_000);
+    return () => {
+      un?.();
+      clearInterval(tick);
+    };
+  });
+  function maybeAutoContinue() {
+    if (!autoContinueOn) return;
+    for (const p of panes) {
+      const id = sessionIds[p.key];
+      if (!id || agentStates[id] !== 'limited') {
+        // Recovered (or pane gone) → re-arm so a later, separate limit episode gets its own attempt.
+        autoContinued.delete(p.key);
+        delete contJitterMs[p.key];
+        continue;
+      }
+      if (autoContinued.has(p.key)) continue; // one attempt per episode — never a retry loop
+      const resetStr = limitsByProfile[p.profile]?.h5Reset;
+      const reset = resetStr ? Date.parse(resetStr) : NaN;
+      if (!Number.isFinite(reset)) continue; // no known reset yet — wait for the next poll
+      if (contJitterMs[p.key] == null) contJitterMs[p.key] = 30_000 + Math.floor(Math.random() * 60_000);
+      if (Date.now() < reset + contJitterMs[p.key]) continue;
+      autoContinued.add(p.key);
+      sessionWrite(id, t('sessions.autoContinueText') + '\r');
+      pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
+    }
+  }
   // Roll the counts up for the header chips + the sidebar badge (+page reads the store).
   const statusCounts = $derived.by(() => {
     const c = { blocked: 0, working: 0, done: 0 };
@@ -309,11 +353,14 @@
   // Sound / OS-toast preferences for status transitions (the backend reads them from config).
   let statusSounds = $state(true);
   let statusNotify = $state(true);
+  // #21c: auto-continue a limited pane after its 5h reset. Config-only escape hatch (no UI toggle).
+  let autoContinueOn = $state(true);
   onMount(async () => {
     try {
       const c = await readConfig();
       statusSounds = c.statusSounds ?? true;
       statusNotify = c.statusNotify ?? true;
+      autoContinueOn = c.autoContinueOnReset ?? true;
     } catch {
       /* defaults stand */
     }

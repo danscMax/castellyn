@@ -8,6 +8,8 @@ export default {
   state_done: '代理已完成 — 尚未查看',
   state_idle: '代理空闲',
   state_limited: '用量已达上限 — 等待重置',
+  autoContinueText: '继续',
+  autoContinueDone: '已自动继续：{name} — 限额已重置',
   sumBlocked: '{n} 个等待',
   sumWorking: '{n} 个工作中',
   sumDone: '{n} 个完成',

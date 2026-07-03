@@ -157,6 +157,15 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     limits_monitor: Option<bool>,
+    // Auto-continue a limited Claude pane once its 5h window resets (Sessions, item 21c). None =
+    // default (true). No UI toggle — a config-only escape hatch for rollback if unattended auto-input
+    // is unwanted. The whole loop lives in the frontend (SessionsTab); the backend only persists it.
+    #[serde(
+        rename = "autoContinueOnReset",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    auto_continue_on_reset: Option<bool>,
 }
 
 fn config_path() -> Option<String> {

@@ -8,6 +8,8 @@ export default {
   state_done: 'Агент закончил — не просмотрено',
   state_idle: 'Агент простаивает',
   state_limited: 'Лимит исчерпан — ожидание сброса',
+  autoContinueText: 'продолжай',
+  autoContinueDone: 'Авто-продолжение: {name} — лимит сброшен',
   sumBlocked: '{n} ждёт',
   sumWorking: '{n} работает',
   sumDone: '{n} готово',

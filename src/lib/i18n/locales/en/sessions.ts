@@ -8,6 +8,8 @@ export default {
   state_done: 'Agent finished — not reviewed yet',
   state_idle: 'Agent is idle',
   state_limited: 'Usage limit reached — waiting for reset',
+  autoContinueText: 'continue',
+  autoContinueDone: 'Auto-continued: {name} — limit reset',
   sumBlocked: '{n} blocked',
   sumWorking: '{n} working',
   sumDone: '{n} done',

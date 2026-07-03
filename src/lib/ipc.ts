@@ -841,6 +841,9 @@ export type HubConfig = {
   // Agent-status notifications (Sessions). Absent = default (on).
   statusSounds?: boolean | null;
   statusNotify?: boolean | null;
+  // #21c: auto-continue a limited Claude pane after its 5h reset. Absent = default (on). No UI
+  // toggle — a config-only escape hatch; read-only from the app (read-patch-write preserves it).
+  autoContinueOnReset?: boolean | null;
 };
 
 /** A single entry in the global-shortcut mapping. */
