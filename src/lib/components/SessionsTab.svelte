@@ -316,7 +316,7 @@
         switchAttempted.add(p.key);
         const cand = pickResumeCandidate(p.profile, profileInfos, limitsByProfile);
         if (cand && switchPaneToProfile(p, id, cand)) {
-          autoContinued.add(p.key);
+          // The old pane is gone (switchPaneToProfile removed it + cleaned its keys); nothing to guard.
           pushToast({ kind: 'info', title: t('sessions.switchedProfile', { name: p.name ?? p.profile, profile: cand }) });
           continue;
         }
@@ -338,13 +338,23 @@
     const sid = claudeSids[oldId];
     // Only a local claude conversation with a captured, charset-safe id can be resumed elsewhere.
     if (p.tool !== 'claude' || p.sshTarget || !sid || !/^[\w-]{1,64}$/.test(sid)) return false;
-    let args = p.args;
-    if (!/--(resume|continue)\b/.test(args)) args = `${args} --resume ${sid}`.trim();
+    // Always resume the LIVE captured conversation (sid), stripping any stale --resume/--continue from
+    // the original launch args — otherwise a pane launched with `--resume <oldId>` would reopen that
+    // stale pointer instead of the conversation the user is actually in now.
+    const args = `${p.args
+      .replace(/--resume\s+[\w-]+/g, '')
+      .replace(/--(resume|continue)\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()} --resume ${sid}`.trim();
     const newKey = addPane({ tool: 'claude', profile: candidate, cwd: p.cwd, args, name: p.name });
     if (!newKey) return false; // cap/ceiling — keep the old pane, caller falls back to wait
     pendingContinue[newKey] = t('sessions.autoContinueText');
+    // Old pane is gone → purge its keys so the episode-tracking Sets/maps don't leak across switches.
     panes = panes.filter((x) => x.key !== p.key);
     delete paneRefs[p.key];
+    autoContinued.delete(p.key);
+    switchAttempted.delete(p.key);
+    delete contJitterMs[p.key];
     if (maximized === p.key) maximized = null;
     return true;
   }
