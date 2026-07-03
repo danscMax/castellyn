@@ -804,6 +804,26 @@ export const agentStatusHookSet = (enabled: boolean) =>
  * `spawnedAt` is the session's spawn time (unix ms), static — the UI derives elapsed on render. */
 export type AgentStatusEvent = { id: string; state: string; claudeSessionId: string | null; spawnedAt?: number };
 
+/** Backend `limits-status` event: per-profile Anthropic usage (5h/7d utilization %). `expired`
+ * means the OAuth token was rejected (401). Emitted every poll for each OAuth profile. */
+export type LimitsStatusEvent = {
+  profile: string;
+  h5: number | null;
+  d7: number | null;
+  h5Reset: string | null;
+  d7Reset: string | null;
+  expired: boolean;
+};
+/** Backend `limits-alert` event: a window newly crossed a threshold (85 or 99). The UI toasts it;
+ * the backend also rings + OS-notifies at 99. `window` is "5h" | "7d". */
+export type LimitsAlertEvent = {
+  profile: string;
+  window: string;
+  level: number;
+  utilization: number;
+  resetsAt: string | null;
+};
+
 // --- Settings ---
 export type HubConfig = {
   scriptsRoot?: string | null;

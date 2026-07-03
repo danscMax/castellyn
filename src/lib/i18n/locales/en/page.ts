@@ -74,6 +74,7 @@ export default {
   log_error: '✖ Error: {e}',
   log_warn: '⚠ {e}',
   busy_running: 'Busy: “{name}” is running — try again when it finishes',
+  limitAlert: '“{profile}”: {window} usage at {pct}%',
   log_done: '■ Done (exit code {code}).',
   verb_apply: 'applying',
   verb_check: 'checking',

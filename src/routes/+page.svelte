@@ -104,7 +104,8 @@
     type PluginAction,
     type PluginUpdate,
     type PluginContents,
-    type PluginSyncStatus
+    type PluginSyncStatus,
+    type LimitsAlertEvent
   } from '$lib/ipc';
   import {
     updatesAttention,
@@ -1722,6 +1723,18 @@
         // gets its own row and the per-line '⚠ ' err prefix, preserving FIFO order.
         const prefix = p.stream === 'err' ? '⚠ ' : '';
         for (const ln of p.line.split('\n')) appendLog(prefix + ln);
+      })
+    );
+    // #21a: usage-limit alerts. The backend owns the antispam (once per profile per window) and
+    // already rings + OS-notifies at 99%; here we just surface the in-app toast (warning at 85%,
+    // error at 99%). resetsAt is carried for the deferred limits chip; not shown in the toast.
+    unlisten.push(
+      await listen<LimitsAlertEvent>('limits-alert', (e) => {
+        const p = e.payload;
+        pushToast({
+          kind: p.level >= 99 ? 'error' : 'warn',
+          title: t('page.limitAlert', { profile: p.profile, window: p.window, pct: Math.round(p.utilization) })
+        });
       })
     );
     unlisten.push(

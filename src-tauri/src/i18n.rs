@@ -55,6 +55,8 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("status.blocked_body",  ["{label}: нужен ваш ответ в терминале", "{label}: your input is needed in the terminal", "{label}: 终端中需要你的确认"]),
     ("status.done_title",    ["Агент закончил", "Agent finished", "代理已完成"]),
     ("status.done_body",     ["{label}: ход завершён — можно смотреть результат", "{label}: the turn finished — ready for review", "{label}: 本轮已结束 — 可以查看结果"]),
+    ("limits.crit_title",    ["Лимит почти исчерпан", "Usage limit almost reached", "用量即将达到上限"]),
+    ("limits.crit_body",     ["{profile}: {window} на {pct}% — лимит почти исчерпан", "{profile}: {window} at {pct}% — usage limit almost reached", "{profile}: {window} 已用 {pct}% — 即将达到上限"]),
 
     // ── config write (touched by language-preserving write_config) ───────────
     ("err.no_appdata",    ["APPDATA не найден", "APPDATA not found", "未找到 APPDATA"]),

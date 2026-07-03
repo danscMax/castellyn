@@ -599,6 +599,7 @@
       class:working={!exited && !error && agentState === 'working'}
       class:blocked={!exited && !error && agentState === 'blocked'}
       class:done={!exited && !error && agentState === 'done'}
+      class:limited={!exited && !error && agentState === 'limited'}
       title={!exited && !error && agentState && agentState !== 'unknown'
         ? t(`sessions.state_${agentState}`)
         : isSsh && !exited
@@ -770,6 +771,12 @@
   }
   .dot.done {
     background: var(--sw-status-done);
+  }
+  /* Usage limit hit (21b): a steady strong red — distinct from blocked (pulsing danger) and from
+     the amber "working". A ring makes it read as "stopped on quota" at a glance. */
+  .dot.limited {
+    background: var(--sw-status-down, #ef4444);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--sw-status-down, #ef4444) 35%, transparent);
   }
   @keyframes dot-pulse {
     0%,

@@ -18,6 +18,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 mod agent_status;
+mod limits;
 mod i18n;
 use i18n::{tr, trv, Lang};
 
@@ -148,6 +149,14 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     status_notify: Option<bool>,
+    // Anthropic OAuth usage-limit monitor (Sessions): None = default (true). Polls each profile's
+    // usage every 5 min and alerts at 85% / 99%. Set false to stop the background api.anthropic.com poll.
+    #[serde(
+        rename = "limitsMonitor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    limits_monitor: Option<bool>,
 }
 
 fn config_path() -> Option<String> {
@@ -9500,6 +9509,8 @@ fn session_spawn(
                 Ok(n) => {
                     let bytes = &buf[..n];
                     agent_status::on_output(&id_r, n);
+                    // #21b: flag a usage-limit banner in this session's output (bounded tail scan).
+                    agent_status::scan_limit(&id_r, bytes);
                     push_bounded(
                         &mut ring_r.lock().unwrap_or_else(|e| e.into_inner()),
                         bytes,
@@ -10376,6 +10387,9 @@ pub fn run() {
             build_tray(app.handle())?;
             // Agent-status engine for Sessions panes (hook files + PTY activity → events).
             agent_status::start(app.handle().clone());
+            // Anthropic OAuth usage-limit monitor (per profile; 85%/99% alerts). No-op for profiles
+            // without OAuth creds; disableable via the `limitsMonitor` config toggle.
+            limits::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();
             let cfg = read_config_file();

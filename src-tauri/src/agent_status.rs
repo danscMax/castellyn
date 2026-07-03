@@ -15,7 +15,7 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use tauri::{Emitter, Manager};
 
@@ -33,6 +33,10 @@ const BLOCKED_RESUME_BYTES: u64 = 1_024;
 /// Time backstop: after this long in `blocked` with real post-block output but no byte burst
 /// (an Esc answer emits little), allow the flip so `blocked` can't stick forever.
 const BLOCKED_STUCK_MS: u64 = 20_000;
+/// After a detected usage limit, the session sits quiet until its window resets; a genuine resume
+/// then floods far more than this, so that many bytes since the limit clears the `limited` state
+/// (item 21b). Higher than the block threshold — a limit banner + its surrounding repaint is larger.
+const LIMIT_RESUME_BYTES: u64 = 4_096;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -52,6 +56,11 @@ struct Track {
     /// Bytes emitted since the current `blocked` state began (reset in `apply_hook_report`).
     /// The hook-less fallback for clearing a stale `blocked` (item 6).
     bytes_since_block: AtomicU64,
+    /// A usage limit was detected in this session's PTY output (item 21b). Shown as `limited`
+    /// until a genuine resume (LIMIT_RESUME_BYTES of output past the limit) clears it.
+    limited: AtomicBool,
+    /// Bytes emitted since `limited` was set — the resume signal that clears it.
+    bytes_since_limit: AtomicU64,
     exited: bool,
     /// Latest hook-reported state ("working" | "blocked" | "idle"; "ended" clears it).
     hook_state: Option<String>,
@@ -90,6 +99,8 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str) {
             spawned_at: now,
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
+            limited: AtomicBool::new(false),
+            bytes_since_limit: AtomicU64::new(0),
             exited: false,
             hook_state: None,
             hook_ts: 0,
@@ -110,6 +121,50 @@ pub fn on_output(id: &str, bytes: usize) {
     {
         t.last_output.store(now_ms(), Ordering::Relaxed);
         t.bytes_since_block.fetch_add(bytes as u64, Ordering::Relaxed);
+        // A genuine resume after a limit floods output; once enough has arrived, clear `limited`.
+        if t.limited.load(Ordering::Relaxed)
+            && t.bytes_since_limit.fetch_add(bytes as u64, Ordering::Relaxed) + bytes as u64
+                > LIMIT_RESUME_BYTES
+        {
+            t.limited.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Mark a session as usage-limited (item 21b): the PTY reader detected a "limit reached" banner.
+/// Only claude panes carry an agent; unknown ids are ignored. Resets the resume counter so the
+/// state holds until real output resumes past LIMIT_RESUME_BYTES.
+pub fn on_limit(id: &str) {
+    if let Some(t) = TRACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+    {
+        if t.tool == "claude" {
+            t.bytes_since_limit.store(0, Ordering::Relaxed);
+            t.limited.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// True when a line signals a Claude Code usage limit. Kept tolerant (case-insensitive substring)
+/// because the exact wording drifts between CC versions — the endpoint monitor (limits.rs) is the
+/// confirming/secondary signal. Pure + unit-tested.
+fn is_limit_line(s: &str) -> bool {
+    let l = s.to_ascii_lowercase();
+    l.contains("limit reached") || l.contains("out of extra usage")
+}
+
+/// Scan a fresh PTY chunk's tail for a usage-limit banner and flag the session if found. The reader
+/// passes the raw bytes; we inspect a bounded tail (banners are short lines) to keep it cheap under
+/// a firehose. ponytail: bounded-tail scan, not a full-buffer regex — a banner split across two
+/// chunk boundaries beyond the tail window would be missed; the endpoint monitor still catches it.
+pub fn scan_limit(id: &str, chunk: &[u8]) {
+    const TAIL: usize = 512;
+    let start = chunk.len().saturating_sub(TAIL);
+    let tail = String::from_utf8_lossy(&chunk[start..]);
+    if is_limit_line(&tail) {
+        on_limit(id);
     }
 }
 
@@ -205,6 +260,11 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
 fn compute(t: &Track, now: u64) -> &'static str {
     if t.exited {
         return "idle";
+    }
+    // A detected usage limit outranks the hook/activity states: the session is stalled on quota
+    // until its window resets (cleared in on_output once real output resumes). (item 21b)
+    if t.limited.load(Ordering::Relaxed) {
+        return "limited";
     }
     let last_output = t.last_output.load(Ordering::Relaxed);
     let silent = now.saturating_sub(last_output) > ACTIVITY_IDLE_MS;
@@ -380,6 +440,8 @@ mod tests {
             spawned_at: now,
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
+            limited: AtomicBool::new(false),
+            bytes_since_limit: AtomicU64::new(0),
             exited: false,
             hook_state: None,
             hook_ts: 0,
@@ -387,6 +449,44 @@ mod tests {
             claude_session_id: None,
             last_emitted: None,
         }
+    }
+
+    #[test]
+    fn limit_line_detection_is_tolerant() {
+        assert!(is_limit_line("Claude usage limit reached. Your limit will reset at 3pm"));
+        assert!(is_limit_line("5-hour limit reached"));
+        assert!(is_limit_line("You are out of extra usage"));
+        assert!(is_limit_line("LIMIT REACHED")); // case-insensitive
+        assert!(!is_limit_line("running the linter, no limits here"));
+        assert!(!is_limit_line("rate limited by the API")); // not our banner wording
+    }
+
+    #[test]
+    fn limited_state_outranks_and_clears_on_resume() {
+        let now = 1_000_000;
+        let t = track("claude", now);
+        // A limit banner flags the session; compute reports `limited` regardless of hook/activity
+        // (track() leaves hook_state None, so the limited flag is what's exercised here).
+        t.limited.store(true, Ordering::Relaxed);
+        t.last_output.store(now + 10_000, Ordering::Relaxed); // even with recent output
+        assert_eq!(compute(&t, now + 11_000), "limited");
+        // A small trickle does NOT clear it (mirrors on_output's accumulate-then-compare).
+        t.bytes_since_limit.store(0, Ordering::Relaxed);
+        let small = 100u64;
+        if t.limited.load(Ordering::Relaxed)
+            && t.bytes_since_limit.fetch_add(small, Ordering::Relaxed) + small > LIMIT_RESUME_BYTES
+        {
+            t.limited.store(false, Ordering::Relaxed);
+        }
+        assert_eq!(compute(&t, now + 12_000), "limited");
+        // A genuine resume (flood past the threshold) clears it → back to normal activity states.
+        let big = LIMIT_RESUME_BYTES + 1;
+        if t.limited.load(Ordering::Relaxed)
+            && t.bytes_since_limit.fetch_add(big, Ordering::Relaxed) + big > LIMIT_RESUME_BYTES
+        {
+            t.limited.store(false, Ordering::Relaxed);
+        }
+        assert_ne!(compute(&t, now + 13_000), "limited");
     }
 
     #[test]

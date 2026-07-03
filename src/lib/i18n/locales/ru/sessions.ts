@@ -7,6 +7,7 @@ export default {
   state_blocked: 'Агент ждёт вашего решения',
   state_done: 'Агент закончил — не просмотрено',
   state_idle: 'Агент простаивает',
+  state_limited: 'Лимит исчерпан — ожидание сброса',
   sumBlocked: '{n} ждёт',
   sumWorking: '{n} работает',
   sumDone: '{n} готово',

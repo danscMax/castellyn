@@ -7,6 +7,7 @@ export default {
   state_blocked: 'Agent is waiting for your decision',
   state_done: 'Agent finished — not reviewed yet',
   state_idle: 'Agent is idle',
+  state_limited: 'Usage limit reached — waiting for reset',
   sumBlocked: '{n} blocked',
   sumWorking: '{n} working',
   sumDone: '{n} done',
