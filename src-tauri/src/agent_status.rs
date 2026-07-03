@@ -116,6 +116,8 @@ struct StatusEvent {
     prev: Option<String>,
     #[serde(skip)]
     label: String,
+    #[serde(skip)]
+    exited: bool,
 }
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
@@ -139,6 +141,11 @@ fn beep(attention: bool) {
 /// background completion. Suppressed while any Castellyn window is focused — the user
 /// is already looking at the app.
 fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
+    // A closed/exited pane also lands on idle — that's teardown, not a completion worth
+    // a "finished" toast (closing a working pane must stay silent).
+    if ev.exited {
+        return;
+    }
     let to_blocked = ev.state == "blocked" && ev.prev.as_deref() != Some("blocked");
     let completed = ev.state == "idle"
         && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"));
@@ -216,16 +223,7 @@ fn compute(t: &Track, now: u64) -> &'static str {
 
 /// Read this session's hook file into the track (cheap: ~1 tiny JSON per tracked pane
 /// per poll; only local claude panes ever have one).
-fn absorb_hook_file(dir: &std::path::Path, id: &str, t: &mut Track) {
-    if t.tool != "claude" {
-        return;
-    }
-    let Ok(text) = std::fs::read_to_string(dir.join(format!("{id}.json"))) else {
-        return;
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return;
-    };
+fn apply_hook_report(v: &serde_json::Value, t: &mut Track) {
     let ts = v.get("ts").and_then(|x| x.as_u64()).unwrap_or(0);
     if ts <= t.hook_ts {
         return; // stale / unchanged
@@ -268,13 +266,33 @@ pub fn start(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
         let dir = status_dir();
+        // Read hook files OUTSIDE the tracks lock: on_output() takes that lock from every
+        // PTY reader thread per chunk, so fs reads (AV scans can stall them) must not
+        // serialize against it. Only local claude panes ever have a hook file.
+        let claude_ids: Vec<String> = {
+            let map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
+            map.iter()
+                .filter(|(_, t)| t.tool == "claude")
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        let mut reports: HashMap<String, serde_json::Value> = HashMap::new();
+        if let Some(d) = dir.as_deref() {
+            for id in claude_ids {
+                if let Ok(text) = std::fs::read_to_string(d.join(format!("{id}.json"))) {
+                    if let Ok(v) = serde_json::from_str(&text) {
+                        reports.insert(id, v);
+                    }
+                }
+            }
+        }
         let mut events: Vec<StatusEvent> = Vec::new();
         {
             let mut map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
             let now = now_ms();
             map.retain(|id, t| {
-                if let Some(d) = dir.as_deref() {
-                    absorb_hook_file(d, id, t);
+                if let Some(v) = reports.get(id) {
+                    apply_hook_report(v, t);
                 }
                 let state = compute(t, now);
                 if t.last_emitted.as_deref() != Some(state) {
@@ -286,6 +304,7 @@ pub fn start(app: tauri::AppHandle) {
                         claude_session_id: t.claude_session_id.clone(),
                         prev,
                         label: t.label.clone(),
+                        exited: t.exited,
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop

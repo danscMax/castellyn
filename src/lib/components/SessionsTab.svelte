@@ -1052,8 +1052,12 @@
     for (const s of restorable) {
       let args = s.args;
       // Resume the conversation only for a LOCAL claude with a captured id and no
-      // user-supplied resume/continue flag of its own.
-      if (s.tool === 'claude' && !s.sshTarget && s.claudeSid && !/--(resume|continue)\b/.test(args)) {
+      // user-supplied resume/continue flag of its own. The id lands in a pwsh -Command
+      // line, so gate its charset (session ids are uuid-shaped) — never trust the file.
+      if (
+        s.tool === 'claude' && !s.sshTarget && s.claudeSid &&
+        /^[\w-]{1,64}$/.test(s.claudeSid) && !/--(resume|continue)\b/.test(args)
+      ) {
         args = `${args} --resume ${s.claudeSid}`.trim();
       }
       addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget });
