@@ -7944,6 +7944,37 @@ fn plugin_sync_profiles(home: &str) -> Vec<(String, String)> {
     out
 }
 
+/// A plausible Castellyn profile dir name (`~/.claude` or `~/.claude-<name>`). Deliberately
+/// permissive: a foreign sibling like `~/.claude-mem` also matches here, but the marker-gated
+/// unwire below never modifies it (no Castellyn marker → no-op, no write). Pure (unit-tested).
+fn is_claude_profile_dirname(name: &str) -> bool {
+    name == ".claude" || name.starts_with(".claude-")
+}
+
+/// Every `~/.claude*` sibling with a real (non-symlink) settings.json — the current profiles
+/// PLUS orphans (dirs dropped from profiles.json but still on disk). Used ONLY by the disable
+/// sweeps so a renamed/removed profile's Castellyn hook entries still get unwired. Marker-gated
+/// unwire keeps foreign dirs untouched, so this may read `~/.claude-mem` but never writes it.
+fn claude_settings_all(home: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(home) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !is_claude_profile_dirname(&name) {
+            continue;
+        }
+        let sp = format!("{home}\\{name}\\settings.json");
+        if let Ok(meta) = std::fs::symlink_metadata(&sp) {
+            if meta.file_type().is_file() {
+                out.push((name, sp));
+            }
+        }
+    }
+    out
+}
+
 /// True when some `hooks.<event>[].hooks[].command` contains `marker`.
 fn hook_cmd_wired(settings: &serde_json::Value, event: &str, marker: &str) -> bool {
     settings
@@ -8083,8 +8114,15 @@ fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
     // Continue-on-error across profiles: one profile whose settings.json is momentarily locked (a
     // live session, an AV scan) must NOT abort the sweep and strand the remaining profiles half-wired.
     // Retry a transient sharing violation, collect hard failures, and surface them after trying all.
+    // Enable wires the CURRENT profiles only; disable sweeps orphan-inclusive so a renamed/removed
+    // profile's hook entries are also unwired (marker-gated → foreign dirs untouched).
+    let targets = if enabled {
+        plugin_sync_profiles(&home)
+    } else {
+        claude_settings_all(&home)
+    };
     let mut errs: Vec<String> = Vec::new();
-    for (_, sp) in plugin_sync_profiles(&home) {
+    for (_, sp) in targets {
         let Ok(c) = std::fs::read_to_string(&sp) else {
             continue;
         };
@@ -8222,8 +8260,14 @@ fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> 
     // Continue-on-error across profiles (see plugin_sync_set): a momentarily-locked settings.json is
     // retried, hard failures are collected and surfaced after every profile has been attempted — never
     // an early abort that leaves later profiles unwired.
+    // See plugin_sync_set: enable → current profiles; disable → orphan-inclusive, marker-gated.
+    let targets = if enabled {
+        plugin_sync_profiles(&home)
+    } else {
+        claude_settings_all(&home)
+    };
     let mut errs: Vec<String> = Vec::new();
-    for (_, sp) in plugin_sync_profiles(&home) {
+    for (_, sp) in targets {
         let Ok(c) = std::fs::read_to_string(&sp) else {
             continue;
         };
@@ -8301,6 +8345,34 @@ mod plugin_sync_tests {
         let mut bad = json!({ "hooks": "oops" });
         assert!(!super::plugin_sync_wire(&mut bad));
         assert_eq!(bad["hooks"], "oops");
+    }
+
+    #[test]
+    fn claude_profile_dirname_predicate() {
+        assert!(super::is_claude_profile_dirname(".claude"));
+        assert!(super::is_claude_profile_dirname(".claude-cc1"));
+        // A foreign sibling matches the name filter but is marker-gated at unwire, so it's read-only.
+        assert!(super::is_claude_profile_dirname(".claude-mem"));
+        assert!(!super::is_claude_profile_dirname("claude"));
+        assert!(!super::is_claude_profile_dirname(".config"));
+        assert!(!super::is_claude_profile_dirname(".claudex")); // no separator → not a profile dir
+    }
+
+    #[test]
+    fn unwire_leaves_foreign_only_settings_untouched() {
+        // Orphan/foreign settings.json with only a non-Castellyn hook: the disable sweep's unwire
+        // is a no-op (changed=false) across every event and the foreign hook survives verbatim.
+        let mut v = json!({ "hooks": { "SessionStart": [
+            { "hooks": [{ "type": "command", "command": "py -X utf8 ~/.claude-mem/hook.py" }] }
+        ]}});
+        assert!(!super::plugin_sync_unwire(&mut v));
+        for ev in super::STATUS_HOOK_EVENTS {
+            assert!(!super::hook_cmd_unwire(&mut v, ev, super::STATUS_HOOK_MARKER));
+        }
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "py -X utf8 ~/.claude-mem/hook.py"
+        );
     }
 
     #[test]
