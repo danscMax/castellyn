@@ -147,12 +147,15 @@ pub fn on_limit(id: &str) {
     }
 }
 
-/// True when a line signals a Claude Code usage limit. Kept tolerant (case-insensitive substring)
-/// because the exact wording drifts between CC versions — the endpoint monitor (limits.rs) is the
-/// confirming/secondary signal. Pure + unit-tested.
+/// True when a line signals a Claude Code usage limit. Anchored on the qualified banner wording
+/// ("usage limit reached", "N-hour limit reached") rather than a bare "limit reached", so agent
+/// output merely discussing limits doesn't flip the badge; still tolerant of version drift, with the
+/// endpoint monitor (limits.rs) as the confirming/secondary signal. Pure + unit-tested.
 fn is_limit_line(s: &str) -> bool {
     let l = s.to_ascii_lowercase();
-    l.contains("limit reached") || l.contains("out of extra usage")
+    l.contains("usage limit reached")
+        || l.contains("hour limit reached")
+        || l.contains("out of extra usage")
 }
 
 /// Scan a fresh PTY chunk's tail for a usage-limit banner and flag the session if found. The reader
@@ -456,9 +459,12 @@ mod tests {
         assert!(is_limit_line("Claude usage limit reached. Your limit will reset at 3pm"));
         assert!(is_limit_line("5-hour limit reached"));
         assert!(is_limit_line("You are out of extra usage"));
-        assert!(is_limit_line("LIMIT REACHED")); // case-insensitive
+        assert!(is_limit_line("USAGE LIMIT REACHED")); // case-insensitive
         assert!(!is_limit_line("running the linter, no limits here"));
         assert!(!is_limit_line("rate limited by the API")); // not our banner wording
+        // Anchored: a bare "limit reached" in ordinary agent output must NOT flip the badge.
+        assert!(!is_limit_line("the rate limit reached its cap in the test fixture"));
+        assert!(!is_limit_line("// TODO: handle when the retry limit reached"));
     }
 
     #[test]
