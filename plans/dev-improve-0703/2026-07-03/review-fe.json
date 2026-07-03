@@ -1,0 +1,46 @@
+{
+  "findings": [
+    {
+      "severity": "low",
+      "rubricLine": "1c: toggleBackground clears maximized only for the backgrounded pane's key",
+      "file": "src/lib/components/SessionsTab.svelte",
+      "line": 683,
+      "finding": "Guard reads panes BEFORE the map, so `.background` is the OLD value -- this is CORRECT, not a bug. Trace: send-to-bg has old background=false, so `!panes.find(key)?.background` = `!false` = true, and with maximized===key it sets maximized=null (grid re-renders remaining activePanes, no dead grid). Restore-from-bg has old background=true, so `!true` = false and the guard does NOT clear maximized -- but that state (maximized===key while key is a bg pane) is UNREACHABLE: backgrounding the maximized pane routes through this same guard which already nulls maximized, and bg panes render at line 1435 with NO onToggleMax/onBackground and maximized={false}@1447, and are absent from the maxbar. So the asymmetry never fires; even if it did, un-backgrounding makes the pane active+visible -- still no dead grid.",
+      "evidence": "if (maximized === key && !panes.find((p) => p.key === key)?.background) maximized = null;  // guard@683\n// bg TerminalPane@1435 passes NO onToggleMax/onBackground; maximized={false}@1447 -> cannot re-enter maximized",
+      "fix": "None required.",
+      "verdict": "note"
+    },
+    {
+      "severity": "low",
+      "rubricLine": "1c: maxbar iterates activePanes; restoring a pane from background can't leave maximized pointing at a hidden pane",
+      "file": "src/lib/components/SessionsTab.svelte",
+      "line": 1346,
+      "finding": "Maxbar now iterates activePanes (was `panes` -- confirmed by diff), closing the pre-fix dead-grid path. Pre-fix bug trace: `{#each panes}` let a bg pane render as a maxchip; clicking it set maximized=bgKey; grid renders activePanes@1366, each cell `class:hidden={maximized != null && maximized !== pane.key}`@1367 = true for every active pane -> all hidden -> dead grid. After fix only activePanes are selectable. Checked ALL writers of `maximized`: toggleMax@676 (wired only on grid panes @1392, not bg), maxbar onclick@1348 (activePanes), toggleBackground@683 (->null), closePane@566 (->null), closeAll@587 (->null). Drag/drop cannot set it: onDragEnter@951 returns early `if (... || maximized)` and never mutates maximized. No residual path exists.",
+      "evidence": "{#each activePanes as p (p.key)}  // maxbar@1346\nconst activePanes = $derived(panes.filter((p) => !p.background));  // @596\nfunction onDragEnter(targetKey){ if (!dragKey || dragKey === targetKey || maximized) return; ... }  // @950-951 - no maximized write",
+      "fix": "None required.",
+      "verdict": "note"
+    },
+    {
+      "severity": "low",
+      "rubricLine": "1d: pty:exit -> onIdChange(paneKey,null); pane excluded from broadcast/sendToAll/statusCounts; relaunch still works",
+      "file": "src/lib/components/TerminalPane.svelte",
+      "line": 371,
+      "finding": "Correct. Trace: pty:exit sets exited=true, onIdChange(paneKey,null)@371 (removes key from sessionIds@332), id=null@372. Consumers all key off sessionIds and now skip the dead pane: broadcastInput@360 iterates Object.values(sessionIds); statusCounts@267 same; sendToAll@375 filters `sessionIds[p.key]`. relaunch()@380 works with id=null: unlisteners cleared@381 (removes the already-fired exit listener, no stale/double-fire), `if (id && !attachId)`@383 is false so the redundant kill is skipped (child already reaped), then start()@356 reassigns a fresh id and re-emits onIdChange(paneKey,id)@363. Attached mirror (attachId set) whose source exits: same nulling, but relaunch's kill is skipped via `!attachId` anyway, and onDestroy@539 `if (id)` is false so it correctly does NOT kill/detach an already-dead session (no leak, no wrong side effect). persist effect@352 filters `!p.attachId && sessionIds[p.key]` -> drops ONLY the dead pane; live siblings keep their ids and stay persisted. closePane's peekMoved(sessionIds[key] ?? '')@563 with a dead pane -> peekMoved('') -> moving.has('') (sessionMove.ts:17) = false (empty string is never markMoved'd) -> reopen toast fires, correct for a closed dead pane.",
+      "evidence": "onIdChange?.(paneKey, null); id = null;  // pty:exit@371-372\nif (id && !attachId) { await sessionKill(id); id = null; }  // relaunch@383 skipped when id null\nconst live = panes.filter((p) => !p.attachId && sessionIds[p.key])...  // persist@352 drops dead pane only\nexport const peekMoved = (id) => moving.has(id);  // sessionMove.ts:17 - has('') = false",
+      "fix": "None required.",
+      "verdict": "note"
+    },
+    {
+      "severity": "low",
+      "rubricLine": "1d: persist effect drops the dead pane (secondary consequence for restore-after-restart)",
+      "file": "src/lib/components/SessionsTab.svelte",
+      "line": 352,
+      "finding": "Secondary behavioral consequence, NOT a rubric violation (the rubric wants the pane dropped). Because pty:exit now clears sessionIds[key], the persist effect@352 immediately removes a session that EXITED while the app kept running from cmh-sessions-live. If the app is then restarted, that exited-but-claude-resumable conversation is no longer offered in the restore bar (restorable@145). This is arguably the intended/better semantics (do not offer to resume a deliberately-ended session) and there is NO data loss -- claude conversations remain resumable from claude's own store via --resume. Flagging only so the wave owner knows the restore surface narrowed to sessions still live at crash/restart time.",
+      "evidence": "// exit@371 clears sessionIds[key] -> persist@352 filter `sessionIds[p.key]` drops it -> savedLive@342 won't contain it next mount -> not added to restorable@145",
+      "fix": "Accept as-is (recommended); if resuming ended sessions is desired, persist claudeSid separately from the live-set. No change needed for this wave.",
+      "verdict": "note"
+    }
+  ],
+  "overall": "APPROVE",
+  "summary": "1c and 1d are correct, minimal (SessionsTab +4/-1, TerminalPane +5/0 per git diff), in-scope (no test files, onIdChange signature unchanged; backend i18n.rs/lib.rs belong to the other reviewer's items). 1c: the toggleBackground guard@683 correctly nulls maximized on send-to-bg (reads pre-map OLD background=false -> guard true), and the maxbar switch to activePanes@1346 closes the only dead-grid path; verified NO residual writer (toggleMax/maxbar/drag/drop/closePane/closeAll) can point maximized at a hidden or background pane. 1d: pty:exit@371-372 nulls id and de-registers the pane from sessionIds so broadcast/sendToAll/statusCounts skip it; relaunch's id-null path is fine (skips redundant kill, reassigns fresh id, clears stale listener); attached mirrors and onDestroy behave safely; persist@352 drops only the dead pane and keeps live siblings; peekMoved('') is safe. No REJECT. One low note: exited-while-running sessions are now dropped from the restore-after-restart list -- arguably intended, no data loss."
+}

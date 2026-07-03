@@ -1,0 +1,29 @@
+{
+  "phase": "validate",
+  "mode": "autonomous-plan-run",
+  "plan": "plans/improve/fix_plan-2026-07-03.json",
+  "branch": "auto-loop/improve-0703",
+  "baseline": { "branch": "main", "commit": "44af513151be52055c12385f7836a9ef23cb2683" },
+  "no_touch": [".serena/project.yml"],
+  "model_note": "Fable 5 exhausted early; all implementers/reviewers on Opus. Agent resume/message channel unreliable (INFRA structured-output bug) — Lead personal diff-read + security-review plugin + write-to-file reviews used for verification.",
+  "waves": {
+    "done": [
+      { "wave": 1, "commit": "1b7f04d", "items": ["1a","1b","1c","1d","1e","1f"] },
+      { "wave": 2, "commit": "678f260", "items": ["7","9","12","14","16","20"] },
+      { "wave": 3, "commit": "23b0666", "items": ["2","3","4","6","8"] },
+      { "wave": 5, "commit": "e8c3011", "items": ["21a","21b"] }
+    ],
+    "rolled_back": []
+  },
+  "items": {
+    "applied": ["1a","1b","1c","1d","1e","1f","7","9","12","14","16","20","2","3","4","6","8","21a","21b"],
+    "failed": [],
+    "deferred": ["5","21c","21d","21e","10","11","13","15","17","18","19"]
+  },
+  "gates_final": "cargo 67/67 · npm run check 0/0 · vitest 37/37 · check:i18n 1667 · npm run build OK",
+  "user_smoke_required": [
+    "21a — live OAuth %: compare a real profile's reported 5h/7d % against statusline.py; verify window-change resets antispam (Lead cannot exercise real token polling)",
+    "4 — launch castellyn.exe twice → single window focuses (needs the built exe + start-hidden/tray check)"
+  ],
+  "timestamp": "2026-07-03T12:50:00+03:00"
+}
