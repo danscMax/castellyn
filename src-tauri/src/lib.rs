@@ -8299,10 +8299,20 @@ fn is_orphan_profile_dir(dirname: &str, has_claude_json: bool, canon: &[String])
     if suffix.is_empty() || !has_claude_json {
         return false;
     }
-    if ORPHAN_DENYLIST.contains(&suffix) {
+    // Windows strips trailing spaces/dots from a path's final component, so `.claude-cc1 ` and
+    // `.claude-cc1.` RESOLVE to the canon `.claude-cc1` through normal-path APIs. A suffix that is
+    // not already in normalized form can't be safely adopted/recycled (the op would hit its
+    // trimmed twin — possibly a live canon profile), so it is never treated as an orphan here.
+    // Such a dir, if it truly exists distinctly, must be removed manually via a `\\?\` path.
+    if suffix != suffix.trim_end_matches([' ', '.']) {
         return false;
     }
-    !canon.iter().any(|n| n == suffix)
+    // Compare case-insensitively: NTFS is case-insensitive, so `.claude-CC1` resolves to the canon
+    // `.claude-cc1` too — treating it as an orphan would let adopt/recycle hit the canon dir.
+    if ORPHAN_DENYLIST.iter().any(|d| d.eq_ignore_ascii_case(suffix)) {
+        return false;
+    }
+    !canon.iter().any(|n| n.eq_ignore_ascii_case(suffix))
 }
 
 #[derive(Serialize)]
@@ -8363,14 +8373,22 @@ fn read_orphan_profiles() -> Result<Vec<OrphanInfo>, String> {
 #[tauri::command]
 fn delete_orphan_profile(name: String) -> Result<(), String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
-    // Defense-in-depth: a real read_dir name is a single component, but a hand-crafted IPC call
-    // could smuggle separators/`..` — reject those so the join can't escape the home dir.
-    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+    // Defense-in-depth. A real read_dir name is a single component, but a hand-crafted IPC call
+    // could smuggle separators/`..`, control chars, or a trailing space/dot that Windows strips
+    // during path normalization (so `.claude-cc1 ` would resolve to the canon `.claude-cc1`).
+    // Reject all of those so the target can only ever be an exact, literal `.claude-<name>` dir.
+    if name.is_empty()
+        || name.contains(['/', '\\', ':'])
+        || name.contains("..")
+        || name.chars().any(|c| c.is_control())
+        || name != name.trim_end_matches([' ', '.'])
+    {
         return Err(trv("err.orphan_bad_name", cur_lang(), &[("n", &name)]));
     }
     let canon = profile_names();
-    // Never let this path touch a canon profile — that is what run_profile_mgmt('remove') is for.
-    if canon.iter().any(|n| n == &name) {
+    // Never let this path touch a canon profile — that is run_profile_mgmt('remove')'s job.
+    // Case-insensitive: NTFS resolves `.claude-CC1` to the canon `.claude-cc1`.
+    if canon.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
         return Err(trv("err.orphan_is_canon", cur_lang(), &[("n", &name)]));
     }
     let dirname = format!(".claude-{name}");
@@ -8382,7 +8400,30 @@ fn delete_orphan_profile(name: String) -> Result<(), String> {
     if profile_session_active(&name) {
         return Err(trv("err.orphan_session_active", cur_lang(), &[("n", &name)]));
     }
+    // A profile dir's shared folders (projects/, plugins/ …) are junctions into a COMMON tree used
+    // by every profile. Recycling a dir with reparse-point children risks the shell op sweeping the
+    // LINK TARGET into the bin — refuse and let the user detach/remove such a dir manually.
+    if has_reparse_child(&dir) {
+        return Err(trv("err.orphan_has_links", cur_lang(), &[("n", &name)]));
+    }
     recycle_dir(&dir.to_string_lossy())
+}
+
+/// True if any immediate child of `dir` is a reparse point (junction/symlink). Checks the raw
+/// FILE_ATTRIBUTE_REPARSE_POINT bit (via symlink_metadata, so the link itself is stat'd, not its
+/// target) — this catches junctions AND symlinks, which `is_symlink()` alone can miss on Windows.
+fn has_reparse_child(dir: &std::path::Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.path()
+            .symlink_metadata()
+            .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+            .unwrap_or(false)
+    })
 }
 
 /// Move a directory to the Windows Recycle Bin via the .NET VisualBasic helper (no extra crate).
@@ -8799,10 +8840,17 @@ mod plugin_sync_tests {
         let canon: Vec<String> = ["cc1", "ccmy"].iter().map(|s| s.to_string()).collect();
         // Real orphan: .claude-<name>, not canon, has the .claude.json marker → adoptable.
         assert!(super::is_orphan_profile_dir(".claude-oldtest", true, &canon));
-        // Off-charset dirname (trailing space) is still a valid orphan to surface/delete.
-        assert!(super::is_orphan_profile_dir(".claude-cc1 ", true, &canon));
         // Canon profile → never an orphan (delete via run_profile_mgmt('remove')).
         assert!(!super::is_orphan_profile_dir(".claude-cc1", true, &canon));
+        // Trailing space/dot RESOLVES to the canon dir on Windows path normalization → must NOT be
+        // an orphan, else adopt/recycle would hit the live canon profile (the data-loss guard).
+        assert!(!super::is_orphan_profile_dir(".claude-cc1 ", true, &canon));
+        assert!(!super::is_orphan_profile_dir(".claude-cc1.", true, &canon));
+        // Case-insensitive: NTFS resolves .claude-CC1 to canon .claude-cc1 → not an orphan.
+        assert!(!super::is_orphan_profile_dir(".claude-CC1", true, &canon));
+        // A trailing-space name that does NOT collide with canon is STILL excluded — it can't be
+        // safely targeted by normalized-path APIs (would hit its trimmed twin).
+        assert!(!super::is_orphan_profile_dir(".claude-oldtest ", true, &canon));
         // No .claude.json marker → not an (adoptable) CC profile dir.
         assert!(!super::is_orphan_profile_dir(".claude-oldtest", false, &canon));
         // Foreign tool dir on the denylist → excluded even with a marker present.

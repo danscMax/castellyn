@@ -111,6 +111,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("err.orphan_not_found", ["посторонний каталог «{n}» не найден или больше не сирота", "orphan directory '{n}' not found or no longer an orphan", "未找到孤立目录「{n}」或它已不再是孤立目录"]),
     ("err.orphan_bad_name", ["недопустимое имя сироты: {n}", "invalid orphan name: {n}", "孤立目录名称无效: {n}"]),
     ("err.orphan_session_active", ["профиль «{n}» сейчас используется активной сессией — закройте её и повторите", "profile '{n}' is in use by a live session — close it and retry", "配置「{n}」正被活动会话使用——请关闭后重试"]),
+    ("err.orphan_has_links", ["каталог «.claude-{n}» содержит junction-ссылки в общие данные — удалите его вручную (через путь \\\\?\\), чтобы не задеть общий контент", "'.claude-{n}' contains junction links into shared data — delete it manually (via a \\\\?\\ path) so the shared content is not swept in", "「.claude-{n}」包含指向共享数据的 junction 链接——请手动删除（使用 \\\\?\\ 路径），以免波及共享内容"]),
     ("err.elevation_cancelled", ["Повышение прав отменено.", "Elevation cancelled.", "已取消提权。"]),
     ("err.unknown_sync_action", ["неизвестное действие sync: {action}", "unknown sync action: {action}", "未知的 sync 操作: {action}"]),
     ("err.invalid_service_id", ["недопустимый id сервиса: {id}", "invalid service id: {id}", "服务 id 无效: {id}"]),
