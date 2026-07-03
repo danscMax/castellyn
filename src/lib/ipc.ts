@@ -844,6 +844,9 @@ export type HubConfig = {
   // #21c: auto-continue a limited Claude pane after its 5h reset. Absent = default (on). No UI
   // toggle — a config-only escape hatch; read-only from the app (read-patch-write preserves it).
   autoContinueOnReset?: boolean | null;
+  // #21e: after-limit behaviour — 'wait' (default, auto-continue on reset) | 'switchProfile'
+  // (respawn under a free OAuth profile immediately).
+  limitMode?: string | null;
 };
 
 /** A single entry in the global-shortcut mapping. */

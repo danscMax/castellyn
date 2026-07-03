@@ -27,8 +27,10 @@
     writeConfig,
     type AgentStatusHookState,
     type AgentStatusEvent,
-    type LimitsStatusEvent
+    type LimitsStatusEvent,
+    type ProfileInfo
   } from '$lib/ipc';
+  import { pickResumeCandidate } from '$lib/limitSwitch';
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
@@ -53,12 +55,15 @@
 
   let {
     profiles = [],
+    profileInfos = [],
     visible = true,
     folderReq = null,
     confirmDestructive = true,
     onFolderReqConsumed
   }: {
     profiles?: string[];
+    /** #21e: full profile records (OAuth + link health) for after-limit profile switching. */
+    profileInfos?: ProfileInfo[];
     visible?: boolean;
     /** R8: mirror the global "confirm destructive actions" toggle (settings #120). */
     confirmDestructive?: boolean;
@@ -279,7 +284,8 @@
   // limit episode. Config-gated (autoContinueOn) for rollback. (A pane whose session actually EXITED
   // is not the limit case — Claude waits, it doesn't die — so respawn-resume is deliberately omitted.)
   let limitsByProfile = $state<Record<string, LimitsStatusEvent>>({});
-  const autoContinued = new Set<string>(); // pane keys already continued this limit episode
+  const autoContinued = new Set<string>(); // pane keys already handled this limit episode
+  const switchAttempted = new Set<string>(); // #21e: switch tried once per episode (else fall to wait)
   const contJitterMs: Record<string, number> = {};
   onMount(() => {
     let un: UnlistenFn | undefined;
@@ -293,16 +299,28 @@
     };
   });
   function maybeAutoContinue() {
-    if (!autoContinueOn) return;
+    if (!autoContinueOn) return; // master escape hatch for ALL unattended limit handling (21c + 21e)
     for (const p of panes) {
       const id = sessionIds[p.key];
       if (!id || agentStates[id] !== 'limited') {
         // Recovered (or pane gone) → re-arm so a later, separate limit episode gets its own attempt.
         autoContinued.delete(p.key);
+        switchAttempted.delete(p.key);
         delete contJitterMs[p.key];
         continue;
       }
       if (autoContinued.has(p.key)) continue; // one attempt per episode — never a retry loop
+      // #21e: switchProfile — respawn under a free OAuth profile immediately (once per episode). No
+      // candidate → fall through to the wait-on-reset path below (the spec's "fallback wait").
+      if (limitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
+        switchAttempted.add(p.key);
+        const cand = pickResumeCandidate(p.profile, profileInfos, limitsByProfile);
+        if (cand && switchPaneToProfile(p, id, cand)) {
+          autoContinued.add(p.key);
+          pushToast({ kind: 'info', title: t('sessions.switchedProfile', { name: p.name ?? p.profile, profile: cand }) });
+          continue;
+        }
+      }
       const resetStr = limitsByProfile[p.profile]?.h5Reset;
       const reset = resetStr ? Date.parse(resetStr) : NaN;
       if (!Number.isFinite(reset)) continue; // no known reset yet — wait for the next poll
@@ -312,6 +330,23 @@
       sessionWrite(id, t('sessions.autoContinueText') + '\r');
       pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
     }
+  }
+  // #21e: respawn a limited pane's conversation under a free OAuth profile. Spawns the new pane FIRST
+  // (so a rejected spawn at the cap never strands the conversation), queues the continuation for when
+  // its session arrives, then drops the old pane (its unmount kills the old, waiting session).
+  function switchPaneToProfile(p: Pane, oldId: string, candidate: string): boolean {
+    const sid = claudeSids[oldId];
+    // Only a local claude conversation with a captured, charset-safe id can be resumed elsewhere.
+    if (p.tool !== 'claude' || p.sshTarget || !sid || !/^[\w-]{1,64}$/.test(sid)) return false;
+    let args = p.args;
+    if (!/--(resume|continue)\b/.test(args)) args = `${args} --resume ${sid}`.trim();
+    const newKey = addPane({ tool: 'claude', profile: candidate, cwd: p.cwd, args, name: p.name });
+    if (!newKey) return false; // cap/ceiling — keep the old pane, caller falls back to wait
+    pendingContinue[newKey] = t('sessions.autoContinueText');
+    panes = panes.filter((x) => x.key !== p.key);
+    delete paneRefs[p.key];
+    if (maximized === p.key) maximized = null;
+    return true;
   }
   // Roll the counts up for the header chips + the sidebar badge (+page reads the store).
   const statusCounts = $derived.by(() => {
@@ -355,16 +390,28 @@
   let statusNotify = $state(true);
   // #21c: auto-continue a limited pane after its 5h reset. Config-only escape hatch (no UI toggle).
   let autoContinueOn = $state(true);
+  // #21e: after-limit behaviour — 'wait' (auto-continue on reset) | 'switchProfile' (respawn under a
+  // free OAuth profile immediately). Has a UI control (saved via saveLimitMode).
+  let limitMode = $state<'wait' | 'switchProfile'>('wait');
   onMount(async () => {
     try {
       const c = await readConfig();
       statusSounds = c.statusSounds ?? true;
       statusNotify = c.statusNotify ?? true;
       autoContinueOn = c.autoContinueOnReset ?? true;
+      limitMode = c.limitMode === 'switchProfile' ? 'switchProfile' : 'wait';
     } catch {
       /* defaults stand */
     }
   });
+  async function saveLimitMode() {
+    try {
+      const c = await readConfig();
+      await writeConfig({ ...c, limitMode });
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+  }
   async function saveStatusPrefs() {
     try {
       // Read-patch-write: writeConfig persists the WHOLE config, so never send a partial.
@@ -379,6 +426,8 @@
   let broadcast = $state(false);
   // $state (not a plain object) so the persist effect below reacts when a pane's id arrives/clears.
   let sessionIds = $state<Record<string, string>>({});
+  // #21e: continuation text queued for a just-switched pane, sent once its session id arrives (below).
+  const pendingContinue: Record<string, string> = {};
   function onIdChange(key: string, id: string | null) {
     if (id) sessionIds = { ...sessionIds, [key]: id };
     else {
@@ -386,6 +435,13 @@
       sessionIds = rest;
     }
     refreshGlobalCount(); // F16: a spawn/exit here moved the global tally — re-read it
+    // #21e: a switched-in pane just got its session — let `claude --resume` load the conversation,
+    // then type the continuation. The delay is a live-tuned heuristic (the TUI must be ready to read).
+    if (id && pendingContinue[key]) {
+      const text = pendingContinue[key];
+      delete pendingContinue[key];
+      setTimeout(() => sessionWrite(id, text + '\r'), 3000);
+    }
   }
   // ── Reload survival (#5): persist spawned-here sessions, re-attach the ones still alive on mount ──
   const LIVE_KEY = 'cmh-sessions-live';
@@ -595,7 +651,7 @@
   function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string }) {
     // Don't block re-attaching an EXISTING session (e.g. a pane returned from a monitor) on the cap —
     // it's not a new spawn. Only new spawns count against MAX_PANES.
-    if (atLimit && !v.attachId) return;
+    if (atLimit && !v.attachId) return null;
     const key = `${v.tool}:${v.profile || 'sh'}#${seq++}`;
     panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
@@ -603,6 +659,7 @@
     // Auto-focus the new pane's terminal so the user can type immediately (the obvious next action
     // after launch) — one frame later, once the pane has mounted and grabbed its paneRef.
     requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
+    return key;
   }
   $effect(() => {
     try {
@@ -1380,6 +1437,17 @@
             <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} />
             {t('sessions.statusToast')}
           </label>
+        </div>
+        <div class="set-row">
+          <span class="set-k" title={t('sessions.limitModeHint')}>{t('sessions.limitMode')}</span>
+          <div class="psel">
+            <Select value={limitMode}
+              onChange={(v) => { limitMode = v === 'switchProfile' ? 'switchProfile' : 'wait'; saveLimitMode(); }}
+              options={[
+                { value: 'wait', label: t('sessions.limitModeWait') },
+                { value: 'switchProfile', label: t('sessions.limitModeSwitch') }
+              ]} />
+          </div>
         </div>
         <div class="set-srv">
           <span class="set-k">{t('sessions.servers')}</span>

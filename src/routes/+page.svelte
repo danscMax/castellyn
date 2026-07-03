@@ -2164,7 +2164,7 @@
           {#await import('$lib/components/SessionsTab.svelte')}
             <div class="grid h-full place-items-center text-sw-text-muted"><Spinner size={22} /></div>
           {:then { default: SessionsTab }}
-            <SessionsTab visible={active === 'sessions'} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} folderReq={sessionFolderReq} onFolderReqConsumed={() => (sessionFolderReq = null)} />
+            <SessionsTab visible={active === 'sessions'} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} profileInfos={profilesData?.profiles ?? []} folderReq={sessionFolderReq} onFolderReqConsumed={() => (sessionFolderReq = null)} />
           {:catch e}
             <div class="m-sw-6 sw-card status-bad">{t('page.load_error', { e: String(e) })}</div>
           {/await}

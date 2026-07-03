@@ -166,6 +166,15 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     auto_continue_on_reset: Option<bool>,
+    // After-limit behaviour (Sessions, item 21e): "wait" (default) keeps the pane on its profile and
+    // auto-continues on reset (21c); "switchProfile" respawns the conversation under a free OAuth
+    // profile immediately. Persisted here; the whole loop lives in the frontend.
+    #[serde(
+        rename = "limitMode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    limit_mode: Option<String>,
 }
 
 fn config_path() -> Option<String> {
