@@ -8409,14 +8409,16 @@ fn delete_orphan_profile(name: String) -> Result<(), String> {
     recycle_dir(&dir.to_string_lossy())
 }
 
-/// True if any immediate child of `dir` is a reparse point (junction/symlink). Checks the raw
-/// FILE_ATTRIBUTE_REPARSE_POINT bit (via symlink_metadata, so the link itself is stat'd, not its
-/// target) — this catches junctions AND symlinks, which `is_symlink()` alone can miss on Windows.
+/// True if any immediate child of `dir` is a reparse point (junction/symlink) — OR the dir can't be
+/// enumerated. Checks the raw FILE_ATTRIBUTE_REPARSE_POINT bit (via symlink_metadata, so the link
+/// itself is stat'd, not its target) — this catches junctions AND symlinks, which `is_symlink()`
+/// alone can miss on Windows. Fails CLOSED on a read_dir error: if we can't prove the dir is
+/// junction-free, the destructive caller must refuse rather than risk sweeping a link target.
 fn has_reparse_child(dir: &std::path::Path) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+        return true;
     };
     entries.flatten().any(|e| {
         e.path()
