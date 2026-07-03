@@ -9367,25 +9367,29 @@ fn read_shortcuts() -> HashMap<String, String> {
 #[tauri::command]
 fn set_shortcuts(app: AppHandle, shortcuts: HashMap<String, String>) -> Result<(), String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    // Validate + probe-register every non-empty accelerator BEFORE touching the old registration.
     let non_empty: Vec<&str> = shortcuts
         .values()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
+    // Teardown-FIRST: the old set must be unregistered before registering the new one. Probing the
+    // new accels while the old set is still live made a KEPT combo (unchanged between old and new)
+    // fail register() with "already registered", aborting the whole apply — so shortcuts could never
+    // be changed while any was retained. On a genuinely bad/taken accel, roll the whole set back
+    // (unregister_all) and surface the error instead of leaving a half-registered set.
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
     for accel in &non_empty {
-        register_shortcut(&app, accel)?;
+        if let Err(e) = register_shortcut(&app, accel) {
+            let _ = gs.unregister_all();
+            return Err(e);
+        }
     }
-    // All valid → atomically replace config + re-register.
+    // All applied cleanly → persist.
     let mut cfg = read_config_file();
     cfg.shortcuts = Some(shortcuts.clone());
     cfg.toggle_hotkey = shortcuts.get("toggle_window").cloned();
     write_config_file(&cfg)?;
-    let gs = app.global_shortcut();
-    let _ = gs.unregister_all();
-    for accel in &non_empty {
-        register_shortcut(&app, accel)?;
-    }
     Ok(())
 }
 
