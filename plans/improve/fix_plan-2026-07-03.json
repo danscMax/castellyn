@@ -1,0 +1,427 @@
+{
+  "source": "plans/improve/report-2026-07-03.md",
+  "created": "2026-07-03",
+  "scope_default": "AUTO-RUN (approved:true): Волны 1-3 кроме #5 + 21a/21b. SUPERVISED (approved:false): #5, вся Волна 4, 21c-e. Тех.развилки 1a/2/6 разрешены дефолтом. Решение владельца 2026-07-03.",
+  "waves": [
+    {
+      "wave": 1,
+      "title": "Hardening (security + подтверждённые баги)",
+      "items": [
+        {
+          "id": "1a",
+          "category": "security",
+          "file": "src-tauri/src/lib.rs",
+          "line": 6528,
+          "title": "cmd /C codex инъекция метасимволов из .mcp.json env",
+          "fix_approach": "reject cmd-метасимволов (& | < > ^ %) в argv-значениях по образцу charset-фильтра plugin-id (:7130), либо резолв codex.cmd через exe_on_path() и прямой запуск",
+          "decision_resolved": "resolved(auto): reject cmd-метасимволов (& | < > ^ % \") в argv-значениях — проще и меньше blast radius, чем резолв exe",
+          "approved": true,
+          "effort": "S",
+          "risk": "low",
+          "verify": "cargo test + ручной deploy MCP на codex с безопасным конфигом"
+        },
+        {
+          "id": "1b",
+          "category": "security",
+          "file": "src-tauri/src/lib.rs",
+          "line": 4449,
+          "title": "probe_provider шлёт Bearer-ключ на невалидированный base_url",
+          "fix_approach": "в probe_provider вызвать valid_base_url + требовать https (allowlist http://localhost)",
+          "decision_resolved": "default: https-only с localhost-исключением",
+          "approved": true,
+          "effort": "S",
+          "risk": "может сломать самохостнутые http-прокси — потому localhost-исключение",
+          "verify": "юнит-тест на http/https/localhost + живой check провайдера"
+        },
+        {
+          "id": "1c",
+          "category": "reliability",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 680,
+          "title": "maximize + background → мёртвый грид",
+          "fix_approach": "в toggleBackground: if (maximized === key) maximized = null; maxbar итерирует activePanes",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "low",
+          "verify": "?shot: maximize → background → грид жив"
+        },
+        {
+          "id": "1d",
+          "category": "reliability",
+          "file": "src/lib/components/TerminalPane.svelte",
+          "line": 366,
+          "title": "send-to-all пишет в мёртвые PTY",
+          "fix_approach": "в pty:exit-листенере вызвать onIdChange(paneKey, null)",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "проверить, что restore-персист не зависит от sessionIds мёртвой панели",
+          "verify": "закрыть claude в панели → send-to-all не считает её целью"
+        },
+        {
+          "id": "1e",
+          "category": "reliability",
+          "file": "src-tauri/src/lib.rs",
+          "line": 928,
+          "title": "fork busy-state не RAII — дроп future стрэндит путь",
+          "fix_approach": "RAII-guard (Drop убирает path из ForkRuns/FORKS_GLOBAL) по образцу RunSlot/BulkSlot",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S-M",
+          "risk": "low",
+          "verify": "cargo test + F5 во время fork-run → повторный запуск не даёт err.fork_busy"
+        },
+        {
+          "id": "1f",
+          "category": "reliability",
+          "file": "src-tauri/src/lib.rs",
+          "line": 4013,
+          "title": "rollback add_provider_key теряет мигрированный legacy-слот",
+          "fix_approach": "при откате восстанавливать provider:{id} из мигрированного значения (или мигрировать без удаления до успешной записи)",
+          "decision_resolved": "default: миграция после успешной записи JSON",
+          "approved": true,
+          "effort": "S",
+          "risk": "low",
+          "verify": "юнит-тест: fail write → legacy-ключ цел"
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "title": "Quick wins",
+      "items": [
+        {
+          "id": "7",
+          "category": "perf",
+          "file": "src/routes/+page.svelte",
+          "line": 1704,
+          "title": "appendLog() вместо spread ×8 + backend-батч + rAF-автоскролл (Console.svelte:64)",
+          "fix_approach": "один helper push+splice; батч run-log ~30мс в lib.rs; автоскролл через requestAnimationFrame",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "порядок строк при батче — сохранить FIFO",
+          "verify": "живой forks check: консоль плавная, строки в порядке"
+        },
+        {
+          "id": "9",
+          "category": "visual",
+          "file": "src/app.css",
+          "line": 97,
+          "title": "определить --sw-status-warn; токен + light-override для #2dd4bf (done) и #3fb950 (ssh ok)",
+          "fix_approach": "--sw-status-warn: var(--sw-warn); --sw-status-done + .light override по канону statusColor.ts; :1298 → токен",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "none",
+          "verify": "npm run check + скриншот обеих тем"
+        },
+        {
+          "id": "12",
+          "category": "visual",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 1458,
+          "title": "empty state → общий EmptyState.svelte",
+          "fix_approach": "заменить ручной .empty на <EmptyState> c Lucide-иконкой + кнопка-слот",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "none",
+          "verify": "?shot пустой вкладки"
+        },
+        {
+          "id": "14",
+          "category": "usability",
+          "file": "src/routes/+page.svelte",
+          "line": 1573,
+          "title": "палитра: тост «занято» вместо молчаливого no-op",
+          "fix_approach": "обёртка runOrToast(): если running — toast page.busy_running c именем текущего прогона",
+          "decision_resolved": "default: тост (не очередь)",
+          "approved": true,
+          "effort": "S",
+          "risk": "none",
+          "verify": "во время прогона Ctrl+K → apply → виден тост"
+        },
+        {
+          "id": "16",
+          "category": "usability",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 538,
+          "title": "atLimit: disable ▶ + тост о частичном restore",
+          "fix_approach": "disabled={atLimit} на launch-кнопках + счётчик отброшенных в restoreLast/launchWorkspace → toast «восстановлено N из M»",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "none",
+          "verify": "?shot при 12 панелях"
+        },
+        {
+          "id": "20",
+          "category": "functional",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 339,
+          "title": "персист имени панели + term.onBell → unread + elapsed в StatusEvent",
+          "fix_approach": "name? в LivePane/WsConfig/Fav; onBell → onActivity-маркер; spawned_at/last_output → поля события + подпись в тултипе точки",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "elapsed — не спамить событиями, отдавать при изменении минуты",
+          "verify": "rename → рестарт → имя на месте; bell в shell-панели подсвечивает"
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "title": "Надёжность (остаток)",
+      "items": [
+        {
+          "id": "2",
+          "category": "reliability",
+          "file": "src-tauri/src/lib.rs",
+          "line": 7694,
+          "title": "гонка settings.json + частичная прошивка без отката",
+          "fix_approach": "retry с backoff на sharing violation; цикл по профилям continue-on-error, собрать per-profile ошибки в результат",
+          "decision_resolved": "resolved(auto): retry с backoff 50/150/400ms на sharing violation + continue-on-error по профилям (без файлового лока)",
+          "approved": true,
+          "effort": "M",
+          "risk": "med",
+          "verify": "юнит + параллельный plugin_sync.py во время toggle"
+        },
+        {
+          "id": "3",
+          "category": "reliability",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 349,
+          "title": "restore-набор затирается до решения пользователя",
+          "fix_approach": "не перезаписывать LIVE_KEY пока restorable непуст и бар не dismissed/принят",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "не залипнуть на вечном старом наборе — очистка по dismiss",
+          "verify": "рестарт → Ctrl+R → бар всё ещё предлагает restore"
+        },
+        {
+          "id": "4",
+          "category": "reliability",
+          "file": "src-tauri/src/lib.rs",
+          "line": 0,
+          "title": "single-instance guard",
+          "fix_approach": "tauri-plugin-single-instance: вторая копия фокусирует окно первой",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "проверить совместимость с start-hidden/tray",
+          "verify": "запустить exe дважды → одно окно"
+        },
+        {
+          "id": "5",
+          "category": "reliability",
+          "file": "src-tauri/src/lib.rs",
+          "line": 7402,
+          "title": "гигиена хуков: орфаны профилей, .py при выключении, py-health",
+          "fix_approach": "unwire сканирует .claude-* дирки с нашим маркером в hooks; opt. удаление скриптов при выключении; py --version проба + индикатор в ⚙",
+          "decision_resolved": "needs_confirmation: сканировать ли .claude-* при unwire (осторожно: .claude-mem!) — фильтр по нашему маркеру внутри settings.json",
+          "approved": false,
+          "effort": "M",
+          "risk": "не трогать чужие дирки — только записи с castellyn-маркером",
+          "verify": "переименовать профиль → unwire чистит хвост; выключить → скрипты удалены"
+        },
+        {
+          "id": "6",
+          "category": "reliability",
+          "file": "src-tauri/src/agent_status.rs",
+          "line": 192,
+          "title": "blocked гаснет от перерисовки промпта",
+          "fix_approach": "снимать blocked только по следующему hook-событию (UserPromptSubmit/Stop) или порогу байтов, не по любому выводу",
+          "decision_resolved": "resolved(auto): hook-first (снимать blocked по UserPromptSubmit/Stop) + byte-burst fallback, не по единичному чанку",
+          "approved": true,
+          "effort": "S-M",
+          "risk": "hook-only залипает при Esc-ответе — нужен fallback-таймаут",
+          "verify": "юнит-тест compute + живой AskUserQuestion-промпт с ресайзом"
+        },
+        {
+          "id": "8",
+          "category": "perf",
+          "file": "src-tauri/src/agent_status.rs",
+          "line": 282,
+          "title": "mtime-гейт чтения hook-файлов + AtomicU64 last_output",
+          "fix_approach": "хранить mtime в Track, читать только при изменении; last_output → AtomicU64 без TRACKS-лока",
+          "decision_resolved": "yes",
+          "approved": true,
+          "effort": "S",
+          "risk": "low",
+          "verify": "cargo test + живой смоук статусов"
+        }
+      ]
+    },
+    {
+      "wave": 5,
+      "title": "Лимиты Anthropic + ночной режим (пункт 21, запрос владельца)",
+      "items": [
+        {
+          "id": "21a",
+          "category": "functional",
+          "file": "src-tauri/src/limits.rs",
+          "line": 0,
+          "title": "пер-профильный монитор 5h/7d лимитов через oauth/usage",
+          "fix_approach": "новый limits.rs: poll ~5 мин по профилям с .credentials.json (claudeAiOauth.accessToken, header anthropic-beta: oauth-2025-04-20, как statusline.py:55-89); event limits-status в UI; 401 → «токен протух», refresh НЕ делать",
+          "decision_resolved": "yes (owner 2026-07-03): пороги 85% тост / 99% тост+звук+OS, одно уведомление на порог на окно",
+          "approved": true,
+          "effort": "M",
+          "risk": "не логировать токен; таймаут 8с; профили без OAuth — N/A",
+          "verify": "живой профиль: % совпадает со statusline; смена окна сбрасывает антиспам"
+        },
+        {
+          "id": "21b",
+          "category": "functional",
+          "file": "src-tauri/src/agent_status.rs",
+          "line": 87,
+          "title": "детект «limit reached» в PTY + состояние limited",
+          "fix_approach": "regex по хвосту чанков в reader-потоке (5-hour limit reached / out of extra usage + parse resets); состояние limited в compute + новая точка/тултип; подтверждение utilization>=100%",
+          "decision_resolved": "default: PTY-строка первична, endpoint — подтверждение и резерв resets_at",
+          "approved": true,
+          "effort": "M",
+          "risk": "формат строки может меняться между версиями CC — парс защитить, fallback на endpoint",
+          "verify": "юнит на regex по реальным строкам; симуляция echo строки в PTY"
+        },
+        {
+          "id": "21c",
+          "category": "functional",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 304,
+          "title": "авто-продолжение после сброса (ВКЛ по умолчанию, решение владельца 2026-07-03)",
+          "fix_approach": "без отдельного тумблера — работает по умолчанию; на resets_at+джиттер(30-90с): живой панели session_write текста продолжения; мёртвой — respawn claude --resume <claudeSid> + текст; текст по языку UI: ru «продолжай», en «continue», zh «继续» (i18n-ключ); max 1 попытка на панель на окно; лог+тост о каждом факте",
+          "decision_resolved": "yes (owner): полный контур, вкл по умолчанию, текст по языку UI",
+          "approved": false,
+          "effort": "M",
+          "risk": "автоввод без присмотра — счётчик попыток против цикла; выключатель всё же предусмотреть в конфиге (без UI-тумблера) на случай отката",
+          "verify": "ночной прогон: искусственный limited → авто-продолжение после resets_at"
+        },
+        {
+          "id": "21e",
+          "category": "functional",
+          "file": "src-tauri/src/lib.rs",
+          "line": 0,
+          "title": "режим после лимита: ожидание vs переключение на свободный профиль (настройка)",
+          "fix_approach": "настройка limitMode: wait (default) | switchProfile; при switchProfile: кандидат = OAuth-профиль с наименьшей utilization <85% и linksIntact; kill панели → respawn под кандидатом с --resume <claudeSid> (projects — junction на общий ~/.claude/projects, проверено 2026-07-03: транскрипты общие) + текст продолжения; если кандидатов нет — fallback wait",
+          "decision_resolved": "yes (owner): настройка обоих режимов; default wait — переключение аккаунта агрессивнее",
+          "approved": false,
+          "effort": "M",
+          "risk": "профиль с битыми линками (projects не junction) не найдёт разговор — гейт по linksIntact; разные аккаунты = разные подписки, юзер осознанно включает",
+          "verify": "искусственный лимит → панель перезапущена под другим профилем, разговор продолжен"
+        },
+        {
+          "id": "21d",
+          "category": "visual",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 1113,
+          "title": "чип лимитов в шапке Сессий + колонка в Профилях",
+          "fix_approach": "чип «5h NN% · сброс HH:MM» худшего из профилей активных панелей; в ProfilesTab колонка utilization",
+          "decision_resolved": "default: чип в Сессиях + Профили; Home — не трогаем",
+          "approved": false,
+          "effort": "S",
+          "risk": "none",
+          "verify": "?shot обеих тем"
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "title": "UX-переделки",
+      "items": [
+        {
+          "id": "10",
+          "category": "visual",
+          "file": "src/lib/attention.ts",
+          "line": 60,
+          "title": "единый цвет/словарь blocked/done сайдбар↔вкладка",
+          "fix_approach": "att-уровни danger/done в Sidebar или согласовать мэппинг; одна формулировка «готово»",
+          "decision_resolved": "needs_confirmation: расширять Attention-уровни или перекрасить вкладку",
+          "approved": false,
+          "effort": "S-M",
+          "risk": "med",
+          "verify": "скриншот обеих тем"
+        },
+        {
+          "id": "11",
+          "category": "visual",
+          "file": "src/lib/components/SessionsTab.svelte",
+          "line": 827,
+          "title": "SSH emoji-светофор → .dot",
+          "fix_approach": ".dot ok/fail + dot-pulse на время проверки (дропдаун и чип)",
+          "decision_resolved": "yes",
+          "approved": false,
+          "effort": "S",
+          "risk": "none",
+          "verify": "?shot"
+        },
+        {
+          "id": "13",
+          "category": "usability",
+          "file": "src/routes/+page.svelte",
+          "line": 1982,
+          "title": "не уничтожать вкладки при переключении",
+          "fix_approach": "keep-mounted посещённых вкладок (display:none) по прецеденту Sessions (:2101); fade через CSS-класс",
+          "decision_resolved": "needs_confirmation: все вкладки или только с дорогим состоянием (Providers/Profiles/Plugins)",
+          "approved": false,
+          "effort": "M",
+          "risk": "med: focus-refresh логика и listeners рассчитаны на remount",
+          "verify": "health-check провайдера переживает уход-возврат"
+        },
+        {
+          "id": "15",
+          "category": "usability",
+          "file": "src/routes/+page.svelte",
+          "line": 1748,
+          "title": "«Обновить всё»: авто-recheck + прогресс по компонентам",
+          "fix_approach": "после all-apply запускать check all; подсветка текущего компонента из стрим-лога (парс [component]-префиксов)",
+          "decision_resolved": "yes",
+          "approved": false,
+          "effort": "M",
+          "risk": "low",
+          "verify": "живой прогон «обновить всё»"
+        },
+        {
+          "id": "17",
+          "category": "usability",
+          "file": "src/lib/components/ProfilesTab.svelte",
+          "line": 428,
+          "title": "создать один профиль без reinstall всех",
+          "fix_approach": "точечный вызов установщика с именем профиля (проверить поддержку у PS-скрипта; иначе — Rust-native создание каталога+симлинков по модели профиля)",
+          "decision_resolved": "needs_confirmation: PS-параметр vs native",
+          "approved": false,
+          "effort": "M",
+          "risk": "med",
+          "verify": "удалить тестовый профиль-каталог → «Создать» восстанавливает только его"
+        },
+        {
+          "id": "18",
+          "category": "functional",
+          "file": "src/lib/components/SettingsTab.svelte",
+          "line": 169,
+          "title": "Sessions-персонализация в экспорт/бэкап",
+          "fix_approach": "sessionsPrefs-блок в HubConfig (или sidecar-файл) + миграция из localStorage при первом чтении",
+          "decision_resolved": "needs_confirmation: в HubConfig или отдельный файл",
+          "approved": false,
+          "effort": "M",
+          "risk": "med: двойной источник истины на переходный период",
+          "verify": "экспорт → чистый импорт → workspaces/favorites на месте"
+        },
+        {
+          "id": "19",
+          "category": "functional",
+          "file": "src/lib/components/TerminalPane.svelte",
+          "line": 484,
+          "title": "Shift+PgUp/PgDn scrollback + Alt+N фокус панели",
+          "fix_approach": "term.scrollLines/scrollToTop/Bottom в attachCustomKeyEventHandler; Alt+N в onKey SessionsTab (колонки переехать на Ctrl+Alt+N)",
+          "decision_resolved": "needs_confirmation: куда переносить Alt+1-3 (колонки)",
+          "approved": false,
+          "effort": "S",
+          "risk": "конфликт с TUI-приложениями, пропускать когда alt-screen активен",
+          "verify": "живая панель: прокрутка и прыжок работают"
+        }
+      ]
+    }
+  ]
+}
