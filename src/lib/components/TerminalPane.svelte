@@ -543,6 +543,14 @@
         onNewSession();
         return false;
       }
+      // #19: Shift+PgUp/PgDn scroll the scrollback (Shift+Home/End jump to top/bottom). Skipped on the
+      // alternate screen so full-screen TUIs (Claude Code, less, vim) still receive the raw keys.
+      if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && term && term.buffer.active.type !== 'alternate') {
+        if (e.key === 'PageUp') { term.scrollPages(-1); return false; }
+        if (e.key === 'PageDown') { term.scrollPages(1); return false; }
+        if (e.key === 'Home') { term.scrollToTop(); return false; }
+        if (e.key === 'End') { term.scrollToBottom(); return false; }
+      }
       return true;
     });
     ro = new ResizeObserver(() => refit());

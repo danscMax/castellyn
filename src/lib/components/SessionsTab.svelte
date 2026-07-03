@@ -1002,7 +1002,7 @@
   }
 
   // Tab-scoped shortcuts (only while the Sessions tab is shown): Ctrl+Shift+T new session (plain
-  // Ctrl+T is left to the focused shell), Alt+1/2/3 cols, Ctrl+]/[ cycle panes.
+  // Ctrl+T is left to the focused shell), Ctrl+Alt+1/2/3 cols, Alt+N focus pane N, Ctrl+]/[ cycle.
   // Pane component refs, so a shortcut can move focus between terminals (and the tab can drive
   // search/zoom across every pane at once).
   type PaneApi = {
@@ -1053,9 +1053,18 @@
     if (e.ctrlKey && e.shiftKey && (e.key === 't' || e.key === 'T')) {
       e.preventDefault();
       launchPhrase();
-    } else if (e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
+    } else if (e.ctrlKey && e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
+      // Ctrl+Alt+N — column count (moved off plain Alt+N, which now focuses a pane, #19).
       e.preventDefault();
       columns = Number(e.key);
+    } else if (e.altKey && !e.ctrlKey && e.key >= '1' && e.key <= '9') {
+      // Alt+N — focus the N-th visible pane (#19).
+      const list = maximized ? panes.filter((p) => p.key === maximized) : activePanes;
+      const idx = Number(e.key) - 1;
+      if (idx < list.length) {
+        e.preventDefault();
+        paneRefs[list[idx].key]?.focusTerminal();
+      }
     } else if (e.ctrlKey && (e.key === ']' || e.key === '[')) {
       // Ctrl+] / Ctrl+[ — focus next / previous pane terminal.
       e.preventDefault();
@@ -1194,7 +1203,7 @@
       <span class="text-sw-xs text-sw-text-muted">{t('sessions.layout')}</span>
       {#each [1, 2, 3] as c (c)}
         <button class="sw-btn sw-btn-ghost text-sw-xs" class:active={columns === c} onclick={() => (columns = c)}
-          title="{t('sessions.layoutCols', { n: c })} · Alt+{c}">{c}</button>
+          title="{t('sessions.layoutCols', { n: c })} · Ctrl+Alt+{c}">{c}</button>
       {/each}
       {#if panes.length}
         <!-- Redesign 2D: rare whole-grid actions leave the header row for an overflow menu —
