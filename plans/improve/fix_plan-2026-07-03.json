@@ -1,7 +1,7 @@
 {
   "source": "plans/improve/report-2026-07-03.md",
   "created": "2026-07-03",
-  "scope_default": "AUTO-RUN (approved:true): Волны 1-3 кроме #5 + 21a/21b. SUPERVISED (approved:false): #5, вся Волна 4, 21c-e. Тех.развилки 1a/2/6 разрешены дефолтом. Решение владельца 2026-07-03.",
+  "scope_default": "ПРОГОН 1 (сделано, ветка auto-loop/improve-0703): Волны 1-3 кроме #5 + 21a/21b — 19 пунктов, коммиты 1b7f04d/678f260/23b0666/e8c3011 (+ review-fixes). ПРОГОН 2 (все решения зафиксированы владельцем 2026-07-03, approved:true, ждёт свежего /max:dev): #5 (только castellyn-маркер), вся Волна 4 (10/11/13/15/17/18/19), 21c (авто-продолжение ВКЛ по умолчанию)/21d/21e. Тех.развилки 10/13/17/18/19 разрешены Lead-дефолтом (см. decision_resolved).",
   "waves": [
     {
       "wave": 1,
@@ -221,8 +221,8 @@
           "line": 7402,
           "title": "гигиена хуков: орфаны профилей, .py при выключении, py-health",
           "fix_approach": "unwire сканирует .claude-* дирки с нашим маркером в hooks; opt. удаление скриптов при выключении; py --version проба + индикатор в ⚙",
-          "decision_resolved": "needs_confirmation: сканировать ли .claude-* при unwire (осторожно: .claude-mem!) — фильтр по нашему маркеру внутри settings.json",
-          "approved": false,
+          "decision_resolved": "resolved(owner 2026-07-03): чистить ТОЛЬКО записи хуков с castellyn-маркером внутри settings.json любого профиля; чужие дирки/файлы (.claude-mem и пр.) НЕ сканировать и не трогать; .py-скрипты при выключении НЕ удалять (только unwire записей)",
+          "approved": true,
           "effort": "M",
           "risk": "не трогать чужие дирки — только записи с castellyn-маркером",
           "verify": "переименовать профиль → unwire чистит хвост; выключить → скрипты удалены"
@@ -293,7 +293,7 @@
           "title": "авто-продолжение после сброса (ВКЛ по умолчанию, решение владельца 2026-07-03)",
           "fix_approach": "без отдельного тумблера — работает по умолчанию; на resets_at+джиттер(30-90с): живой панели session_write текста продолжения; мёртвой — respawn claude --resume <claudeSid> + текст; текст по языку UI: ru «продолжай», en «continue», zh «继续» (i18n-ключ); max 1 попытка на панель на окно; лог+тост о каждом факте",
           "decision_resolved": "yes (owner): полный контур, вкл по умолчанию, текст по языку UI",
-          "approved": false,
+          "approved": true,
           "effort": "M",
           "risk": "автоввод без присмотра — счётчик попыток против цикла; выключатель всё же предусмотреть в конфиге (без UI-тумблера) на случай отката",
           "verify": "ночной прогон: искусственный limited → авто-продолжение после resets_at"
@@ -306,7 +306,7 @@
           "title": "режим после лимита: ожидание vs переключение на свободный профиль (настройка)",
           "fix_approach": "настройка limitMode: wait (default) | switchProfile; при switchProfile: кандидат = OAuth-профиль с наименьшей utilization <85% и linksIntact; kill панели → respawn под кандидатом с --resume <claudeSid> (projects — junction на общий ~/.claude/projects, проверено 2026-07-03: транскрипты общие) + текст продолжения; если кандидатов нет — fallback wait",
           "decision_resolved": "yes (owner): настройка обоих режимов; default wait — переключение аккаунта агрессивнее",
-          "approved": false,
+          "approved": true,
           "effort": "M",
           "risk": "профиль с битыми линками (projects не junction) не найдёт разговор — гейт по linksIntact; разные аккаунты = разные подписки, юзер осознанно включает",
           "verify": "искусственный лимит → панель перезапущена под другим профилем, разговор продолжен"
@@ -319,7 +319,7 @@
           "title": "чип лимитов в шапке Сессий + колонка в Профилях",
           "fix_approach": "чип «5h NN% · сброс HH:MM» худшего из профилей активных панелей; в ProfilesTab колонка utilization",
           "decision_resolved": "default: чип в Сессиях + Профили; Home — не трогаем",
-          "approved": false,
+          "approved": true,
           "effort": "S",
           "risk": "none",
           "verify": "?shot обеих тем"
@@ -337,8 +337,8 @@
           "line": 60,
           "title": "единый цвет/словарь blocked/done сайдбар↔вкладка",
           "fix_approach": "att-уровни danger/done в Sidebar или согласовать мэппинг; одна формулировка «готово»",
-          "decision_resolved": "needs_confirmation: расширять Attention-уровни или перекрасить вкладку",
-          "approved": false,
+          "decision_resolved": "resolved(lead 2026-07-03): согласовать мэппинг цветов blocked/done сайдбар↔вкладка (одна формулировка «готово»), БЕЗ расширения Attention-уровней",
+          "approved": true,
           "effort": "S-M",
           "risk": "med",
           "verify": "скриншот обеих тем"
@@ -351,7 +351,7 @@
           "title": "SSH emoji-светофор → .dot",
           "fix_approach": ".dot ok/fail + dot-pulse на время проверки (дропдаун и чип)",
           "decision_resolved": "yes",
-          "approved": false,
+          "approved": true,
           "effort": "S",
           "risk": "none",
           "verify": "?shot"
@@ -363,8 +363,8 @@
           "line": 1982,
           "title": "не уничтожать вкладки при переключении",
           "fix_approach": "keep-mounted посещённых вкладок (display:none) по прецеденту Sessions (:2101); fade через CSS-класс",
-          "decision_resolved": "needs_confirmation: все вкладки или только с дорогим состоянием (Providers/Profiles/Plugins)",
-          "approved": false,
+          "decision_resolved": "resolved(lead 2026-07-03): keep-mounted ТОЛЬКО вкладки с дорогим состоянием (Providers/Profiles/Plugins); остальные remount как раньше — меньше риск focus-refresh/listeners",
+          "approved": true,
           "effort": "M",
           "risk": "med: focus-refresh логика и listeners рассчитаны на remount",
           "verify": "health-check провайдера переживает уход-возврат"
@@ -377,7 +377,7 @@
           "title": "«Обновить всё»: авто-recheck + прогресс по компонентам",
           "fix_approach": "после all-apply запускать check all; подсветка текущего компонента из стрим-лога (парс [component]-префиксов)",
           "decision_resolved": "yes",
-          "approved": false,
+          "approved": true,
           "effort": "M",
           "risk": "low",
           "verify": "живой прогон «обновить всё»"
@@ -389,8 +389,8 @@
           "line": 428,
           "title": "создать один профиль без reinstall всех",
           "fix_approach": "точечный вызов установщика с именем профиля (проверить поддержку у PS-скрипта; иначе — Rust-native создание каталога+симлинков по модели профиля)",
-          "decision_resolved": "needs_confirmation: PS-параметр vs native",
-          "approved": false,
+          "decision_resolved": "resolved(lead 2026-07-03): сначала проверить поддержку точечного параметра у PS-установщика; если нет — Rust-native создание каталога+симлинков по модели профиля",
+          "approved": true,
           "effort": "M",
           "risk": "med",
           "verify": "удалить тестовый профиль-каталог → «Создать» восстанавливает только его"
@@ -402,8 +402,8 @@
           "line": 169,
           "title": "Sessions-персонализация в экспорт/бэкап",
           "fix_approach": "sessionsPrefs-блок в HubConfig (или sidecar-файл) + миграция из localStorage при первом чтении",
-          "decision_resolved": "needs_confirmation: в HubConfig или отдельный файл",
-          "approved": false,
+          "decision_resolved": "resolved(lead 2026-07-03): sessionsPrefs-блок в HubConfig + миграция из localStorage при первом чтении (один источник истины после перехода)",
+          "approved": true,
           "effort": "M",
           "risk": "med: двойной источник истины на переходный период",
           "verify": "экспорт → чистый импорт → workspaces/favorites на месте"
@@ -415,8 +415,8 @@
           "line": 484,
           "title": "Shift+PgUp/PgDn scrollback + Alt+N фокус панели",
           "fix_approach": "term.scrollLines/scrollToTop/Bottom в attachCustomKeyEventHandler; Alt+N в onKey SessionsTab (колонки переехать на Ctrl+Alt+N)",
-          "decision_resolved": "needs_confirmation: куда переносить Alt+1-3 (колонки)",
-          "approved": false,
+          "decision_resolved": "resolved(lead 2026-07-03): Alt+N — фокус панели; колонки переезжают на Ctrl+Alt+N; пропускать когда alt-screen активен (TUI)",
+          "approved": true,
           "effort": "S",
           "risk": "конфликт с TUI-приложениями, пропускать когда alt-screen активен",
           "verify": "живая панель: прокрутка и прыжок работают"
