@@ -23,4 +23,11 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && window.location.sear
     if (cmd in runComponent) setTimeout(() => emit('run-done', { component: runComponent[cmd], code: 0 }), 0);
     return fixtureFor(cmd, args as Record<string, unknown>);
   }, { shouldMockEvents: true });
+} else if (typeof window !== 'undefined') {
+  // Item 18: pull the durable Sessions-prefs sidecar (~/.claude/castellyn/sessions.json) into
+  // localStorage BEFORE any component reads it — so after a reinstall or on another machine the
+  // synced prefs are already present at first render. Top-level await → SvelteKit blocks render until
+  // it resolves. No-op without a Tauri backend (dev browser): the invoke rejects, localStorage stays.
+  const { hydrateSessionPrefs } = await import('$lib/sessionPrefs');
+  await hydrateSessionPrefs();
 }

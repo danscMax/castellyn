@@ -34,7 +34,8 @@
     { key: 'skills', labelKey: 'sync.itemSkillsLabel', path: 'skills/', descKey: 'sync.itemSkillsDesc' },
     { key: 'agents', labelKey: 'sync.itemAgentsLabel', path: 'agents/', descKey: 'sync.itemAgentsDesc' },
     { key: 'commands', labelKey: 'sync.itemCommandsLabel', path: 'commands/', descKey: 'sync.itemCommandsDesc' },
-    { key: 'keybindings', labelKey: 'sync.itemKeybindingsLabel', path: 'keybindings.json', descKey: 'sync.itemKeybindingsDesc' }
+    { key: 'keybindings', labelKey: 'sync.itemKeybindingsLabel', path: 'keybindings.json', descKey: 'sync.itemKeybindingsDesc' },
+    { key: 'castellyn', labelKey: 'sync.itemCastellynLabel', path: 'castellyn/', descKey: 'sync.itemCastellynDesc' }
   ];
 
   // Local editable selection, re-seeded whenever a fresh snapshot arrives.

@@ -1789,7 +1789,7 @@ const SYNC_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\confi
 const SYNC_CANON_STIGNORE_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\.stignore";
 
 /// Item key -> .stignore whitelist line (order matters; mirrors Manage-Sync.ps1 $ItemLines).
-fn sync_item_lines() -> [(&'static str, &'static str); 6] {
+fn sync_item_lines() -> [(&'static str, &'static str); 7] {
     [
         ("history", "!/history.jsonl"),
         ("projects", "!/projects"),
@@ -1797,6 +1797,9 @@ fn sync_item_lines() -> [(&'static str, &'static str); 6] {
         ("agents", "!/agents"),
         ("commands", "!/commands"),
         ("keybindings", "!/keybindings.json"),
+        // Castellyn's own durable data (item 18): the Sessions-personalization sidecar
+        // (~/.claude/castellyn/sessions.json) rides the same ~/.claude sync between machines.
+        ("castellyn", "!/castellyn"),
     ]
 }
 
@@ -5112,6 +5115,41 @@ async fn read_profile_usage(
             .filter(|(at, _)| at.elapsed().as_secs() < USAGE_STALE_MAX_SECS)
             .map(|(_, u)| u.clone())),
     }
+}
+
+// --- Sessions personalization sidecar (item 18 / Gap 1) --------------------------------------
+// The Sessions tab's prefs (workspaces, favorites, folders, columns, monitor layout, defaults …)
+// lived ONLY in webview localStorage — lost on reinstall, absent from the backup snapshot, and
+// outside the Syncthing-synced ~/.claude set. This durable sidecar is their real home: a plain JSON
+// file under ~/.claude/castellyn/, so it (a) survives a reinstall, (b) is standalone-readable,
+// (c) rides the existing ~/.claude Syncthing sync (whitelisted in sync_item_lines), and (d) is copied
+// by the backup script (Add-Source). The frontend keeps localStorage as a fast mirror; file = truth.
+// NOT a secret file, so write_json_atomic keeps its .bak crash-safety. Never holds live-pane state
+// (cmh-sessions-live is machine-local and deliberately excluded on the frontend).
+fn sessions_prefs_path() -> Option<String> {
+    std::env::var("USERPROFILE")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|h| format!("{h}\\.claude\\castellyn\\sessions.json"))
+}
+
+/// Read the durable Sessions-prefs sidecar (BOM-tolerant). `None` when it doesn't exist yet.
+#[tauri::command]
+fn read_sessions_prefs() -> Result<Option<String>, String> {
+    let path = sessions_prefs_path().ok_or("no USERPROFILE")?;
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s.trim_start_matches('\u{feff}').to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Write the durable Sessions-prefs sidecar (atomic, UTF-8 no BOM; creates ~/.claude/castellyn/).
+/// The frontend owns the JSON shape (a flat map of the mirrored cmh-* keys → their stored strings).
+#[tauri::command]
+fn write_sessions_prefs(json: String) -> Result<(), String> {
+    let path = sessions_prefs_path().ok_or("no USERPROFILE")?;
+    write_json_atomic(&path, &json).map_err(|e| e.to_string())
 }
 
 /// opencode's global config path: $OPENCODE_CONFIG → $XDG_CONFIG_HOME\opencode → ~/.config/opencode.
@@ -10371,6 +10409,8 @@ pub fn run() {
             check_provider_balance,
             read_profile_file,
             read_profile_usage,
+            read_sessions_prefs,
+            write_sessions_prefs,
             add_provider_key,
             remove_provider_key,
             next_provider_key,

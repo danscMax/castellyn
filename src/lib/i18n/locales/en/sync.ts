@@ -85,6 +85,8 @@ export default {
   itemCommandsDesc: 'Slash commands',
   itemKeybindingsLabel: 'Keybindings',
   itemKeybindingsDesc: 'Key layout',
+  itemCastellynLabel: 'Sessions settings',
+  itemCastellynDesc: 'Saved sets, favorites, layout, folders, args',
 
   // Drift diff (Phase 3.2)
   showDiff: 'Show diff',

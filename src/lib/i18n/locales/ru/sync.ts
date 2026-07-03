@@ -85,6 +85,8 @@ export default {
   itemCommandsDesc: 'Слэш-команды',
   itemKeybindingsLabel: 'Горячие клавиши',
   itemKeybindingsDesc: 'Раскладка клавиш',
+  itemCastellynLabel: 'Настройки Сессий',
+  itemCastellynDesc: 'Наборы, избранное, раскладка, папки, аргументы',
 
   // Drift diff (Phase 3.2)
   showDiff: 'Показать diff',

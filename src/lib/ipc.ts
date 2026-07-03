@@ -568,6 +568,10 @@ export type ProfileUsage = {
 // Claude Code usage limits (5h + 7d remaining) for a profile; null = not logged in / unavailable.
 export const readProfileUsage = (profile: string) =>
   invoke<ProfileUsage | null>('read_profile_usage', { profile });
+// Durable Sessions-personalization sidecar (item 18): ~/.claude/castellyn/sessions.json.
+// Returns null when the file doesn't exist yet (fresh machine → migrate from localStorage).
+export const readSessionsPrefs = () => invoke<string | null>('read_sessions_prefs');
+export const writeSessionsPrefs = (json: string) => invoke<void>('write_sessions_prefs', { json });
 export const readProfileFile =(name: string, which: 'claude' | 'settings') =>
   invoke<string>('read_profile_file', { name, which });
 // Multi-key rotation pool (e.g. several aerolink keys rotated on balance exhaustion).
@@ -596,7 +600,7 @@ export const measureContext = (name: string, lean: boolean) =>
   invoke<number>('measure_context', { name, lean });
 
 // --- Sync tab ---
-export type SyncItem = 'history' | 'projects' | 'skills' | 'agents' | 'commands' | 'keybindings';
+export type SyncItem = 'history' | 'projects' | 'skills' | 'agents' | 'commands' | 'keybindings' | 'castellyn';
 export type SyncAction = 'query' | 'set';
 
 export type SyncthingStatus = {

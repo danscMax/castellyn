@@ -84,6 +84,8 @@ export default {
   itemCommandsDesc: '斜杠命令',
   itemKeybindingsLabel: '快捷键',
   itemKeybindingsDesc: '按键布局',
+  itemCastellynLabel: '会话设置',
+  itemCastellynDesc: '预设、收藏、布局、文件夹、参数',
 
   // Drift diff (Phase 3.2)
   showDiff: '显示差异',
