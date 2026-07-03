@@ -1957,6 +1957,37 @@ fn write_json_atomic(path: &str, content: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Windows ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33): another process (a Claude
+/// session reading its settings.json, an AV scan, SyncThing) has the file open — a transient state
+/// that clears in milliseconds, so it's worth a short retry rather than failing the whole sweep.
+fn is_sharing_violation(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(32) | Some(33))
+}
+
+/// Run a fallible fs write, retrying ONLY a transient sharing/lock violation with a short backoff
+/// (50/150/400 ms). Any other error returns immediately. Extracted + generic so the retry policy is
+/// unit-testable without a real locked file.
+fn with_sharing_retry<T>(mut f: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    const BACKOFF_MS: [u64; 3] = [50, 150, 400];
+    let mut attempt = 0;
+    loop {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if is_sharing_violation(&e) && attempt < BACKOFF_MS.len() => {
+                std::thread::sleep(std::time::Duration::from_millis(BACKOFF_MS[attempt]));
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// `write_json_atomic` with the transient-sharing-violation retry (above) — for the per-profile
+/// settings.json sweeps where a live session may briefly hold the file open.
+fn write_json_atomic_retry(path: &str, content: &str) -> std::io::Result<()> {
+    with_sharing_retry(|| write_json_atomic(path, content))
+}
+
 // --- Syncthing local REST (best-effort; mirrors Get-SyncthingStatus) ---
 fn syncthing_api_key() -> Option<String> {
     let local = std::env::var("LOCALAPPDATA").ok()?;
@@ -7947,6 +7978,10 @@ fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
     if enabled {
         ensure_plugin_sync_script(&home)?;
     }
+    // Continue-on-error across profiles: one profile whose settings.json is momentarily locked (a
+    // live session, an AV scan) must NOT abort the sweep and strand the remaining profiles half-wired.
+    // Retry a transient sharing violation, collect hard failures, and surface them after trying all.
+    let mut errs: Vec<String> = Vec::new();
     for (_, sp) in plugin_sync_profiles(&home) {
         let Ok(c) = std::fs::read_to_string(&sp) else {
             continue;
@@ -7960,9 +7995,18 @@ fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
             plugin_sync_unwire(&mut v)
         };
         if changed {
-            let s = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-            write_json_atomic(&sp, &s).map_err(|e| format!("write {sp}: {e}"))?;
+            match serde_json::to_string_pretty(&v) {
+                Ok(s) => {
+                    if let Err(e) = write_json_atomic_retry(&sp, &s) {
+                        errs.push(format!("{sp}: {e}"));
+                    }
+                }
+                Err(e) => errs.push(format!("{sp}: {e}")),
+            }
         }
+    }
+    if !errs.is_empty() {
+        return Err(errs.join(" · "));
     }
     plugin_sync_status()
 }
@@ -8073,6 +8117,10 @@ fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> 
     if enabled {
         ensure_status_hook_script(&home)?;
     }
+    // Continue-on-error across profiles (see plugin_sync_set): a momentarily-locked settings.json is
+    // retried, hard failures are collected and surfaced after every profile has been attempted — never
+    // an early abort that leaves later profiles unwired.
+    let mut errs: Vec<String> = Vec::new();
     for (_, sp) in plugin_sync_profiles(&home) {
         let Ok(c) = std::fs::read_to_string(&sp) else {
             continue;
@@ -8089,9 +8137,18 @@ fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> 
             };
         }
         if changed {
-            let s = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-            write_json_atomic(&sp, &s).map_err(|e| format!("write {sp}: {e}"))?;
+            match serde_json::to_string_pretty(&v) {
+                Ok(s) => {
+                    if let Err(e) = write_json_atomic_retry(&sp, &s) {
+                        errs.push(format!("{sp}: {e}"));
+                    }
+                }
+                Err(e) => errs.push(format!("{sp}: {e}")),
+            }
         }
+    }
+    if !errs.is_empty() {
+        return Err(errs.join(" · "));
     }
     agent_status_hook_state()
 }
@@ -8142,6 +8199,40 @@ mod plugin_sync_tests {
         let mut bad = json!({ "hooks": "oops" });
         assert!(!super::plugin_sync_wire(&mut bad));
         assert_eq!(bad["hooks"], "oops");
+    }
+
+    #[test]
+    fn sharing_retry_recovers_then_gives_up() {
+        use std::cell::Cell;
+        use std::io::{Error, ErrorKind};
+        // A sharing violation (os error 32) that clears on the 3rd try → Ok after retries.
+        let calls = Cell::new(0);
+        let r = super::with_sharing_retry(|| {
+            calls.set(calls.get() + 1);
+            if calls.get() < 3 {
+                Err(Error::from_raw_os_error(32))
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(r.unwrap(), 7);
+        assert_eq!(calls.get(), 3);
+        // A non-sharing error is NOT retried — returns immediately on the first call.
+        let calls = Cell::new(0);
+        let r = super::with_sharing_retry::<()>(|| {
+            calls.set(calls.get() + 1);
+            Err(Error::new(ErrorKind::PermissionDenied, "nope"))
+        });
+        assert!(r.is_err());
+        assert_eq!(calls.get(), 1);
+        // A persistent sharing violation gives up after the fixed backoff budget (1 + 3 retries).
+        let calls = Cell::new(0);
+        let r = super::with_sharing_retry::<()>(|| {
+            calls.set(calls.get() + 1);
+            Err(Error::from_raw_os_error(32))
+        });
+        assert!(r.is_err());
+        assert_eq!(calls.get(), 4);
     }
 
     #[test]
@@ -9408,7 +9499,7 @@ fn session_spawn(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let bytes = &buf[..n];
-                    agent_status::on_output(&id_r);
+                    agent_status::on_output(&id_r, n);
                     push_bounded(
                         &mut ring_r.lock().unwrap_or_else(|e| e.into_inner()),
                         bytes,
@@ -10101,6 +10192,13 @@ fn open_monitor_window(app: AppHandle, label: String, monitor_index: usize) -> R
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance MUST be the FIRST plugin: a second launch hands its argv to this running
+        // instance's callback (which just reveals the window) and then exits, instead of opening a
+        // duplicate. Reveal covers the start-hidden/tray case — a re-launch is the user asking to see
+        // the app, so show + unminimize + focus the existing "main" window.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            reveal(app);
+        }))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

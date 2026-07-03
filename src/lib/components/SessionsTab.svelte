@@ -357,7 +357,14 @@
       const live: LivePane[] = panes
         .filter((p) => !p.attachId && sessionIds[p.key])
         .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]], name: p.name }));
-      localStorage.setItem(LIVE_KEY, JSON.stringify(live));
+      // #3: keep the pending restore set (last run's dead sessions) in LIVE_KEY until the user
+      // accepts or dismisses the bar — else a second webview reload before they act loses the offer.
+      // Merge by id so a since-re-attached pane isn't listed twice; when restorable clears (accept /
+      // dismiss) this reverts to persisting only the live panes, so the stale set never sticks.
+      const persisted = restorable.length
+        ? [...live, ...restorable.filter((r) => !live.some((l) => l.id === r.id))]
+        : live;
+      localStorage.setItem(LIVE_KEY, JSON.stringify(persisted));
     } catch {
       /* ignore */
     }

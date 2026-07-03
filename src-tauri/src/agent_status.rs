@@ -15,6 +15,7 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use tauri::{Emitter, Manager};
 
@@ -23,9 +24,15 @@ const POLL_MS: u64 = 500;
 const STARTUP_GRACE_MS: u64 = 3_000;
 /// No PTY output for this long → not actively working.
 const ACTIVITY_IDLE_MS: u64 = 4_000;
-/// Output resuming this long after a hook-reported `blocked` means the user answered the
-/// permission prompt in the terminal — flip back to working.
+/// Grace after a hook-reported `blocked` within which PTY output counts as the prompt box
+/// painting itself, not a real resume — used by the time backstop below.
 const BLOCKED_RESUME_MS: u64 = 1_500;
+/// A resumed agent turn floods the PTY; a prompt-box repaint is small. Clear a hook-reported
+/// `blocked` once this many bytes arrive since the block began (item 6, hook-less fallback).
+const BLOCKED_RESUME_BYTES: u64 = 1_024;
+/// Time backstop: after this long in `blocked` with real post-block output but no byte burst
+/// (an Esc answer emits little), allow the flip so `blocked` can't stick forever.
+const BLOCKED_STUCK_MS: u64 = 20_000;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -39,11 +46,19 @@ struct Track {
     /// Human label for notifications ("claude · cc1", "codex").
     label: String,
     spawned_at: u64,
-    last_output: u64,
+    /// Unix ms of the last PTY output. Atomic so `on_output` can update it under a shared
+    /// borrow (still under the TRACKS lock — see item-8 scope note).
+    last_output: AtomicU64,
+    /// Bytes emitted since the current `blocked` state began (reset in `apply_hook_report`).
+    /// The hook-less fallback for clearing a stale `blocked` (item 6).
+    bytes_since_block: AtomicU64,
     exited: bool,
     /// Latest hook-reported state ("working" | "blocked" | "idle"; "ended" clears it).
     hook_state: Option<String>,
     hook_ts: u64,
+    /// Last-seen mtime (unix ms) of this session's hook file; skip the read+parse when it
+    /// hasn't changed (item 8 mtime gate).
+    hook_mtime: u64,
     claude_session_id: Option<String>,
     last_emitted: Option<String>,
 }
@@ -73,24 +88,28 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str) {
                 tool.to_string()
             },
             spawned_at: now,
-            last_output: now,
+            last_output: AtomicU64::new(now),
+            bytes_since_block: AtomicU64::new(0),
             exited: false,
             hook_state: None,
             hook_ts: 0,
+            hook_mtime: 0,
             claude_session_id: None,
             last_emitted: None,
         },
     );
 }
 
-/// PTY reader thread: bytes arrived for this session.
-pub fn on_output(id: &str) {
+/// PTY reader thread: `bytes` arrived for this session. Shared borrow (atomic fields) so it
+/// needs no exclusive access, though it still takes the TRACKS lock to find the entry.
+pub fn on_output(id: &str, bytes: usize) {
     if let Some(t) = TRACKS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get_mut(id)
+        .get(id)
     {
-        t.last_output = now_ms();
+        t.last_output.store(now_ms(), Ordering::Relaxed);
+        t.bytes_since_block.fetch_add(bytes as u64, Ordering::Relaxed);
     }
 }
 
@@ -187,12 +206,18 @@ fn compute(t: &Track, now: u64) -> &'static str {
     if t.exited {
         return "idle";
     }
-    let silent = now.saturating_sub(t.last_output) > ACTIVITY_IDLE_MS;
+    let last_output = t.last_output.load(Ordering::Relaxed);
+    let silent = now.saturating_sub(last_output) > ACTIVITY_IDLE_MS;
     match t.hook_state.as_deref() {
-        // Blocked holds until output resumes well after the prompt painted — the user
-        // answered in the terminal and the agent went back to work.
+        // Blocked holds until the agent clearly resumed: either a byte burst since the block
+        // (approval floods the PTY) or, as a backstop, real post-block output that has sat
+        // past the stuck ceiling so a small (Esc-answer) response still recovers. A bare
+        // prompt-box repaint (small, no burst) must NOT clear it — the old bug (item 6).
         Some("blocked") => {
-            if t.last_output > t.hook_ts + BLOCKED_RESUME_MS {
+            let burst = t.bytes_since_block.load(Ordering::Relaxed) > BLOCKED_RESUME_BYTES;
+            let real_output = last_output > t.hook_ts + BLOCKED_RESUME_MS;
+            let stuck = now.saturating_sub(t.hook_ts) > BLOCKED_STUCK_MS;
+            if burst || (stuck && real_output) {
                 "working"
             } else {
                 "blocked"
@@ -238,6 +263,15 @@ fn apply_hook_report(v: &serde_json::Value, t: &mut Track) {
         "ended" | "" => None,
         s => Some(s.to_string()),
     };
+    // A fresh block starts the byte-burst counter from zero (item 6 fallback). The initial
+    // prompt-box paint usually lands before this poll reads the hook file, so it isn't
+    // counted; only output after the block accrues.
+    // ponytail: a large plan-approval box that repaints AFTER this reset (e.g. terminal
+    // resize) could exceed BLOCKED_RESUME_BYTES and false-clear; upgrade path is a short
+    // settle delay before counting. Rare enough to leave.
+    if t.hook_state.as_deref() == Some("blocked") {
+        t.bytes_since_block.store(0, Ordering::Relaxed);
+    }
     if let Some(cs) = v
         .get("claudeSessionId")
         .and_then(|x| x.as_str())
@@ -272,19 +306,32 @@ pub fn start(app: tauri::AppHandle) {
         // Read hook files OUTSIDE the tracks lock: on_output() takes that lock from every
         // PTY reader thread per chunk, so fs reads (AV scans can stall them) must not
         // serialize against it. Only local claude panes ever have a hook file.
-        let claude_ids: Vec<String> = {
+        let claude_ids: Vec<(String, u64)> = {
             let map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
             map.iter()
                 .filter(|(_, t)| t.tool == "claude")
-                .map(|(id, _)| id.clone())
+                .map(|(id, t)| (id.clone(), t.hook_mtime))
                 .collect()
         };
-        let mut reports: HashMap<String, serde_json::Value> = HashMap::new();
+        // Report value plus the mtime that produced it, so the poll section can store it.
+        let mut reports: HashMap<String, (u64, serde_json::Value)> = HashMap::new();
         if let Some(d) = dir.as_deref() {
-            for id in claude_ids {
-                if let Ok(text) = std::fs::read_to_string(d.join(format!("{id}.json"))) {
+            for (id, seen_mtime) in claude_ids {
+                let path = d.join(format!("{id}.json"));
+                // mtime gate: stat is far cheaper than read+parse. Skip when unchanged; a
+                // missing file (mtime 0) is skipped too, exactly as the old read would fail.
+                let mtime = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                if mtime == 0 || mtime == seen_mtime {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&path) {
                     if let Ok(v) = serde_json::from_str(&text) {
-                        reports.insert(id, v);
+                        reports.insert(id, (mtime, v));
                     }
                 }
             }
@@ -294,8 +341,9 @@ pub fn start(app: tauri::AppHandle) {
             let mut map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
             let now = now_ms();
             map.retain(|id, t| {
-                if let Some(v) = reports.get(id) {
+                if let Some((mtime, v)) = reports.get(id) {
                     apply_hook_report(v, t);
+                    t.hook_mtime = *mtime;
                 }
                 let state = compute(t, now);
                 if t.last_emitted.as_deref() != Some(state) {
@@ -330,10 +378,12 @@ mod tests {
             tool: tool.into(),
             label: tool.into(),
             spawned_at: now,
-            last_output: now,
+            last_output: AtomicU64::new(now),
+            bytes_since_block: AtomicU64::new(0),
             exited: false,
             hook_state: None,
             hook_ts: 0,
+            hook_mtime: 0,
             claude_session_id: None,
             last_emitted: None,
         }
@@ -345,10 +395,14 @@ mod tests {
         let now = 1_000_000;
         let mut t = track("codex", now);
         assert_eq!(compute(&t, now + 1_000), "unknown"); // startup grace
-        t.last_output = now + STARTUP_GRACE_MS + 1_000;
+        t.last_output
+            .store(now + STARTUP_GRACE_MS + 1_000, Ordering::Relaxed);
         assert_eq!(compute(&t, now + STARTUP_GRACE_MS + 2_000), "working");
         assert_eq!(
-            compute(&t, t.last_output + ACTIVITY_IDLE_MS + 1_000),
+            compute(
+                &t,
+                t.last_output.load(Ordering::Relaxed) + ACTIVITY_IDLE_MS + 1_000
+            ),
             "idle"
         );
         t.exited = true;
@@ -359,21 +413,26 @@ mod tests {
     fn hook_authority_and_self_heal() {
         let now = 1_000_000;
         let mut t = track("claude", now);
-        // Hook says blocked → stays blocked while the prompt just sits there…
+        // Hook says blocked → stays blocked while the prompt just repaints (small trickle,
+        // no byte burst) even long after the block.
         t.hook_state = Some("blocked".into());
         t.hook_ts = now;
-        t.last_output = now + 200; // the prompt menu painting itself
+        t.last_output.store(now + 200, Ordering::Relaxed); // the prompt menu painting itself
         assert_eq!(compute(&t, now + 60_000), "blocked");
-        // …until output resumes well after the prompt painted (user approved).
-        t.last_output = now + BLOCKED_RESUME_MS + 500;
-        assert_eq!(compute(&t, now + BLOCKED_RESUME_MS + 600), "working");
+        // …until a byte burst floods in (user approved, agent resumed its turn).
+        t.bytes_since_block
+            .store(BLOCKED_RESUME_BYTES + 1, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + 3_000), "working");
         // Hook-idle is authoritative even with echo activity (typing in the prompt box).
         t.hook_state = Some("idle".into());
-        t.last_output = now + 10_000;
+        t.last_output.store(now + 10_000, Ordering::Relaxed);
         assert_eq!(compute(&t, now + 10_100), "idle");
         // Hook-working self-heals to idle on silence (Esc interrupt fires no Stop hook).
         t.hook_state = Some("working".into());
-        assert_eq!(compute(&t, t.last_output + ACTIVITY_IDLE_MS + 1), "idle");
+        assert_eq!(
+            compute(&t, t.last_output.load(Ordering::Relaxed) + ACTIVITY_IDLE_MS + 1),
+            "idle"
+        );
     }
 
     #[test]
@@ -393,5 +452,36 @@ mod tests {
         };
         assert_ne!(ev.spawned_at, 0);
         assert_eq!(ev.spawned_at, now);
+    }
+
+    #[test]
+    fn blocked_clears_on_byte_burst_not_trickle() {
+        // Item 6: a small post-block trickle (prompt repaint) keeps `blocked`; a substantial
+        // byte burst (the agent resumed its turn) clears it.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_state = Some("blocked".into());
+        t.hook_ts = now;
+        t.last_output.store(now + 500, Ordering::Relaxed);
+        t.bytes_since_block.store(64, Ordering::Relaxed); // under the threshold
+        assert_eq!(compute(&t, now + 2_000), "blocked");
+        t.bytes_since_block
+            .store(BLOCKED_RESUME_BYTES + 1, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + 2_100), "working");
+    }
+
+    #[test]
+    fn blocked_time_backstop_recovers_on_sparse_output() {
+        // Item 6 backstop: little output (an Esc answer) never reaches the byte threshold,
+        // but once past the stuck ceiling with real post-block output it recovers to working.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_state = Some("blocked".into());
+        t.hook_ts = now;
+        t.bytes_since_block.store(32, Ordering::Relaxed); // below BLOCKED_RESUME_BYTES
+        t.last_output
+            .store(now + BLOCKED_RESUME_MS + 3_000, Ordering::Relaxed); // real post-block output
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS - 1_000), "blocked"); // before ceiling
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS + 1_000), "working"); // after ceiling
     }
 }
