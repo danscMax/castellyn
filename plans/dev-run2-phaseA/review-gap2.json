@@ -1,0 +1,50 @@
+{
+  "verdict": "REJECT",
+  "findings": [
+    {
+      "severity": "medium",
+      "rubricLine": "7",
+      "file": "src-tauri/src/lib.rs",
+      "line": 7136,
+      "finding": "Codex reconcile does NOT self-heal after a failed remove: the codex ledger is advanced to canon_names unconditionally, even though `codex mcp remove <stale>` is best-effort and its failure is swallowed. A stale server that failed to remove is then (a) never retried by a future deploy and (b) silently reclassified as a user server, so mcp_drift never flags it. The de-canonized tail becomes permanent and invisible — defeating the exact behavior this feature ships.",
+      "evidence": "for stale in mcp_stale_names(&prev, &canon_names) { if !cmd_argv_safe(...) { continue; } let mut cmd = std::process::Command::new(\"cmd\"); cmd.arg(\"/C\").arg(\"codex\").arg(\"mcp\").arg(\"remove\").arg(&stale); ... let _ = cmd.output(); } hub.managed_mcp.get_or_insert_default().codex = Some(canon_names);",
+      "fix": "Only drop a name from the codex ledger once its removal actually succeeded. Track which removes failed and keep them in the ledger: `let mut kept = canon_names.clone(); for stale in mcp_stale_names(&prev,&canon_names) { let ok = cmd_argv_safe(...) && cmd.output().map(|o| o.status.success()).unwrap_or(false); if !ok { kept.push(stale); } } hub.managed_mcp.get_or_insert_default().codex = Some(kept);` — a failed remove then stays managed, so the next deploy retries it AND drift keeps flagging it. (opencode does not have this bug: its removal is an in-memory mcp.remove that persists atomically with the same write that gates the ledger update.)"
+    },
+    {
+      "severity": "low",
+      "rubricLine": "3",
+      "file": "src-tauri/src/lib.rs",
+      "line": 7136,
+      "finding": "The codex ledger is persisted before the errs early-return, so it is written even when the whole deploy fails. If codex is absent/broken, every `codex mcp add` fails (errs populated), yet the reconcile block still sets ledger=canon and writes config.json, then the function returns Err. The ledger now claims canon was deployed to codex though nothing was. Combined with finding 1, this poisons the baseline for the next reconcile.",
+      "evidence": "hub.managed_mcp.get_or_insert_default().codex = Some(canon_names); let _ = write_config_file(&hub); \\n\\n if !errs.is_empty() { return Err(errs.join(\" \\u00b7 \")); }",
+      "fix": "Move the ledger write below the `if !errs.is_empty()` check, or only advance it for names that verifiably succeeded (subsumed by finding 1's fix)."
+    },
+    {
+      "severity": "low",
+      "rubricLine": "5",
+      "file": "src-tauri/src/lib.rs",
+      "line": 6838,
+      "finding": "False-positive drift for an empty-command canon server. run_opencode_mcp skips servers with an empty `command` (never inserted into opencode.json), but canon_names / read_mcp().source still include them, so mcp_drift reports 'missing canon server' immediately after a clean deploy. Edge case (a commandless server in .mcp.json is unusual), but it makes the badge lie.",
+      "evidence": "let canon_names: Vec<String> = servers.keys().cloned().collect(); ... if command.is_empty() { continue; }  // server stays in canon_names + read_mcp source, but never lands in opencode.json",
+      "fix": "Derive canon for both the ledger and drift from deployable servers only (command non-empty), or have read_mcp/drift ignore commandless source entries."
+    },
+    {
+      "severity": "low",
+      "rubricLine": "1",
+      "file": "src-tauri/src/lib.rs",
+      "line": 6793,
+      "finding": "Ledger is name-keyed, so it cannot distinguish 'the server WE deployed under name N' from 'a user's own server that now happens to be named N'. If Castellyn deployed N, N is later dropped from canon, and the user independently keeps/re-adds a server named N, the next deploy removes the user's N. Inherent to a name-only ledger; not a violation of the stated model (semantically it is still the name Castellyn managed), but worth documenting as the one path where a user-visible server is deleted.",
+      "evidence": "fn mcp_stale_names(managed: &[String], canon: &[String]) -> Vec<String> { ... managed.iter().filter(|n| !keep.contains(n.as_str())) ... }  // keyed on name only",
+      "fix": "Acceptable to accept as-is; if stricter safety is wanted, key the ledger on (name+command) or re-confirm before removing a name whose current harness definition differs from what Castellyn last deployed."
+    },
+    {
+      "severity": "low",
+      "rubricLine": "6",
+      "file": "src-tauri/src/lib.rs",
+      "line": 6304,
+      "finding": "Stale duplicate doc-comment: the original count_toml_tables doc block was left in place above the renamed toml_table_names, so two doc lines now describe the same fn (one referencing the removed `.matches().count()`). Cosmetic only.",
+      "evidence": "/// Count distinct TOML table keys under `[prefix` ... replacing the fragile `.matches().count()` heuristic.\\n/// Distinct table names under `prefix` ... fn toml_table_names(...)",
+      "fix": "Delete the obsolete first doc line."
+    }
+  ]
+}
