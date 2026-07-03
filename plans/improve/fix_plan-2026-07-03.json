@@ -1,7 +1,7 @@
 {
   "source": "plans/improve/report-2026-07-03.md",
   "created": "2026-07-03",
-  "scope_default": "ПРОГОН 1 (сделано, ветка auto-loop/improve-0703): Волны 1-3 кроме #5 + 21a/21b — 19 пунктов, коммиты 1b7f04d/678f260/23b0666/e8c3011 (+ review-fixes). ПРОГОН 2 (все решения зафиксированы владельцем 2026-07-03, approved:true, ждёт свежего /max:dev): #5 (только castellyn-маркер), вся Волна 4 (10/11/13/15/17/18/19), 21c (авто-продолжение ВКЛ по умолчанию)/21d/21e. Тех.развилки 10/13/17/18/19 разрешены Lead-дефолтом (см. decision_resolved).",
+  "scope_default": "ПРОГОН 1 (сделано, ветка auto-loop/improve-0703): Волны 1-3 кроме #5 + 21a/21b — 19 пунктов, коммиты 1b7f04d/678f260/23b0666/e8c3011 (+ review-fixes). ПРОГОН 2 (все решения зафиксированы владельцем 2026-07-03, approved:true, ждёт свежего /max:dev): #5 (только castellyn-маркер), вся Волна 4 (10/11/13/15/17/18/19), 21c (авто-продолжение ВКЛ по умолчанию)/21d/21e. Тех.развилки 10/13/17/19 разрешены Lead-дефолтом (см. decision_resolved). #18 РАСШИРЕН до Дыры-1 (owner 2026-07-03 «добавить Дыру 1»): durable sidecar-файл ~/.claude/castellyn/sessions.json вместо HubConfig — синк между ПК + бэкап + standalone. Дыры 2/4 и косметика Дыры-5 в этот прогон НЕ вошли (не подтверждены владельцем).",
   "waves": [
     {
       "wave": 1,
@@ -400,13 +400,13 @@
           "category": "functional",
           "file": "src/lib/components/SettingsTab.svelte",
           "line": 169,
-          "title": "Sessions-персонализация в экспорт/бэкап",
-          "fix_approach": "sessionsPrefs-блок в HubConfig (или sidecar-файл) + миграция из localStorage при первом чтении",
-          "decision_resolved": "resolved(lead 2026-07-03): sessionsPrefs-блок в HubConfig + миграция из localStorage при первом чтении (один источник истины после перехода)",
+          "title": "Sessions-персонализация: durable sidecar-файл (экспорт/бэкап + синк между ПК) — ДЫРА 1",
+          "fix_approach": "sidecar-файл ~/.claude/castellyn/sessions.json как ЕДИНЫЙ durable-дом всех cmh-* prefs; при первом чтении, если файл пуст а localStorage непуст → миграция из localStorage; далее файл=истина, localStorage=зеркало; добавить путь в Syncthing-whitelist (sync_item_lines ~lib.rs:1792) и в снимок бэкапа (run_backup ~lib.rs:1332); read-on-focus чтобы подхватить правку с другого ПК. НЕ HubConfig (не синкается между ПК, не читается вне Castellyn).",
+          "decision_resolved": "resolved(owner 2026-07-03 «добавить Дыру 1»): sidecar-файл (вариант A), заменяет прежний HubConfig-подход — единственный вариант, дающий и standalone-чтение, и синк между ПК, и попадание в бэкап; НОВЫЙ файл в подпапке castellyn/, залинкованные папки (skills/projects/agents/commands/hooks/plugins) НЕ трогает.",
           "approved": true,
           "effort": "M",
-          "risk": "med: двойной источник истины на переходный период",
-          "verify": "экспорт → чистый импорт → workspaces/favorites на месте"
+          "risk": "med: две машины правят prefs → Syncthing может создать *.sync-conflict-* (для настроек приемлемо: last-wins + конфликт-файл виден); переходный период — файл-истина vs localStorage-зеркало",
+          "verify": "экспорт → чистый импорт → workspaces/favorites на месте; файл существует под ~/.claude/castellyn/sessions.json и standalone-читаем; путь присутствует в Syncthing-whitelist и в снимке бэкапа; миграция из localStorage при первом старте отрабатывает ровно один раз"
         },
         {
           "id": "19",
