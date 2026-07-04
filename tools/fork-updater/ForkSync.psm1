@@ -892,7 +892,7 @@ function Invoke-DeleteWipLocal {
 }
 
 function Invoke-RepoActions {
-    param([pscustomobject]$Rep, [bool]$Ff, [bool]$Del, [bool]$Norm, [bool]$Reb, [bool]$Wip, [bool]$DelWip, [bool]$Prune, [switch]$PushReb, [switch]$DryRun, [switch]$Yes)
+    param([pscustomobject]$Rep, [bool]$Ff, [bool]$Del, [bool]$Norm, [bool]$Reb, [bool]$Wip, [bool]$DelWip, [bool]$Prune, [switch]$PushReb, [switch]$DryRun, [switch]$Yes, [switch]$Unattended)
     if ($Rep.Skipped -or $Rep.detached -or $Rep.midOp) { return @() }
     $did = New-Object System.Collections.Generic.List[string]
     if (-not $DryRun -and ($Ff -or $Del -or $Norm -or $Reb -or $Wip -or $DelWip -or $Prune)) {
@@ -914,6 +914,12 @@ function Invoke-RepoActions {
                 if (Confirm-Step "Удалить влитую '$($b.name)' в $($Rep.Name) (локально+форк)?" -Yes:$Yes) {
                     $did.Add((Remove-MergedBranch -RepoPath $Rep.Path -Branch $b.name -ForkRemote $Rep.forkRemote -DeleteRemote))
                 } else { $did.Add("пропущено '$($b.name)'") }
+            } elseif ($Unattended) {
+                # M6: a cherry-heuristic-only delete needs interactive confirmation (never auto, even
+                # under -Yes). In an unattended run there's no console — Confirm-Step's Read-Host gets
+                # $null at EOF and ($null).Trim() THROWS, aborting the whole run before the status is
+                # written (ErrorActionPreference='Stop', no try/catch here). Skip it safely instead.
+                $did.Add("пропущено '$($b.name)' (эвристика cherry без влитого PR — требует интерактивного подтверждения)")
             } else {
                 # Cherry-heuristic-only: local delete, no fork push, ALWAYS prompt (ignore -Yes).
                 if (Confirm-Step "Удалить '$($b.name)' в $($Rep.Name) ЛОКАЛЬНО? (нет влитого PR — только эвристика cherry; форк не трогаем)") {
@@ -1052,7 +1058,7 @@ function Invoke-ForkSync {
         $dry = [bool]$DryRun
         Write-Section $(if ($dry) { 'ПЛАН действий (dry-run — ничего не меняется)' } else { 'Выполнение действий' }) '' $(if ($dry) { 'Magenta' } else { 'Green' })
         foreach ($rep in $managed) {
-            $acts = Invoke-RepoActions -Rep $rep -Ff:$doFf -Del:$doDel -Norm:$doNorm -Reb:$doReb -Wip:$doWip -DelWip:$doDelWip -Prune:$doPrune -PushReb:$PushRebased -DryRun:$dry -Yes:$Yes
+            $acts = Invoke-RepoActions -Rep $rep -Ff:$doFf -Del:$doDel -Norm:$doNorm -Reb:$doReb -Wip:$doWip -DelWip:$doDelWip -Prune:$doPrune -PushReb:$PushRebased -DryRun:$dry -Yes:$Yes -Unattended:$Unattended
             if (@($acts).Count) {
                 Write-Host "    $($rep.Name):" -ForegroundColor White
                 foreach ($a in $acts) { Write-Status $a $(if ($dry) { 'INFO' } else { 'OK' }) }
