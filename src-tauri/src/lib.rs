@@ -478,6 +478,12 @@ static BULK_PLUGINS_ACTIVE: std::sync::atomic::AtomicBool =
 static BULK_PLUGINS_CANCEL: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// M1: "Repair All" profiles runs each profile as a sequential spawn_pwsh_phase under one RunSlot.
+// cancel_run/cancel_all only kill the CURRENT child's pid, so without this between-items flag the
+// loop marches through every remaining profile after a Cancel. Mirrors BULK_PLUGINS_CANCEL.
+static PROFILES_BULK_CANCEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// RAII reservation for the bulk-plugin domain (mirrors RunSlot): `Drop` ALWAYS clears ACTIVE, so a
 /// dropped command future (e.g. webview reload mid-sweep) can't wedge it into a permanent "busy".
 struct BulkSlot;
@@ -694,7 +700,20 @@ async fn spawn_pwsh_phase(
     cmd.creation_flags(CREATE_NO_WINDOW);
     let child = match cmd.spawn() {
         Ok(c) => c,
-        Err(_) => return -1,
+        Err(e) => {
+            // L1: surface the spawn failure like spawn_streamed_prog's sibling path (err.spawn_failed).
+            // A bulk Repair-All spawn failure was previously silent (`Err(_) => return -1`).
+            let program = "pwsh";
+            let _ = app.emit(
+                "run-log",
+                LogLine {
+                    component: id.to_string(),
+                    stream: "err".into(),
+                    line: trv("err.spawn_failed", cur_lang(), &[("program", &program), ("e", &e)]),
+                },
+            );
+            return -1;
+        }
     };
     if let Some(pid) = child.id() {
         *state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
@@ -1502,6 +1521,7 @@ async fn repair_all_profiles(
         .filter(|n| valid_profile_name(n) && known.iter().any(|k| k == n))
         .collect();
     let _slot = RunSlot::reserve(state.inner())?;
+    PROFILES_BULK_CANCEL.store(false, Ordering::SeqCst);
     let script = abs(REPAIR_SCRIPT_REL);
     let mut worst = 0;
     for name in &targets {
@@ -1525,6 +1545,11 @@ async fn repair_all_profiles(
         .await;
         if code != 0 {
             worst = code;
+        }
+        // M1: honor a mid-run Cancel — cancel_run/cancel_all killed the current child and set the
+        // flag; stop instead of marching through the remaining profiles (worst already reflects it).
+        if PROFILES_BULK_CANCEL.load(Ordering::SeqCst) {
+            break;
         }
     }
     drop(_slot);
@@ -3993,19 +4018,11 @@ fn valid_provider_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && !s.chars().any(|c| c.is_control())
 }
 
-/// SSRF guard for a provider base URL (ports the intent of Mediafarm's validate_base_url):
-/// require http/https and reject link-local + known cloud-metadata pivots. Localhost / RFC1918
-/// are allowed on purpose (local engines like LM Studio). Run before storing a key and before connect.
-fn valid_base_url(s: &str) -> Result<(), String> {
-    let s = s.trim();
-    let rest = s
-        .strip_prefix("http://")
-        .or_else(|| s.strip_prefix("https://"))
-        .ok_or(tr("err.url_scheme", cur_lang()))?;
-    let host_port = rest.split('/').next().unwrap_or("");
-    // strip an optional :port; handle an IPv6 literal ([::1] / [::1]:port) without mistaking its
-    // inner colons for the port separator.
-    let host = if host_port.starts_with('[') {
+/// L3: extract the bare host from a `host[:port]` chunk. Handles an IPv6 literal (`[::1]` /
+/// `[::1]:port`) without mistaking its inner colons for the port separator. Shared by
+/// `valid_base_url` and `probe_url_allowed` (previously copy-pasted in both).
+fn extract_host(host_port: &str) -> &str {
+    if host_port.starts_with('[') {
         host_port
             .trim_start_matches('[')
             .split(']')
@@ -4016,7 +4033,37 @@ fn valid_base_url(s: &str) -> Result<(), String> {
             .rsplit_once(':')
             .map(|(h, _)| h)
             .unwrap_or(host_port)
-    };
+    }
+}
+
+/// L2: true if a literal/resolved IP is link-local, unspecified, or a known cloud-metadata address.
+/// Loopback and RFC1918 are intentionally NOT blocked — local engines (LM Studio) live there.
+fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_link_local()                       // 169.254.0.0/16 — AWS/GCP/Azure IMDS
+                || v4.is_unspecified()               // 0.0.0.0
+                || v4.octets() == [100, 100, 100, 200] // Alibaba metadata
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_unspecified()
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || *v6 == std::net::Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0xec2, 0x254) // fd00:ec2::254
+        }
+    }
+}
+
+/// SSRF guard for a provider base URL (ports the intent of Mediafarm's validate_base_url):
+/// require http/https and reject link-local + known cloud-metadata pivots. Localhost / RFC1918
+/// are allowed on purpose (local engines like LM Studio). Run before storing a key and before connect.
+fn valid_base_url(s: &str) -> Result<(), String> {
+    let s = s.trim();
+    let rest = s
+        .strip_prefix("http://")
+        .or_else(|| s.strip_prefix("https://"))
+        .ok_or(tr("err.url_scheme", cur_lang()))?;
+    let host_port = rest.split('/').next().unwrap_or("");
+    let host = extract_host(host_port); // L3: shared IPv6-aware host extraction
     if host.is_empty() {
         return Err(tr("err.empty_host", cur_lang()).into());
     }
@@ -4029,6 +4076,23 @@ fn valid_base_url(s: &str) -> Result<(), String> {
     ];
     if blocked.contains(&hl.as_str()) || hl.starts_with("169.254.") || hl == "metadata" {
         return Err(trv("err.blocked_host", cur_lang(), &[("host", &host)]));
+    }
+    // L2: the string list above misses non-canonical encodings (decimal/octal/hex IPs, trailing
+    // dot) and hostnames that RESOLVE to a metadata/link-local address. Check the literal IP if the
+    // host is one; otherwise best-effort resolve and check what will actually be dialed. Resolution
+    // failure fails OPEN — a host that can't resolve can't be connected to anyway, and we must not
+    // reject a legitimate save just because DNS is momentarily flaky.
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_blocked_ip(&ip) {
+            return Err(trv("err.blocked_host", cur_lang(), &[("host", &host)]));
+        }
+    } else {
+        use std::net::ToSocketAddrs;
+        if let Ok(addrs) = (host, 0u16).to_socket_addrs() {
+            if addrs.map(|s| s.ip()).any(|ip| is_blocked_ip(&ip)) {
+                return Err(trv("err.blocked_host", cur_lang(), &[("host", &host)]));
+            }
+        }
     }
     Ok(())
 }
@@ -4741,15 +4805,22 @@ async fn next_provider_key(
     state: State<'_, RunState>,
     id: String,
 ) -> Result<i32, String> {
-    let mut list = read_myproviders_checked()?;
-    let pos = find_provider_idx(&list, &id).ok_or(tr("err.provider_not_found", cur_lang()))?;
-    let (count, active) = key_pool_meta(&list[pos]);
-    if count < 2 {
-        return Err(tr("err.single_key", cur_lang()).into());
+    // M3: serialize the read-modify-write of myproviders.json under the same lock the other four
+    // mutators (save/delete/add_key/remove_key) take — without it a concurrent add/save could lose
+    // this update. Scoped to the RMW only: the guard MUST be dropped before the connect .await below
+    // (a std MutexGuard held across .await would make the future non-Send and could deadlock connect).
+    {
+        let _guard = MYPROVIDERS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut list = read_myproviders_checked()?;
+        let pos = find_provider_idx(&list, &id).ok_or(tr("err.provider_not_found", cur_lang()))?;
+        let (count, active) = key_pool_meta(&list[pos]);
+        if count < 2 {
+            return Err(tr("err.single_key", cur_lang()).into());
+        }
+        let next = next_key_index(active, count);
+        list[pos]["activeKey"] = serde_json::json!(next);
+        write_myproviders_raw(&list)?;
     }
-    let next = next_key_index(active, count);
-    list[pos]["activeKey"] = serde_json::json!(next);
-    write_myproviders_raw(&list)?;
     // Re-bind the harness to the now-active key (reuses the full connect dispatch).
     connect_my_provider(app, state, id).await
 }
@@ -4799,20 +4870,7 @@ fn probe_url_allowed(base_url: &str) -> Result<(), String> {
     valid_base_url(base_url)?;
     if let Some(rest) = base_url.trim().strip_prefix("http://") {
         let host_port = rest.split('/').next().unwrap_or("");
-        // Same host extraction as valid_base_url (handle an [::1] IPv6 literal without splitting on its
-        // inner colons).
-        let host = if host_port.starts_with('[') {
-            host_port
-                .trim_start_matches('[')
-                .split(']')
-                .next()
-                .unwrap_or("")
-        } else {
-            host_port
-                .rsplit_once(':')
-                .map(|(h, _)| h)
-                .unwrap_or(host_port)
-        };
+        let host = extract_host(host_port); // L3: shared IPv6-aware host extraction
         let hl = host.to_ascii_lowercase();
         // Only exact "localhost" or a host that parses as a loopback IP counts. A prefix/substring
         // test (`starts_with("127.")`) would wrongly allow a non-IP hostname like `127.0.0.1.evil.com`
@@ -4886,6 +4944,12 @@ fn probe_provider(base_url: &str, protocol: &str, api_key: &str) -> serde_json::
 /// GET <base>/models (or /v1/models for a bare host). Returns model ids; empty on any error.
 fn fetch_engine_models(base_url: &str) -> Vec<String> {
     if base_url.is_empty() {
+        return Vec::new();
+    }
+    // M2: SSRF guard before the outbound GET — every sibling outbound fetch validates the target
+    // first; this "fetch models" preview was the one that didn't. Empty on a blocked/invalid URL
+    // matches this function's "empty on any error" contract.
+    if valid_base_url(base_url).is_err() {
         return Vec::new();
     }
     let u = base_url.trim_end_matches('/');
@@ -5388,6 +5452,7 @@ fn opencode_provider_native(
     out: &dyn Fn(&str),
     err: &dyn Fn(&str),
 ) -> i32 {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4 (called sync from the async run_opencode_provider — no guard held across .await)
     use serde_json::{json, Value};
 
     // Load opencode.json (BOM-tolerant) or start minimal; a parse failure aborts (as the script does).
@@ -5691,6 +5756,13 @@ fn read_mcp() -> Result<McpStatus, String> {
 
 /// Serialize lock for the canonical .mcp.json: add/edit/remove all read-modify-write it.
 static MCP_LOCK: Mutex<()> = Mutex::new(());
+
+// M4/L4: serialize every deploy-config read-modify-write — opencode.json, ~/.codex/config.toml, and
+// the shared managed_mcp ledger in config.json. Each writer rewrites a whole file (or a shared ledger
+// key), so two deploys fired together lose one update (and the "deployed N" toast lies). All these
+// writers are synchronous fns (blocking process spawns, no .await), so a std Mutex held across the
+// body is Send-safe; never nested — each is an independent top-level deploy command.
+static DEPLOY_CFG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Read the canonical .mcp.json doc; defaults to {"mcpServers":{}} when absent. Errs (so a caller
 /// aborts instead of overwriting) when present-but-corrupt, recovering from .bak first.
@@ -6816,6 +6888,7 @@ fn mcp_stale_names(managed: &[String], canon: &[String]) -> Vec<String> {
 
 #[tauri::command]
 fn run_opencode_mcp() -> Result<usize, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4/L4
     use serde_json::{json, Value};
     let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     // Canonical source, placeholders expanded (same as write_temp_mcp_config).
@@ -7005,6 +7078,7 @@ fn merge_opencode_provider(target: &mut serde_json::Value, shape: serde_json::Va
 /// (apiKey is written as an `{env:…}` reference the user populates). Returns the count written.
 #[tauri::command]
 fn run_opencode_providers() -> Result<usize, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4
     use serde_json::{json, Value};
     let src = std::fs::read_to_string(abs(MYPROVIDERS_CONFIG_REL))
         .map_err(|e| trv("err.myproviders_read", cur_lang(), &[("e", &e)]))?;
@@ -7094,6 +7168,7 @@ fn cmd_argv_safe(argv: &[String]) -> bool {
 /// and their tools resolve via Codex's tool search. Returns the count added.
 #[tauri::command]
 fn run_codex_mcp() -> Result<usize, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // L4 (config.json ledger + config.toml)
     use std::os::windows::process::CommandExt;
     let home = std::env::var("USERPROFILE")
         .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
@@ -7233,6 +7308,7 @@ fn patch_codex_gateway(toml_text: &str, base_url: &str) -> Result<String, String
 /// box in a new terminal. Returns whether the key was set; the key itself is never logged.
 #[tauri::command]
 fn run_codex_providers() -> Result<bool, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
     use std::os::windows::process::CommandExt;
     let base = gateway_base_url().ok_or_else(|| tr("err.gateway_missing", cur_lang()).to_string())?;
     let home = std::env::var("USERPROFILE")
@@ -7284,6 +7360,7 @@ const CANON_RULES_REL: [&str; 2] = [
 /// the merge — 0 means none of the files exist on disk.
 #[tauri::command]
 fn run_opencode_instructions() -> Result<usize, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4
     use serde_json::{json, Value};
     let paths: Vec<String> = CANON_RULES_REL
         .iter()
@@ -7661,6 +7738,9 @@ fn list_plugin_updates() -> Vec<PluginUpdate> {
         }
         let Some(at) = id.rfind('@') else { continue };
         let plugin_id = &id[..at];
+        if !plugin_id_path_safe(plugin_id) {
+            continue; // L7: reject a traversal-y plugin id before it reaches a filesystem path
+        }
         let mp_name = &id[at + 1..];
         let loc = markets
             .get(mp_name)
@@ -7708,6 +7788,9 @@ fn plugin_content_dir(id: &str, install_path: &str, markets: &serde_json::Value)
     }
     let at = id.rfind('@')?;
     let plugin_id = &id[..at];
+    if !plugin_id_path_safe(plugin_id) {
+        return None; // L7: reject a traversal-y plugin id before it reaches a filesystem path
+    }
     let mp_name = &id[at + 1..];
     let loc = markets
         .get(mp_name)
@@ -7721,18 +7804,45 @@ fn plugin_content_dir(id: &str, install_path: &str, markets: &serde_json::Value)
     }
 }
 
+/// M5: is this path itself a reparse point (Windows junction OR symlink)? Stat's the link, not its
+/// target (symlink_metadata), same FILE_ATTRIBUTE_REPARSE_POINT test has_reparse_child uses.
+fn is_reparse_point(p: &std::path::Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    p.symlink_metadata()
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(false)
+}
+
+/// L7: a marketplace-supplied plugin id is spliced into a filesystem path (`...\plugins\{id}`);
+/// reject empty / traversal (`..`, `/`, `\`) ids before that, mirroring run_plugin's charset guard.
+fn plugin_id_path_safe(plugin_id: &str) -> bool {
+    !plugin_id.is_empty()
+        && !plugin_id.contains("..")
+        && !plugin_id.contains('/')
+        && !plugin_id.contains('\\')
+}
+
 /// Collect `*.md` stems under a directory recursively (used for commands/agents).
 /// Nested paths are joined with `:` to mirror Claude Code's namespaced naming.
 fn collect_md_names(root: &std::path::Path) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
+    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>, depth: u32) {
+        if depth > 32 {
+            return; // M5: belt-and-suspenders depth cap against any directory cycle
+        }
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
-                walk(&p, base, out);
+                // M5: never descend into a junction/symlink — a self- or mutually-referencing reparse
+                // point (hostile/misconfigured plugin dir) would recurse forever and crash the app.
+                if is_reparse_point(&p) {
+                    continue;
+                }
+                walk(&p, base, out, depth + 1);
             } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
                 if let Ok(rel) = p.strip_prefix(base) {
                     let name = rel
@@ -7746,7 +7856,7 @@ fn collect_md_names(root: &std::path::Path) -> Vec<String> {
             }
         }
     }
-    walk(root, root, &mut out);
+    walk(root, root, &mut out, 0);
     out.sort();
     out
 }
@@ -8582,6 +8692,40 @@ fn plugin_sync_status() -> Result<PluginSyncStatus, String> {
     })
 }
 
+/// L5: shared per-profile settings.json sweep for plugin_sync_set + agent_status_hook_set. Reads each
+/// target, applies `mutate` (true = it changed the doc), and writes atomically only on change —
+/// continuing past a momentarily-locked/malformed file and collecting hard write errors to surface
+/// after every profile is attempted (never an early abort that strands the remaining profiles).
+fn sweep_profile_settings<K>(
+    targets: Vec<(K, String)>,
+    mutate: impl Fn(&mut serde_json::Value) -> bool,
+) -> Result<(), String> {
+    let mut errs: Vec<String> = Vec::new();
+    for (_, sp) in targets {
+        let Ok(c) = std::fs::read_to_string(&sp) else {
+            continue;
+        };
+        let Ok(mut v) = parse_json_bom(&c) else {
+            continue;
+        };
+        if mutate(&mut v) {
+            match serde_json::to_string_pretty(&v) {
+                Ok(s) => {
+                    if let Err(e) = write_json_atomic_retry(&sp, &s) {
+                        errs.push(format!("{sp}: {e}"));
+                    }
+                }
+                Err(e) => errs.push(format!("{sp}: {e}")),
+            }
+        }
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs.join(" · "))
+    }
+}
+
 /// Wire (enable) or unwire (disable) SessionStart auto-sync in every profile; enable also
 /// installs/updates the hook script. Unreadable/malformed settings files are skipped.
 #[tauri::command]
@@ -8600,33 +8744,13 @@ fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
     } else {
         claude_settings_all(&home)
     };
-    let mut errs: Vec<String> = Vec::new();
-    for (_, sp) in targets {
-        let Ok(c) = std::fs::read_to_string(&sp) else {
-            continue;
-        };
-        let Ok(mut v) = parse_json_bom(&c) else {
-            continue;
-        };
-        let changed = if enabled {
-            plugin_sync_wire(&mut v)
+    sweep_profile_settings(targets, |v| {
+        if enabled {
+            plugin_sync_wire(v)
         } else {
-            plugin_sync_unwire(&mut v)
-        };
-        if changed {
-            match serde_json::to_string_pretty(&v) {
-                Ok(s) => {
-                    if let Err(e) = write_json_atomic_retry(&sp, &s) {
-                        errs.push(format!("{sp}: {e}"));
-                    }
-                }
-                Err(e) => errs.push(format!("{sp}: {e}")),
-            }
+            plugin_sync_unwire(v)
         }
-    }
-    if !errs.is_empty() {
-        return Err(errs.join(" · "));
-    }
+    })?;
     plugin_sync_status()
 }
 
@@ -8745,37 +8869,63 @@ fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> 
     } else {
         claude_settings_all(&home)
     };
-    let mut errs: Vec<String> = Vec::new();
-    for (_, sp) in targets {
-        let Ok(c) = std::fs::read_to_string(&sp) else {
-            continue;
-        };
-        let Ok(mut v) = parse_json_bom(&c) else {
-            continue;
-        };
+    sweep_profile_settings(targets, |v| {
         let mut changed = false;
         for ev in STATUS_HOOK_EVENTS {
             changed |= if enabled {
-                hook_cmd_wire(&mut v, ev, STATUS_HOOK_CMD, STATUS_HOOK_MARKER)
+                hook_cmd_wire(v, ev, STATUS_HOOK_CMD, STATUS_HOOK_MARKER)
             } else {
-                hook_cmd_unwire(&mut v, ev, STATUS_HOOK_MARKER)
+                hook_cmd_unwire(v, ev, STATUS_HOOK_MARKER)
             };
         }
-        if changed {
-            match serde_json::to_string_pretty(&v) {
-                Ok(s) => {
-                    if let Err(e) = write_json_atomic_retry(&sp, &s) {
-                        errs.push(format!("{sp}: {e}"));
-                    }
-                }
-                Err(e) => errs.push(format!("{sp}: {e}")),
-            }
+        changed
+    })?;
+    agent_status_hook_state()
+}
+
+#[cfg(test)]
+mod audit_fixes_tests {
+    use super::*;
+
+    #[test]
+    fn extract_host_handles_ipv6_and_ports() {
+        assert_eq!(extract_host("example.com:8080"), "example.com");
+        assert_eq!(extract_host("example.com"), "example.com");
+        assert_eq!(extract_host("[::1]:443"), "::1");
+        assert_eq!(extract_host("[fe80::1]"), "fe80::1");
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_metadata_linklocal_not_loopback() {
+        use std::net::IpAddr;
+        for bad in ["169.254.169.254", "169.254.1.2", "100.100.100.200", "0.0.0.0", "fe80::1"] {
+            assert!(is_blocked_ip(&bad.parse::<IpAddr>().unwrap()), "should block {bad}");
+        }
+        // Loopback + RFC1918 stay allowed — local engines (LM Studio) live there.
+        for ok in ["127.0.0.1", "192.168.1.10", "10.0.0.5", "1.1.1.1"] {
+            assert!(!is_blocked_ip(&ok.parse::<IpAddr>().unwrap()), "should allow {ok}");
         }
     }
-    if !errs.is_empty() {
-        return Err(errs.join(" · "));
+
+    #[test]
+    fn valid_base_url_blocks_metadata_allows_local() {
+        // Blocked: cloud-metadata (string list), link-local literal, bad scheme.
+        assert!(valid_base_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(valid_base_url("http://metadata.google.internal/").is_err());
+        assert!(valid_base_url("http://[fe80::1]:8080").is_err());
+        assert!(valid_base_url("ftp://example.com").is_err());
+        // Allowed: loopback literal (no DNS) + localhost (resolves to loopback).
+        assert!(valid_base_url("http://127.0.0.1:1234").is_ok());
+        assert!(valid_base_url("http://localhost:8080").is_ok());
     }
-    agent_status_hook_state()
+
+    #[test]
+    fn plugin_id_path_safe_rejects_traversal() {
+        assert!(plugin_id_path_safe("my-plugin.name_1"));
+        for bad in ["", "..", "../evil", "a/b", "a\\b", "..\\x"] {
+            assert!(!plugin_id_path_safe(bad), "should reject {bad:?}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -9519,10 +9669,24 @@ fn migrate_autostart() {
         .map(|o| o.status.success())
         .unwrap_or(false);
     if added {
-        let _ = std::process::Command::new("reg")
+        // L6: the migration promises "drop the old value ONLY once the new one is in place". If this
+        // delete fails (Err, or reg returns non-zero), both AgentHub and Castellyn Run entries point at
+        // the same exe → one extra duplicate-launch boot until it self-heals next start. Log it so a
+        // persistent failure is diagnosable instead of being silently swallowed by `let _ = ...`.
+        match std::process::Command::new("reg")
             .args(["delete", AUTOSTART_KEY, "/v", LEGACY_AUTOSTART_NAME, "/f"])
             .creation_flags(CREATE_NO_WINDOW)
-            .output();
+            .output()
+        {
+            Ok(o) if !o.status.success() => eprintln!(
+                "migrate_autostart: reg delete of legacy '{LEGACY_AUTOSTART_NAME}' returned {}",
+                o.status
+            ),
+            Err(e) => eprintln!(
+                "migrate_autostart: reg delete of legacy '{LEGACY_AUTOSTART_NAME}' failed: {e}"
+            ),
+            _ => {}
+        }
     }
 }
 
@@ -9598,6 +9762,9 @@ fn open_profile_dir(name: String) -> Result<(), String> {
 /// Kill the currently-running child process tree (Windows: taskkill /T /F).
 #[tauri::command]
 fn cancel_run(state: State<'_, RunState>) -> Result<(), String> {
+    // M1: also break a bulk "Repair All" loop between profiles. Harmless for other single runs —
+    // repair_all_profiles resets this flag at its start, so a stale set can't affect a later run.
+    PROFILES_BULK_CANCEL.store(true, Ordering::SeqCst);
     let pid = { *state.0.lock().unwrap_or_else(|e| e.into_inner()) };
     match pid {
         Some(p) if p != 0 => kill_tree(p),
@@ -9630,8 +9797,9 @@ fn cancel_all(
     for p in fork_pids {
         let _ = kill_tree(p);
     }
-    // 3. A bulk plugin sweep stops at the next item boundary.
+    // 3. A bulk plugin sweep OR a bulk profile Repair-All stops at the next item boundary.
     BULK_PLUGINS_CANCEL.store(true, Ordering::SeqCst);
+    PROFILES_BULK_CANCEL.store(true, Ordering::SeqCst);
     // 4. Every live PTY session (drain so their reader threads end on EOF).
     {
         let mut map = sessions.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -10107,19 +10275,27 @@ fn session_spawn(
     if let Some(pid) = child.process_id() {
         assign_to_kill_job(pid);
     }
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("reader: {e}"))?;
+    // Keep a killer handle for session_kill; the Child moves into the reader thread so it can wait()
+    // and report the tool's REAL exit code instead of a hardcoded 0. Created BEFORE the fallible
+    // reader/writer clones (L8) so we can tear the already-spawned child back down if either fails —
+    // otherwise it leaks untracked (portable-pty's Windows Child has no Drop-kill), reaped only when
+    // the app exits and the Job Object closes.
+    let mut killer: Box<dyn ChildKiller + Send + Sync> = child.clone_killer();
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = killer.kill();
+            return Err(format!("reader: {e}"));
+        }
+    };
     let writer: std::sync::Arc<Mutex<Box<dyn std::io::Write + Send>>> =
-        std::sync::Arc::new(Mutex::new(
-            pair.master
-                .take_writer()
-                .map_err(|e| format!("writer: {e}"))?,
-        ));
-    // Keep a killer handle for session_kill; the Child moves into the reader thread so it can
-    // wait() and report the tool's REAL exit code instead of a hardcoded 0.
-    let killer: Box<dyn ChildKiller + Send + Sync> = child.clone_killer();
+        std::sync::Arc::new(Mutex::new(match pair.master.take_writer() {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = killer.kill();
+                return Err(format!("writer: {e}"));
+            }
+        }));
 
     let exit_event = format!("pty:exit:{id}");
 
