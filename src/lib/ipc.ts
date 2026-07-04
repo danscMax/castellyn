@@ -211,6 +211,40 @@ export const readOrphanProfiles = () => invoke<OrphanInfo[]>('read_orphan_profil
 export const deleteOrphanProfile = (name: string) =>
   invoke<void>('delete_orphan_profile', { name });
 
+// --- Ф2.5 per-profile matrix (provider / proxy / shared folders in one grid) ---
+// One row aggregates a profile's provider, proxy, and shared-folder state; edits accumulate in the
+// UI and are applied together (provider via run_provider, proxy/folders native, then relink).
+export type MatrixFolder = {
+  name: string;
+  desired: boolean; // configured to be linked (linkedFolders)
+  actual: 'linked' | 'real' | 'missing'; // on-disk reality (real = holds data, not a link)
+};
+export type MatrixRow = {
+  name: string;
+  color: string; // PowerShell colour name (Cyan/Green/DarkGreen/…) — map via profileDotColor
+  description: string;
+  provider: { baseUrl: string; model: string; smallModel: string; hasToken: boolean };
+  proxy: string; // '' = none
+  folders: MatrixFolder[];
+};
+// The accumulated change-set the matrix hands to +page for sequential apply. baseUrl null = clear
+// provider (back to OAuth/subscription). Profiles in `folders` are relinked after all writes.
+export type MatrixApply = {
+  providers: { name: string; baseUrl: string | null; model: string; smallModel: string }[];
+  proxies: { name: string; url: string }[];
+  folders: { name: string; folders: string[] }[];
+};
+export const readProfileMatrix = () => invoke<MatrixRow[]>('read_profile_matrix');
+// Empty url clears the proxy; a set url must start http(s):// or socks5:// (validated server-side).
+export const setProfileProxy = (name: string, url: string) =>
+  invoke<void>('set_profile_proxy', { name, url });
+// Writes linkedFolders + unlinks removed ones; returns folder names skipped (still hold real data).
+export const setProfileFolders = (name: string, folders: string[]) =>
+  invoke<string[]>('set_profile_folders', { name, folders });
+// Re-creates the shared-folder links for one profile; streams via the global run-log (run-done).
+export const runProfileRelink = (name: string) =>
+  invoke<number>('run_profile_relink', { name });
+
 export const readProfilesConfig = () => invoke<ProfilesConfig | null>('read_profiles_config');
 export const runProfileMgmt = (a: ProfileMgmtArgs) =>
   invoke<number>('run_profile_mgmt', {

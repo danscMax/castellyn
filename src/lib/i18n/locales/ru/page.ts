@@ -153,6 +153,14 @@ export default {
   prof_verb_repair: 'починка связей {name}',
   prof_verb_create: 'создание профиля {name}',
   prof_verb_reinstall: 'переустановка профилей',
+  // Ф2.5 matrix apply
+  matrix_busy: 'Идёт другая операция — дождитесь её завершения',
+  matrix_log: '▶ Матрица профилей: применение изменений…',
+  matrix_step_provider: 'провайдер',
+  matrix_step_relink: 'перелинковка',
+  matrix_fail: 'Не удалось применить «{step}» для «{name}»',
+  matrix_done: 'Изменения матрицы применены',
+  matrix_done_skipped: 'Применено. Пропущены (реальные данные): {folders}',
   confirm_prof_remove_title: 'Удалить профиль «{name}»?',
   confirm_prof_remove_msg:
     'Каталог ~/.claude-{name} будет удалён вместе с сохранённым входом и настройками этого профиля. Общий контент (skills/projects и т.д.) не пострадает. Действие необратимо.',

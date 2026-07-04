@@ -3604,6 +3604,51 @@ fn profile_names() -> Vec<String> {
     PROFILE_NAMES.iter().map(|s| s.to_string()).collect()
 }
 
+/// One profile's provider + proxy, parsed from its settings.json `env`. The token VALUE is never
+/// carried — only `has_token`. Shared by `read_providers` and `read_profile_matrix` (no copy-paste).
+#[derive(Default)]
+struct ProfileEnv {
+    base_url: String,
+    model: String,
+    small_model: String,
+    has_token: bool,
+    proxy: String,
+}
+
+/// Read `~/.claude-<name>/settings.json` → its provider/proxy env. Unreadable/absent → all empty.
+fn read_profile_env(home: &str, name: &str) -> ProfileEnv {
+    let mut pe = ProfileEnv::default();
+    let path = format!("{home}\\.claude-{name}\\settings.json");
+    if let Ok(c) = std::fs::read_to_string(&path) {
+        if let Ok(v) = parse_json_bom(&c) {
+            if let Some(env) = v.get("env").and_then(|e| e.as_object()) {
+                let g = |k: &str| {
+                    env.get(k)
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                // Prefer the current tier env vars; fall back to the legacy single-value keys
+                // so profiles bound by an older AgentHub still display their model.
+                let g_or = |new: &str, old: &str| {
+                    let v = g(new);
+                    if v.is_empty() {
+                        g(old)
+                    } else {
+                        v
+                    }
+                };
+                pe.base_url = g("ANTHROPIC_BASE_URL");
+                pe.model = g_or("ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_MODEL");
+                pe.small_model = g_or("ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL");
+                pe.has_token = !g("ANTHROPIC_AUTH_TOKEN").is_empty();
+                pe.proxy = g("HTTPS_PROXY");
+            }
+        }
+    }
+    pe
+}
+
 /// Per-profile provider, read natively from each settings.json env.
 /// The token VALUE is never returned — only `hasToken`.
 #[tauri::command]
@@ -3612,48 +3657,19 @@ fn read_providers() -> Vec<ProfileProvider> {
         Ok(h) => h,
         Err(_) => return Vec::new(),
     };
-    let mut out = Vec::new();
-    for name in profile_names() {
-        let path = format!("{home}\\.claude-{name}\\settings.json");
-        let mut p = ProfileProvider {
-            name: name.clone(),
-            base_url: String::new(),
-            model: String::new(),
-            small_model: String::new(),
-            has_token: false,
-        };
-        if let Ok(c) = std::fs::read_to_string(&path) {
-            if let Ok(v) = parse_json_bom(&c) {
-                if let Some(env) = v.get("env").and_then(|e| e.as_object()) {
-                    let g = |k: &str| {
-                        env.get(k)
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .to_string()
-                    };
-                    // Prefer the current tier env vars; fall back to the legacy single-value keys
-                    // so profiles bound by an older AgentHub still display their model.
-                    let g_or = |new: &str, old: &str| {
-                        let v = g(new);
-                        if v.is_empty() {
-                            g(old)
-                        } else {
-                            v
-                        }
-                    };
-                    p.base_url = g("ANTHROPIC_BASE_URL");
-                    p.model = g_or("ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_MODEL");
-                    p.small_model = g_or(
-                        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                        "ANTHROPIC_SMALL_FAST_MODEL",
-                    );
-                    p.has_token = !g("ANTHROPIC_AUTH_TOKEN").is_empty();
-                }
+    profile_names()
+        .into_iter()
+        .map(|name| {
+            let e = read_profile_env(&home, &name);
+            ProfileProvider {
+                name,
+                base_url: e.base_url,
+                model: e.model,
+                small_model: e.small_model,
+                has_token: e.has_token,
             }
-        }
-        out.push(p);
-    }
-    out
+        })
+        .collect()
 }
 
 /// Provider env keys written to a profile's settings.json. The last two are legacy single-value
@@ -3871,6 +3887,320 @@ fn apply_provider_env(
     }
     out(&trv("log.settings_updated", cur_lang(), &[("name", &name)]));
     0
+}
+
+// ── Ф2.5: per-profile matrix (Profiles tab) ────────────────────────────────────────────────────
+// Rows = profiles; columns = provider / proxy / shared-folder links. Read here; batch apply is the
+// frontend calling the setters below sequentially, then re-reading read_profile_matrix to verify.
+
+#[derive(Serialize)]
+struct MatrixProvider {
+    #[serde(rename = "baseUrl")]
+    base_url: String,
+    model: String,
+    #[serde(rename = "smallModel")]
+    small_model: String,
+    #[serde(rename = "hasToken")]
+    has_token: bool,
+}
+
+#[derive(Serialize)]
+struct MatrixFolder {
+    name: String,
+    /// Should this profile link the folder (its `linkedFolders` membership; absent field → all).
+    desired: bool,
+    /// On-disk reality at `~/.claude-<name>/<folder>`: "linked" | "real" | "missing".
+    actual: String,
+}
+
+#[derive(Serialize)]
+struct MatrixRow {
+    name: String,
+    color: String,
+    description: String,
+    provider: MatrixProvider,
+    proxy: String,
+    folders: Vec<MatrixFolder>,
+}
+
+/// `sharedFoldersDefault` (canonical column order) from a parsed profiles.json.
+fn shared_folders_default(cfg: &serde_json::Value) -> Vec<String> {
+    cfg.get("sharedFoldersDefault")
+        .and_then(|s| s.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// Desired = folder is in the profile's linkedFolders. A MISSING linkedFolders field means "all
+/// defaults" (the schema default), so `None` → true. Pure (Value slice) so it is unit-testable.
+fn folder_desired(linked: Option<&Vec<serde_json::Value>>, folder: &str) -> bool {
+    match linked {
+        Some(arr) => arr.iter().any(|x| x.as_str() == Some(folder)),
+        None => true,
+    }
+}
+
+/// Classify a shared-folder path: "linked" (reparse point — junction/symlink), "real" (exists but
+/// is NOT a link → holds data), "missing" (absent). Stats the link itself (symlink_metadata), so a
+/// junction/symlink reads as such rather than following through. A plain file that is not a symlink
+/// reports "real" (hardlinks are indistinguishable here — acceptable, per spec).
+fn classify_link(path: &std::path::Path) -> &'static str {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    match path.symlink_metadata() {
+        Ok(m) => {
+            if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                "linked"
+            } else {
+                "real"
+            }
+        }
+        Err(_) => "missing",
+    }
+}
+
+/// The per-profile matrix: provider + proxy + shared-folder link state. Never panics; an unreadable
+/// settings.json yields an empty provider/proxy. Empty vec when profiles.json is absent.
+#[tauri::command]
+fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
+    let home = std::env::var("USERPROFILE").map_err(|_| "no USERPROFILE".to_string())?;
+    let Some(cfg) = read_profiles_config()? else {
+        return Ok(Vec::new());
+    };
+    let defaults = shared_folders_default(&cfg);
+    let empty = Vec::new();
+    let profiles = cfg
+        .get("profiles")
+        .and_then(|p| p.as_array())
+        .unwrap_or(&empty);
+    let mut rows = Vec::new();
+    for p in profiles {
+        let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let e = read_profile_env(&home, name);
+        let linked = p.get("linkedFolders").and_then(|l| l.as_array());
+        let profile_dir = std::path::Path::new(&home).join(format!(".claude-{name}"));
+        let folders = defaults
+            .iter()
+            .map(|folder| MatrixFolder {
+                name: folder.clone(),
+                desired: folder_desired(linked, folder),
+                actual: classify_link(&profile_dir.join(folder)).to_string(),
+            })
+            .collect();
+        rows.push(MatrixRow {
+            name: name.to_string(),
+            color: p.get("color").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+            description: p
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string(),
+            provider: MatrixProvider {
+                base_url: e.base_url,
+                model: e.model,
+                small_model: e.small_model,
+                has_token: e.has_token,
+            },
+            proxy: e.proxy,
+            folders,
+        });
+    }
+    Ok(rows)
+}
+
+/// Merge HTTP_PROXY/HTTPS_PROXY into a profile settings.json `env`. Empty `url` → remove both;
+/// non-empty → set both. Every other key is preserved; an emptied `env` block is dropped. Atomic,
+/// no-BOM write. Explicit path (no USERPROFILE coupling) so it is unit-testable (mirrors
+/// `apply_provider_env`).
+fn apply_proxy_env(settings_path: &str, url: &str) -> Result<(), String> {
+    use serde_json::{json, Value};
+    let mut settings: Value = match std::fs::read_to_string(settings_path) {
+        Ok(ref c) if !c.trim().is_empty() => {
+            parse_json_bom(c).map_err(|e| format!("parse settings: {e}"))?
+        }
+        _ => json!({}),
+    };
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    let sobj = settings.as_object_mut().unwrap();
+    if !sobj.get("env").map(|e| e.is_object()).unwrap_or(false) {
+        sobj.insert("env".into(), json!({}));
+    }
+    let env_empty = {
+        let env = sobj.get_mut("env").unwrap().as_object_mut().unwrap();
+        if url.is_empty() {
+            env.remove("HTTP_PROXY");
+            env.remove("HTTPS_PROXY");
+        } else {
+            env.insert("HTTP_PROXY".into(), json!(url));
+            env.insert("HTTPS_PROXY".into(), json!(url));
+        }
+        env.is_empty()
+    };
+    if env_empty {
+        sobj.remove("env");
+    }
+    let serialized =
+        serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {e}"))?;
+    write_json_atomic(settings_path, &serialized).map_err(|e| format!("write settings: {e}"))
+}
+
+/// Set (or clear, when `url` empty) a profile's HTTP(S)_PROXY. Guards the live-session footgun like
+/// `manage_provider_native`. Non-empty url must use an http/https/socks5 scheme.
+#[tauri::command]
+fn set_profile_proxy(name: String, url: String) -> Result<(), String> {
+    if !valid_profile_name(&name) {
+        return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &name)]));
+    }
+    let known = profile_names();
+    if !known.iter().any(|n| n == &name) {
+        return Err(trv(
+            "log.profile_not_found",
+            cur_lang(),
+            &[("name", &name), ("known", &known.join(", "))],
+        ));
+    }
+    if profile_session_active(&name) {
+        return Err(trv("log.profile_running_warn", cur_lang(), &[("name", &name)]));
+    }
+    let scheme_ok = url.is_empty()
+        || url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("socks5://");
+    if !scheme_ok {
+        // ponytail: plain-English validation error — i18n.rs (the tr/trv catalog) is outside this
+        // agent's edit zone; add an err.* key later if this surfaces in the UI often.
+        return Err("proxy URL must start with http://, https:// or socks5://".to_string());
+    }
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let settings_path = format!("{home}\\.claude-{name}\\settings.json");
+    apply_proxy_env(&settings_path, &url)
+}
+
+/// Surgically set ONE profile's `linkedFolders` in a parsed profiles.json, preserving every other
+/// profile and all top-level keys. Errs if the profile is absent. Pure (Value in/out) → testable.
+fn set_linked_folders(
+    cfg: &serde_json::Value,
+    name: &str,
+    folders: &[String],
+) -> Result<serde_json::Value, String> {
+    let mut out = cfg.clone();
+    let arr = out
+        .get_mut("profiles")
+        .and_then(|p| p.as_array_mut())
+        .ok_or_else(|| "profiles.json: no profiles array".to_string())?;
+    let prof = arr
+        .iter_mut()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+        .ok_or_else(|| format!("profile not found: {name}"))?;
+    let obj = prof
+        .as_object_mut()
+        .ok_or_else(|| "profile entry is not an object".to_string())?;
+    obj.insert("linkedFolders".into(), serde_json::json!(folders));
+    Ok(out)
+}
+
+/// Outcome of trying to detach one shared-folder link.
+enum LinkOutcome {
+    /// The reparse point (junction/symlink) was removed — the target data is untouched.
+    Removed,
+    /// Path was absent — nothing to do.
+    Absent,
+    /// Path exists but is NOT a reparse point (real data) OR the remove failed — left in place.
+    Kept,
+}
+
+/// Detach the shared-folder link at `path` — ONLY if it is a reparse point. `fs::remove_dir` on a
+/// junction/dir-symlink deletes the link, not the tree it points at; a file symlink → remove_file.
+/// A real (non-link) file/dir holding data is NEVER touched (returns `Kept`).
+fn remove_link_if_reparse(path: &std::path::Path) -> LinkOutcome {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    let Ok(m) = path.symlink_metadata() else {
+        return LinkOutcome::Absent;
+    };
+    let attrs = m.file_attributes();
+    if attrs & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        return LinkOutcome::Kept; // real data — refuse to delete
+    }
+    let res = if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    match res {
+        Ok(_) => LinkOutcome::Removed,
+        Err(_) => LinkOutcome::Kept, // couldn't remove → report as not-detached
+    }
+}
+
+/// Set which shared folders a profile links: surgically rewrite its `linkedFolders` in profiles.json,
+/// then NATIVELY detach any now-unwanted links (reparse points only). Creating links is the relink
+/// script's job (the frontend runs `run_profile_relink` after this). Every `folders` entry must be a
+/// member of `sharedFoldersDefault`. Returns the folders that were LEFT because they hold real data
+/// (or could not be detached) — empty = clean.
+#[tauri::command]
+fn set_profile_folders(name: String, folders: Vec<String>) -> Result<Vec<String>, String> {
+    if !valid_profile_name(&name) {
+        return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &name)]));
+    }
+    let Some(cfg) = read_profiles_config()? else {
+        return Err("profiles.json not found".to_string());
+    };
+    let known = profile_names();
+    if !known.iter().any(|n| n == &name) {
+        return Err(trv(
+            "log.profile_not_found",
+            cur_lang(),
+            &[("name", &name), ("known", &known.join(", "))],
+        ));
+    }
+    // Same live-session footgun as provider/proxy: detaching a running profile's junctions is unsafe.
+    if profile_session_active(&name) {
+        return Err(trv("log.profile_running_warn", cur_lang(), &[("name", &name)]));
+    }
+    let defaults = shared_folders_default(&cfg);
+    for f in &folders {
+        if !defaults.iter().any(|d| d == f) {
+            return Err(format!("unknown shared folder: {f}"));
+        }
+    }
+    // 1. Surgically persist the new linkedFolders set.
+    let updated = set_linked_folders(&cfg, &name, &folders)?;
+    let serialized =
+        serde_json::to_string_pretty(&updated).map_err(|e| format!("serialize profiles.json: {e}"))?;
+    write_json_atomic(&abs(PROFILES_CONFIG_REL), &serialized)
+        .map_err(|e| format!("write profiles.json: {e}"))?;
+    // 2. Detach links no longer wanted (reparse points only; real data is kept + reported).
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let profile_dir = std::path::Path::new(&home).join(format!(".claude-{name}"));
+    let mut kept = Vec::new();
+    for folder in &defaults {
+        if folders.iter().any(|f| f == folder) {
+            continue; // still desired
+        }
+        if let LinkOutcome::Kept = remove_link_if_reparse(&profile_dir.join(folder)) {
+            kept.push(folder.clone());
+        }
+    }
+    Ok(kept)
+}
+
+/// Recreate ONE profile's shared-folder links (Repair-ProfileLinks.ps1 -Name). The matrix-apply
+/// contract the Profiles UI calls after `set_profile_folders`. Delegates to the existing "repair"
+/// path (same script + validation) — no second spawn wiring.
+#[tauri::command]
+async fn run_profile_relink(
+    app: AppHandle,
+    state: State<'_, RunState>,
+    name: String,
+) -> Result<i32, String> {
+    run_profiles(app, state, "repair".to_string(), Some(name)).await
 }
 
 /// Bind (set) or unbind (clear) a profile's provider (native; was Manage-Provider.ps1).
@@ -11451,6 +11781,10 @@ pub fn run() {
             open_monitor_window,
             read_freellmapi_analytics,
             read_providers,
+            read_profile_matrix,
+            set_profile_proxy,
+            set_profile_folders,
+            run_profile_relink,
             run_provider,
             list_my_providers,
             save_my_provider,
@@ -12014,6 +12348,107 @@ mod tests {
         assert_eq!(v["env"]["FOO"], "bar");
         let _ = std::fs::remove_file(&p);
         let _ = std::fs::remove_file(format!("{p}.bak"));
+    }
+
+    #[test]
+    fn matrix_folder_desired_and_actual() {
+        use serde_json::json;
+        // desired: linkedFolders membership; a MISSING field → all default folders desired.
+        let linked = vec![json!("agents"), json!("projects")];
+        assert!(folder_desired(Some(&linked), "agents"));
+        assert!(!folder_desired(Some(&linked), "plugins"));
+        assert!(folder_desired(None, "plugins")); // no field → all desired
+
+        // actual classification on a real (non-link) dir + a missing path.
+        let base =
+            std::env::temp_dir().join(format!("castellyn_matrix_{}", std::process::id()));
+        let real_dir = base.join("real");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        assert_eq!(classify_link(&real_dir), "real"); // exists, not a reparse point
+        assert_eq!(classify_link(&base.join("nope")), "missing");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn set_profile_folders_rejects_unknown() {
+        // The folder-membership guard lives inline in set_profile_folders; mirror it here against the
+        // canonical default set (unknown → reject; known subset → accept).
+        let defaults = ["agents", "commands", "plugins", "history.jsonl"];
+        let ok = |fs: &[&str]| fs.iter().all(|f| defaults.contains(f));
+        assert!(ok(&["agents", "plugins"]));
+        assert!(!ok(&["agents", "bogus"]));
+    }
+
+    #[test]
+    fn proxy_env_merge_set_clear_preserves_others() {
+        use serde_json::json;
+        let path = std::env::temp_dir().join(format!("castellyn_proxy_{}.json", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&p);
+        // Seed: an unrelated top-level key + an unrelated env var that must survive both ops.
+        std::fs::write(
+            &p,
+            serde_json::to_string(&json!({ "theme": "dark", "env": { "FOO": "bar" } })).unwrap(),
+        )
+        .unwrap();
+
+        // set → both proxy vars written; FOO + theme preserved.
+        apply_proxy_env(&p, "http://127.0.0.1:8080").unwrap();
+        let v = parse_json_bom(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["env"]["FOO"], "bar");
+        assert_eq!(v["env"]["HTTP_PROXY"], "http://127.0.0.1:8080");
+        assert_eq!(v["env"]["HTTPS_PROXY"], "http://127.0.0.1:8080");
+
+        // clear → both proxy vars gone, FOO kept (env stays because FOO remains).
+        apply_proxy_env(&p, "").unwrap();
+        let v = parse_json_bom(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert!(v["env"].get("HTTP_PROXY").is_none());
+        assert!(v["env"].get("HTTPS_PROXY").is_none());
+        assert_eq!(v["env"]["FOO"], "bar");
+
+        // scheme validation (the guard set_profile_proxy applies before calling apply_proxy_env).
+        let scheme_ok = |u: &str| {
+            u.is_empty()
+                || u.starts_with("http://")
+                || u.starts_with("https://")
+                || u.starts_with("socks5://")
+        };
+        assert!(scheme_ok("https://p:3128"));
+        assert!(scheme_ok("socks5://p:1080"));
+        assert!(scheme_ok("")); // empty = clear
+        assert!(!scheme_ok("ftp://nope"));
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(format!("{p}.bak"));
+    }
+
+    #[test]
+    fn linked_folders_surgical_edit_preserves_siblings() {
+        use serde_json::json;
+        // Fixture with an unknown top-level key + two profiles; edit only cc1's linkedFolders.
+        let cfg = json!({
+            "schemaVersion": 1,
+            "customTopKey": "keep-me",
+            "sharedFoldersDefault": ["agents", "plugins", "projects"],
+            "profiles": [
+                { "name": "cc1", "color": "Green", "linkedFolders": ["agents", "plugins", "projects"] },
+                { "name": "cc2", "color": "Cyan", "linkedFolders": ["agents"] }
+            ]
+        });
+        let out = set_linked_folders(&cfg, "cc1", &["agents".to_string()]).unwrap();
+        // Top-level key preserved.
+        assert_eq!(out["customTopKey"], "keep-me");
+        let profs = out["profiles"].as_array().unwrap();
+        // cc1 rewritten to the new set; sibling color untouched.
+        let cc1 = profs.iter().find(|p| p["name"] == "cc1").unwrap();
+        assert_eq!(cc1["linkedFolders"], json!(["agents"]));
+        assert_eq!(cc1["color"], "Green");
+        // cc2 completely untouched.
+        let cc2 = profs.iter().find(|p| p["name"] == "cc2").unwrap();
+        assert_eq!(cc2["linkedFolders"], json!(["agents"]));
+        assert_eq!(cc2["color"], "Cyan");
+        // Absent profile → Err.
+        assert!(set_linked_folders(&cfg, "ghost", &[]).is_err());
     }
 
     #[test]

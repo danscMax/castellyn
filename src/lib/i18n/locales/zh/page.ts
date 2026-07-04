@@ -152,6 +152,14 @@ export default {
   prof_verb_repair: '修复链接 {name}',
   prof_verb_create: '创建配置 {name}',
   prof_verb_reinstall: '重新安装配置',
+  // Ф2.5 matrix apply
+  matrix_busy: '有其他操作正在运行——请等待其完成',
+  matrix_log: '▶ 配置矩阵：正在应用更改…',
+  matrix_step_provider: '提供商',
+  matrix_step_relink: '重新链接',
+  matrix_fail: '为「{name}」应用「{step}」失败',
+  matrix_done: '矩阵更改已应用',
+  matrix_done_skipped: '已应用。已跳过（含真实数据）：{folders}',
   confirm_prof_remove_title: '删除配置「{name}」？',
   confirm_prof_remove_msg:
     '目录 ~/.claude-{name} 将连同该配置已保存的登录信息和设置一并删除。共享内容（skills/projects 等）不受影响。此操作不可逆。',

@@ -16,6 +16,9 @@
     repairAllProfiles,
     readProfilesConfig,
     runProfileMgmt,
+    setProfileProxy,
+    setProfileFolders,
+    runProfileRelink,
     readOrphanProfiles,
     deleteOrphanProfile,
     repairProfileElevated,
@@ -98,6 +101,7 @@
     type EngineStatus,
     type ProfileProvider,
     type ProviderArgs,
+    type MatrixApply,
     type MyProvider,
     type MyProviderInput,
     type SchedulesStatus,
@@ -561,7 +565,9 @@
       launchConfig = null;
     }
     try {
-      orphansData = await readOrphanProfiles();
+      // `?? []` — a mocked/dev IPC can resolve null (e.g. the ?shot harness), and the tab
+      // renders `orphans.length` unguarded; null here blanked the whole Profiles tab.
+      orphansData = (await readOrphanProfiles()) ?? [];
     } catch {
       orphansData = [];
     }
@@ -698,6 +704,64 @@
 
   function onProfileLaunch(name: string, mode: 'terminal' | 'vscode') {
     launchProfile(name, mode).catch(toastErr);
+  }
+
+  // Ф2.5 matrix apply: sequence several streamed runs (provider + relink) through the single global
+  // run lock. `waitRun` resolves on the NEXT run-done — safe because the backend serializes runs
+  // (one at a time), so we never need to key by component id (and the relink's component id isn't
+  // part of the frozen contract). The run-done listener resolves `pendingRun` before its normal
+  // per-component handling, so no per-step toast/reload fires — we reload+verify once at the end.
+  let pendingRun: ((code: number) => void) | null = null;
+  function waitRun(spawn: () => Promise<number>): Promise<number> {
+    return new Promise((resolve, reject) => {
+      pendingRun = resolve;
+      spawn().catch((e) => {
+        pendingRun = null;
+        reject(e);
+      });
+    });
+  }
+
+  // Apply the accumulated matrix change-set. Order per profile: provider → proxy → folders; then all
+  // relinks (folder-changed profiles) at the end. Stops on first failure (throws → the matrix keeps
+  // its dirty state so the user can retry). Returns folder names skipped as real data.
+  async function onApplyMatrix(changes: MatrixApply): Promise<{ skipped: string[] }> {
+    if (running) throw new Error(t('page.matrix_busy'));
+    running = 'profiles';
+    log = [t('page.matrix_log')];
+    const skipped: string[] = [];
+    try {
+      for (const p of changes.providers) {
+        const args: ProviderArgs = p.baseUrl
+          ? { action: 'set', name: p.name, baseUrl: p.baseUrl, model: p.model, smallModel: p.smallModel, token: '', keepToken: false }
+          : { action: 'clear', name: p.name };
+        const code = await waitRun(() => runProvider(args));
+        if (code !== 0) throw new Error(t('page.matrix_fail', { name: p.name, step: t('page.matrix_step_provider') }));
+      }
+      for (const p of changes.proxies) await setProfileProxy(p.name, p.url);
+      for (const f of changes.folders) {
+        const sk = await setProfileFolders(f.name, f.folders);
+        skipped.push(...sk);
+      }
+      for (const f of changes.folders) {
+        const code = await waitRun(() => runProfileRelink(f.name));
+        if (code !== 0) throw new Error(t('page.matrix_fail', { name: f.name, step: t('page.matrix_step_relink') }));
+      }
+    } catch (e) {
+      running = null;
+      await reloadProfiles();
+      await reloadProviders();
+      pushToast({ kind: 'error', title: String(e instanceof Error ? e.message : e) });
+      throw e;
+    }
+    running = null;
+    await reloadProfiles();
+    await reloadProviders();
+    pushToast({
+      kind: skipped.length ? 'warn' : 'success',
+      title: skipped.length ? t('page.matrix_done_skipped', { folders: skipped.join(', ') }) : t('page.matrix_done')
+    });
+    return { skipped };
   }
 
   // --- MCP tab ---
@@ -1811,6 +1875,15 @@
     );
     unlisten.push(
       await listen<{ component: string; code: number }>('run-done', async (e) => {
+        // Ф2.5 matrix batch: resolve the awaited step and skip the normal per-component lifecycle
+        // (the batch runner holds `running` across steps and reloads/toasts once at the end).
+        if (pendingRun) {
+          const r = pendingRun;
+          pendingRun = null;
+          appendLog(t('page.log_done', { code: e.payload.code }));
+          r(e.payload.code);
+          return;
+        }
         appendLog(t('page.log_done', { code: e.payload.code }));
         // During a bulk plugin op, runBulkPlugins awaits the single backend call and does the reload
         // itself afterward — skip this handler's per-item lifecycle for the bulk's run-done.
@@ -2202,6 +2275,7 @@
               myProviders={myProvidersData}
               {onRepairElevated}
               {onRelaunchAdmin}
+              {onApplyMatrix}
             />
           </div>
         {/if}

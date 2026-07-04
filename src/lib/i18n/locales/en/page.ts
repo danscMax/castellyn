@@ -153,6 +153,14 @@ export default {
   prof_verb_repair: 'repairing links {name}',
   prof_verb_create: 'creating profile {name}',
   prof_verb_reinstall: 'reinstalling profiles',
+  // Ф2.5 matrix apply
+  matrix_busy: 'Another operation is running — wait for it to finish',
+  matrix_log: '▶ Profile matrix: applying changes…',
+  matrix_step_provider: 'provider',
+  matrix_step_relink: 'relink',
+  matrix_fail: 'Failed to apply “{step}” for “{name}”',
+  matrix_done: 'Matrix changes applied',
+  matrix_done_skipped: 'Applied. Skipped (hold real data): {folders}',
   confirm_prof_remove_title: 'Delete profile “{name}”?',
   confirm_prof_remove_msg:
     'The ~/.claude-{name} directory will be deleted along with this profile’s saved login and settings. Shared content (skills/projects, etc.) is unaffected. This is irreversible.',

@@ -199,6 +199,51 @@ const handlers: Record<string, (args: any) => any> = {
   }),
   read_profile_usage: (a) => usage[a?.profile] ?? null,
 
+  // Ф2.5 matrix — 10 profiles; one has a proxy, one is 5/7 folders with a real-data mismatch.
+  read_profile_matrix: () => {
+    const F7 = ['agents', 'commands', 'hooks', 'plugins', 'skills', 'projects', 'history.jsonl'];
+    const allLinked = F7.map((name) => ({ name, desired: true, actual: 'linked' as 'linked' | 'real' | 'missing' }));
+    const mk = (
+      name: string,
+      color: string,
+      description: string,
+      baseUrl = '',
+      proxy = '',
+      folders = allLinked
+    ) => ({
+      name,
+      color,
+      description,
+      provider: { baseUrl, model: baseUrl ? 'deepseek-chat' : '', smallModel: baseUrl ? 'deepseek-chat' : '', hasToken: !!baseUrl },
+      proxy,
+      folders
+    });
+    return [
+      mk('ccmy', 'Cyan', 'Personal'),
+      mk('cc1', 'Green', 'Med1'),
+      mk('cc2', 'Green', 'Med2'),
+      mk('cc3', 'Yellow', '3', '', 'socks5://127.0.0.1:1080'),
+      mk('ccfree', 'Magenta', 'Free tier', 'https://api.deepseek.com', '', [
+        { name: 'agents', desired: true, actual: 'linked' },
+        { name: 'commands', desired: true, actual: 'linked' },
+        { name: 'hooks', desired: true, actual: 'linked' },
+        { name: 'plugins', desired: true, actual: 'real' }, // holds real data instead of a link
+        { name: 'skills', desired: true, actual: 'linked' },
+        { name: 'projects', desired: false, actual: 'missing' },
+        { name: 'history.jsonl', desired: false, actual: 'missing' }
+      ]),
+      mk('cc4', 'Blue', 'Med4'),
+      mk('cc5', 'DarkGreen', 'Med5'),
+      mk('cc6', 'DarkCyan', 'Med6'),
+      mk('cctest', 'Gray', 'Throwaway'),
+      mk('research', 'DarkMagenta', 'Long-context', 'http://127.0.0.1:3456')
+    ];
+  },
+  set_profile_proxy: () => null,
+  set_profile_folders: () => [],
+  // Orphan profile dirs (Adopt/Delete section) — none in the demo shot.
+  read_orphan_profiles: () => [],
+
   // --- Providers / engines / stack ---
   read_engines: () => ([
     { id: 'gateway', name: 'freellmapi gateway', baseUrl: 'http://127.0.0.1:8787', protocol: 'openai', port: 8787, dashboardUrl: 'http://127.0.0.1:8787', hasCommand: true, router: false, installed: null, running: true },

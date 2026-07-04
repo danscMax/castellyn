@@ -29,6 +29,8 @@
   import Toggle from './Toggle.svelte';
   import ProfileUsageBadge from './ProfileUsageBadge.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
+  import ProfilesMatrix from './ProfilesMatrix.svelte';
+  import type { MatrixApply } from '$lib/ipc';
 
   let {
     data,
@@ -49,7 +51,8 @@
     onProviderClear,
     myProviders = null,
     onRepairElevated,
-    onRelaunchAdmin
+    onRelaunchAdmin,
+    onApplyMatrix
   }: {
     data: ProfilesStatus | null;
     config: ProfilesConfig | null;
@@ -70,6 +73,7 @@
     myProviders?: MyProvider[] | null;
     onRepairElevated: (name: string) => void;
     onRelaunchAdmin: () => void;
+    onApplyMatrix: (changes: MatrixApply) => Promise<{ skipped: string[] }>;
   } = $props();
 
   const busy = $derived(!!running);
@@ -607,6 +611,10 @@
     </DataTable>
   {:else}
     <EmptyState icon={Users} title={t('profiles.noData')} description={t('profiles.noDataHint')} />
+  {/if}
+
+  {#if profiles.length}
+    <ProfilesMatrix engines={engines} myProviders={myProviders} {running} {onApplyMatrix} />
   {/if}
 </div>
 
