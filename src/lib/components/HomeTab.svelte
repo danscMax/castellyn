@@ -2,7 +2,8 @@
   import { t, plural, pFile } from '$lib/i18n';
   import { statusTextClass } from '$lib/statusColor';
   import { profileHasMissingLink } from '$lib/attention';
-  import type { SyncStatus, ConfigDriftStatus, ProfilesStatus, SchedulesStatus, StackService } from '$lib/ipc';
+  import StackDriftCard from './StackDriftCard.svelte';
+  import type { SyncStatus, ConfigDriftStatus, ProfilesStatus, SchedulesStatus, StackService, StackDriftItem } from '$lib/ipc';
 
   // USE-1: single-pane "is my Claude setup healthy?" overview. Pure aggregation of data the
   // other tabs already load; each chip deep-links to the tab that owns it.
@@ -14,11 +15,13 @@
     schedules = null,
     stack = null,
     sessionCount = null,
+    stackDrift = null,
     busy = false,
     components = null,
     statuses = null,
     onOpen,
     onRefresh,
+    onReloadDrift,
     onAction
   }: {
     profiles: ProfilesStatus | null;
@@ -27,6 +30,8 @@
     schedules: SchedulesStatus | null;
     stack?: StackService[] | null;
     sessionCount?: number | null;
+    /** Ф1: stack-ownership drift (owned by +page so the sidebar badge reads the same array). */
+    stackDrift?: StackDriftItem[] | null;
     /** U3: the global run lock is held — quick actions would be silent no-ops, so disable them. */
     busy?: boolean;
     /** Redesign 2A: manifest components + their last-run envelopes feed the recent-runs strip. */
@@ -34,6 +39,7 @@
     statuses?: Record<string, any> | null;
     onOpen: (id: string) => void;
     onRefresh?: () => void;
+    onReloadDrift?: () => void | Promise<void>;
     onAction?: (id: string) => void;
   } = $props();
 
@@ -210,6 +216,9 @@
       </span>
     {/if}
   </div>
+
+  <!-- Ф1: stack-ownership drift (plugin_sync hook + wiring, managed-settings). -->
+  <StackDriftCard items={stackDrift} onReload={onReloadDrift} {busy} />
 
   {#if overall === 'muted'}
     <!-- First run: no data yet → a 3-step orientation instead of an empty grid. -->

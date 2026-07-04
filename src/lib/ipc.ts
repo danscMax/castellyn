@@ -806,6 +806,19 @@ export const pluginSyncSet = (enabled: boolean) =>
 // Streams into the console as component "pluginsync"; resolves with the exit code on run-done.
 export const runPluginSync = () => invoke<number>('run_plugin_sync');
 
+// Ф1 reconcile: "does Castellyn own the stack?" — three drift checks surfaced on Home.
+// `fix` names the repair action (plugin_sync = enable/repair the hook; managed_deploy = redeploy
+// managed-settings, ONE Windows UAC prompt), null/absent when nothing to do.
+export type StackDriftItem = {
+  id: 'plugin_sync_file' | 'plugin_sync_wiring' | 'managed_settings';
+  state: 'ok' | 'drift' | 'missing' | 'error';
+  detail: string;
+  fix?: 'plugin_sync' | 'managed_deploy' | null;
+};
+export const readStackDrift = () => invoke<StackDriftItem[]>('read_stack_drift');
+// Redeploys managed-settings — triggers ONE Windows UAC prompt. Returns the post-deploy check.
+export const runManagedDeploy = () => invoke<StackDriftItem>('run_managed_deploy');
+
 // Agent-status lifecycle hook (Sessions): castellyn_status.py wired into five Claude Code
 // events of every profile. `agent-status` events then drive the pane badges.
 export type AgentStatusHookState = { wired: string[]; unwired: string[] };

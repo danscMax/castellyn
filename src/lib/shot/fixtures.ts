@@ -275,6 +275,13 @@ const handlers: Record<string, (args: any) => any> = {
     scriptInstalled: true,
     scriptVersion: 2
   }),
+  // Ф1: stack-ownership drift card on Home — demo one fixable drift + two ok rows.
+  read_stack_drift: () => ([
+    { id: 'plugin_sync_file', state: 'drift', detail: 'on-disk hook is an external version (no Castellyn marker)', fix: 'plugin_sync' },
+    { id: 'plugin_sync_wiring', state: 'ok', detail: 'every profile wired; managed settings clean', fix: null },
+    { id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null }
+  ]),
+  run_managed_deploy: () => ({ id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null }),
   list_plugin_contents: () => ([
     { id: 'superpowers', skills: ['brainstorming', 'systematic-debugging', 'test-driven-development'], commands: ['/spec'], agents: ['Plan', 'Explore'] },
     { id: 'max', skills: ['max-dedup', 'max-modernize'], commands: ['/max:audit', '/max:review'], agents: ['max:review-critic'] }

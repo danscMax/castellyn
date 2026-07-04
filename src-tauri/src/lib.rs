@@ -8788,6 +8788,227 @@ async fn run_plugin_sync(app: AppHandle, state: State<'_, RunState>) -> Result<i
     .await
 }
 
+// --- Stack drift + managed-settings redeploy (Plugins tab reconcile) ---
+//
+// Reports whether the local Claude Code stack matches what Castellyn owns:
+//  1. plugin_sync_file    — the hook script on disk vs render_plugin_sync_script (the oracle).
+//  2. plugin_sync_wiring  — every profile has the SessionStart hook AND managed-settings.json
+//                           does NOT double-wire it.
+//  3. managed_settings    — the deployed managed-settings.json matches the version-controlled source.
+// run_managed_deploy fixes (3) via one elevated (UAC) redeploy, then re-verifies by comparison.
+
+/// Deploy script for managed-settings.json (parent of the config source dir). Elevated by RunAs.
+const MANAGED_DEPLOY_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Deploy-ManagedSettings.ps1";
+
+/// A single stack-drift check result. Field names are the IPC contract: id, state, detail, fix.
+#[derive(Serialize)]
+struct StackDriftItem {
+    /// Stable check id: "plugin_sync_file" | "plugin_sync_wiring" | "managed_settings".
+    id: String,
+    /// "ok" | "drift" | "missing" | "error".
+    state: String,
+    /// Human-readable specifics (missing profiles, why it drifted, or the IO error text).
+    detail: String,
+    /// Actionable fix key the UI can trigger: "plugin_sync" | "managed_deploy", or None.
+    fix: Option<String>,
+}
+
+/// Deployed managed-settings.json under %ProgramFiles% (None when ProgramFiles is unset).
+fn deployed_managed_path() -> Option<String> {
+    std::env::var("ProgramFiles").ok().map(|pf| format!("{pf}\\ClaudeCode\\managed-settings.json"))
+}
+
+/// Version-controlled SOURCE managed-settings.json under scripts_root.
+fn source_managed_path() -> String {
+    abs(&format!("{CONFIG_SOURCE_REL}\\managed-settings.json"))
+}
+
+/// Pure: do two JSON texts parse (BOM-tolerant) to equal values? Key order / whitespace / a
+/// leading BOM are all normalized away; a parse failure on either side is NOT equal. Unit-tested.
+fn json_normalized_eq(a: &str, b: &str) -> bool {
+    match (parse_json_bom(a), parse_json_bom(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Pure: classify the on-disk plugin_sync hook against the rendered oracle. `disk` is None when the
+/// file is absent. Uses the version header to tell a newer/foreign copy from a stale-list copy, and
+/// the `# castellyn:profiles` marker to tell an external (non-Castellyn) script from our own. Unit-tested.
+fn classify_plugin_sync_file(disk: Option<&str>, rendered: &str) -> (String, String, Option<String>) {
+    let Some(disk) = disk else {
+        return (
+            "missing".into(),
+            "hook script not installed at ~/.claude/hooks/plugin_sync.py".into(),
+            Some("plugin_sync".into()),
+        );
+    };
+    if disk == rendered {
+        return ("ok".into(), "hook script matches the current profile list".into(), None);
+    }
+    let disk_ver = plugin_sync_version(disk);
+    let emb_ver = plugin_sync_version(rendered);
+    if disk_ver > emb_ver {
+        // ensure_plugin_sync_script never downgrades, so offering the plugin_sync fix here would
+        // be a no-op button with the drift persisting. Report honestly, no false affordance.
+        return (
+            "drift".into(),
+            format!("on-disk hook is a newer/foreign version ({disk_ver} > embedded {emb_ver}) — update Castellyn or remove the file manually"),
+            None,
+        );
+    }
+    let detail = if disk.contains("# castellyn:profiles") {
+        "on-disk hook has a stale profile list".to_string()
+    } else {
+        "on-disk hook is an external version (no Castellyn marker)".to_string()
+    };
+    ("drift".into(), detail, Some("plugin_sync".into()))
+}
+
+/// Pure: classify wiring drift. `unwired` = profiles missing the SessionStart hook; `managed_double`
+/// = managed-settings.json ALSO wires plugin_sync (double-wiring). Missing wiring is auto-fixable
+/// (re-run plugin_sync setup); double-wiring alone is fixed at the managed SOURCE, so fix=None there
+/// (editing + redeploying source is the remedy, not the plugin_sync setup). Unit-tested.
+fn classify_wiring(unwired: &[String], managed_double: bool) -> (String, String, Option<String>) {
+    let mut parts = Vec::new();
+    if !unwired.is_empty() {
+        parts.push(format!("profiles missing SessionStart wiring: {}", unwired.join(", ")));
+    }
+    if managed_double {
+        parts.push("managed-settings.json also wires plugin_sync (double-wiring)".to_string());
+    }
+    if parts.is_empty() {
+        return ("ok".into(), "every profile wired; managed settings clean".into(), None);
+    }
+    let fix = if unwired.is_empty() {
+        None // only double-wiring → the fix is editing the managed SOURCE, not plugin_sync setup
+    } else {
+        Some("plugin_sync".into())
+    };
+    ("drift".into(), parts.join("; "), fix)
+}
+
+fn plugin_sync_file_drift_item(home: &str) -> StackDriftItem {
+    let dirs = plugin_sync_profiles(home)
+        .into_iter()
+        .map(|(d, _)| d)
+        .collect::<Vec<_>>();
+    let rendered = render_plugin_sync_script(&dirs);
+    let disk = std::fs::read_to_string(plugin_sync_script_path(home)).ok();
+    let (state, detail, fix) = classify_plugin_sync_file(disk.as_deref(), &rendered);
+    StackDriftItem { id: "plugin_sync_file".into(), state, detail, fix }
+}
+
+fn plugin_sync_wiring_drift_item(home: &str) -> StackDriftItem {
+    let mut unwired = Vec::new();
+    for (name, sp) in plugin_sync_profiles(home) {
+        let wired = std::fs::read_to_string(&sp)
+            .ok()
+            .and_then(|c| parse_json_bom(&c).ok())
+            .map(|v| plugin_sync_hook_wired(&v))
+            .unwrap_or(false); // unreadable/malformed → treat as unwired (matches plugin_sync_status)
+        if !wired {
+            unwired.push(name);
+        }
+    }
+    // Deployed managed settings must NOT mention plugin_sync (a raw substring check is enough — any
+    // wiring, however shaped, contains the filename). Absence/unreadable → no double-wiring.
+    let managed_double = deployed_managed_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|c| c.contains("plugin_sync"))
+        .unwrap_or(false);
+    let (state, detail, fix) = classify_wiring(&unwired, managed_double);
+    StackDriftItem { id: "plugin_sync_wiring".into(), state, detail, fix }
+}
+
+/// Compare the version-controlled SOURCE managed-settings.json against the deployed copy. Any IO
+/// failure on the source degrades to state=error; a missing/invalid/differing deployed copy is drift
+/// with fix=managed_deploy. Also the re-verification step of run_managed_deploy. Never panics.
+fn managed_settings_drift_item() -> StackDriftItem {
+    let id = "managed_settings".to_string();
+    let src = match std::fs::read_to_string(source_managed_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            return StackDriftItem { id, state: "error".into(), detail: format!("read source: {e}"), fix: None }
+        }
+    };
+    if parse_json_bom(&src).is_err() {
+        return StackDriftItem {
+            id,
+            state: "error".into(),
+            detail: "source managed-settings.json is not valid JSON".into(),
+            fix: None,
+        };
+    }
+    let Some(dep_path) = deployed_managed_path() else {
+        return StackDriftItem {
+            id,
+            state: "error".into(),
+            detail: "ProgramFiles environment variable is unset".into(),
+            fix: None,
+        };
+    };
+    let dep = match std::fs::read_to_string(&dep_path) {
+        Ok(s) => s,
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return StackDriftItem {
+                id,
+                state: "drift".into(),
+                detail: "deployed managed-settings.json is missing".into(),
+                fix: Some("managed_deploy".into()),
+            }
+        }
+        Err(e) => {
+            return StackDriftItem { id, state: "error".into(), detail: format!("read deployed: {e}"), fix: None }
+        }
+    };
+    if json_normalized_eq(&src, &dep) {
+        StackDriftItem { id, state: "ok".into(), detail: "deployed matches source".into(), fix: None }
+    } else {
+        // src is already valid JSON, so !eq means the deployed copy differs or is itself invalid.
+        let detail = if parse_json_bom(&dep).is_err() {
+            "deployed managed-settings.json is not valid JSON — needs redeploy".to_string()
+        } else {
+            "source is newer than deployed — needs redeploy".to_string()
+        };
+        StackDriftItem { id, state: "drift".into(), detail, fix: Some("managed_deploy".into()) }
+    }
+}
+
+/// Report the three stack-drift checks (plugin_sync file, plugin_sync wiring, managed settings).
+/// Never panics: every per-item IO failure degrades to that item's state=error with the error text.
+#[tauri::command]
+fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    Ok(vec![
+        plugin_sync_file_drift_item(&home),
+        plugin_sync_wiring_drift_item(&home),
+        managed_settings_drift_item(),
+    ])
+}
+
+/// Redeploy managed-settings.json with a single elevation prompt, then re-verify by comparison.
+/// The OUTER powershell is hidden (CREATE_NO_WINDOW); the INNER Start-Process -Verb RunAs shows the
+/// UAC dialog (intended). The exit code is deliberately NOT trusted — the returned StackDriftItem is
+/// a fresh source↔deployed comparison, so a silent no-op deploy surfaces as lingering drift.
+#[tauri::command]
+async fn run_managed_deploy() -> Result<StackDriftItem, String> {
+    let deploy = abs(MANAGED_DEPLOY_SCRIPT_REL);
+    tokio::task::spawn_blocking(move || {
+        let inner = format!(
+            "Start-Process powershell -Verb RunAs -Wait -ArgumentList \
+             '-ExecutionPolicy','Bypass','-File','{deploy}'"
+        );
+        let _ = std::process::Command::new("powershell.exe")
+            .args(["-ExecutionPolicy", "Bypass", "-Command", &inner])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        managed_settings_drift_item()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 // --- Agent-status lifecycle hook (Sessions tab) ---
 //
 // castellyn_status.py reports Claude Code lifecycle events (working/blocked/idle) into
@@ -9111,6 +9332,82 @@ mod plugin_sync_tests {
         );
         // Rendering is deterministic — same input, same output (change-compare relies on it).
         assert_eq!(s, super::render_plugin_sync_script(&dirs));
+    }
+
+    #[test]
+    fn json_normalized_eq_tolerates_bom_and_key_order() {
+        // A leading BOM on one side and a different key order both normalize to equal.
+        assert!(super::json_normalized_eq(
+            "\u{feff}{\"a\":1,\"b\":2}",
+            "{\"b\":2,\"a\":1}"
+        ));
+        // Genuinely different content is not equal.
+        assert!(!super::json_normalized_eq("{\"a\":1}", "{\"a\":2}"));
+        // A parse failure on either side is not equal (never a false "match").
+        assert!(!super::json_normalized_eq("{\"a\":1}", "not json"));
+    }
+
+    #[test]
+    fn plugin_sync_file_drift_classification() {
+        // render_plugin_sync_script is the oracle — an identical disk copy is ok.
+        let dirs = vec![".claude".to_string(), ".claude-cc1".to_string()];
+        let rendered = super::render_plugin_sync_script(&dirs);
+
+        let (state, _d, fix) = super::classify_plugin_sync_file(Some(&rendered), &rendered);
+        assert_eq!(state, "ok");
+        assert!(fix.is_none());
+
+        // Absent → missing, auto-fixable.
+        let (state, _d, fix) = super::classify_plugin_sync_file(None, &rendered);
+        assert_eq!(state, "missing");
+        assert_eq!(fix.as_deref(), Some("plugin_sync"));
+
+        // External copy: no Castellyn marker, version ≤ embedded → drift, external detail.
+        let external = "# plugin-sync-version: 1\nimport os\n";
+        let (state, detail, fix) = super::classify_plugin_sync_file(Some(external), &rendered);
+        assert_eq!(state, "drift");
+        assert!(detail.contains("external"));
+        assert_eq!(fix.as_deref(), Some("plugin_sync"));
+
+        // Same version, marker present, different profile list → stale-list drift.
+        let stale = super::render_plugin_sync_script(&[".claude".to_string()]);
+        let (state, detail, fix) = super::classify_plugin_sync_file(Some(&stale), &rendered);
+        assert_eq!(state, "drift");
+        assert!(detail.contains("stale"));
+        assert_eq!(fix.as_deref(), Some("plugin_sync"));
+
+        // Newer/foreign version wins over the marker check — and offers NO fix: ensure_
+        // plugin_sync_script never downgrades, so the fix button would be a no-op.
+        let newer = "# plugin-sync-version: 99\n# castellyn:profiles\n";
+        let (state, detail, fix) = super::classify_plugin_sync_file(Some(newer), &rendered);
+        assert_eq!(state, "drift");
+        assert!(detail.contains("newer"));
+        assert_eq!(fix, None);
+    }
+
+    #[test]
+    fn wiring_drift_classification() {
+        // All wired, managed clean → ok.
+        let (state, _d, fix) = super::classify_wiring(&[], false);
+        assert_eq!(state, "ok");
+        assert!(fix.is_none());
+
+        // A profile missing wiring → drift, auto-fixable via plugin_sync.
+        let (state, detail, fix) = super::classify_wiring(&["cc1".to_string()], false);
+        assert_eq!(state, "drift");
+        assert!(detail.contains("cc1"));
+        assert_eq!(fix.as_deref(), Some("plugin_sync"));
+
+        // Only double-wiring in managed → drift with NO auto-fix (fix is editing the source).
+        let (state, detail, fix) = super::classify_wiring(&[], true);
+        assert_eq!(state, "drift");
+        assert!(detail.contains("double-wiring"));
+        assert!(fix.is_none());
+
+        // Both problems → the missing-wiring fix takes precedence.
+        let (state, _d, fix) = super::classify_wiring(&["cc1".to_string()], true);
+        assert_eq!(state, "drift");
+        assert_eq!(fix.as_deref(), Some("plugin_sync"));
     }
 }
 
@@ -11198,6 +11495,8 @@ pub fn run() {
             plugin_sync_status,
             plugin_sync_set,
             run_plugin_sync,
+            read_stack_drift,
+            run_managed_deploy,
             agent_status_hook_status,
             agent_status_hook_set,
             delete_skill,

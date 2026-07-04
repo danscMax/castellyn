@@ -108,7 +108,9 @@
     type PluginUpdate,
     type PluginContents,
     type PluginSyncStatus,
-    type LimitsAlertEvent
+    type LimitsAlertEvent,
+    readStackDrift,
+    type StackDriftItem
   } from '$lib/ipc';
   import {
     updatesAttention,
@@ -118,7 +120,8 @@
     profileHasMissingLink,
     pluginsAttention,
     syncAttention,
-    sessionsAttention
+    sessionsAttention,
+    stackDriftAttention
   } from '$lib/attention';
   import { agentSummary } from '$lib/agentStatus.svelte';
   import { getTheme, applyTheme, type Theme } from '$lib/theme';
@@ -909,6 +912,16 @@
   let homeLoaded = $state(false);
   // F23: Home now shows stack + live-session chips, so refresh those too.
   let homeSessionCount = $state<number | null>(null);
+  // Ф1: stack-ownership drift (plugin_sync hook + wiring, managed-settings) — feeds the Home
+  // card AND the sidebar badge, so it lives here, not inside the card.
+  let stackDrift = $state<StackDriftItem[] | null>(null);
+  async function reloadStackDrift() {
+    try {
+      stackDrift = await readStackDrift();
+    } catch {
+      stackDrift = null;
+    }
+  }
   async function reloadHome() {
     await Promise.all([
       reloadProfiles(),
@@ -916,6 +929,7 @@
       reloadSync(),
       reloadSchedules(),
       reloadStack(),
+      reloadStackDrift(),
       globalSessionCount()
         .then((n) => (homeSessionCount = n))
         .catch(() => (homeSessionCount = null))
@@ -1351,7 +1365,8 @@
     profiles: profilesAttention(profilesData),
     sync: syncAttention(syncData),
     extensions: pluginsAttention(pluginUpdates.length),
-    sessions: sessionsAttention(agentSummary)
+    sessions: sessionsAttention(agentSummary),
+    home: stackDriftAttention(stackDrift)
   });
 
   // Lazy-load on first open (list_plugins spawns the claude CLI).
@@ -2087,8 +2102,8 @@
       >
       {#if active === 'home'}
         <HomeTab profiles={profilesData} sync={syncData} drift={driftData} schedules={schedulesData}
-          stack={stackData} sessionCount={homeSessionCount} busy={!!running} {components} {statuses}
-          onOpen={(id) => (active = id)} onRefresh={reloadHome} onAction={onHomeAction} />
+          stack={stackData} sessionCount={homeSessionCount} {stackDrift} busy={!!running} {components} {statuses}
+          onOpen={(id) => (active = id)} onRefresh={reloadHome} onReloadDrift={reloadStackDrift} onAction={onHomeAction} />
       {:else if active === 'updates'}
         <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
       {:else if active === 'forks'}

@@ -1,7 +1,7 @@
 // Pure helpers computing per-tab "needs attention" indicators for the sidebar.
 // Kept side-effect-free and import-light so they're unit-testable.
 
-import type { Component, ForkStatus, BackupList, ProfilesStatus, SyncStatus } from './ipc';
+import type { Component, ForkStatus, BackupList, ProfilesStatus, SyncStatus, StackDriftItem } from './ipc';
 
 export type Attention = { level: 'info' | 'warn' | 'danger' | 'done'; count?: number };
 
@@ -65,6 +65,15 @@ export function sessionsAttention(s: { blocked: number; done: number }): Attenti
   if (s.blocked > 0) return { level: 'danger', count: s.blocked };
   if (s.done > 0) return { level: 'done', count: s.done };
   return null;
+}
+
+/** Ф1: stack ownership drift surfaced on Home. Any non-ok item badges Home; an `error` item
+ *  (a check that itself failed) escalates the level to danger, otherwise warn. */
+export function stackDriftAttention(items: StackDriftItem[] | null | undefined): Attention | null {
+  if (!items) return null;
+  const bad = items.filter((i) => i.state !== 'ok');
+  if (!bad.length) return null;
+  return { level: bad.some((i) => i.state === 'error') ? 'danger' : 'warn', count: bad.length };
 }
 
 /** Deployed .stignore drifted from the configured sync whitelist. */

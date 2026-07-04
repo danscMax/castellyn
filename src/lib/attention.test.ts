@@ -6,7 +6,8 @@ import {
   profilesAttention,
   pluginsAttention,
   syncAttention,
-  sessionsAttention
+  sessionsAttention,
+  stackDriftAttention
 } from './attention';
 
 describe('attention', () => {
@@ -64,6 +65,20 @@ describe('attention', () => {
     expect(syncAttention({ stignoreExists: true, stignoreMatches: true } as any)).toBeNull();
     expect(syncAttention({ stignoreExists: false, stignoreMatches: false } as any)).toBeNull();
     expect(syncAttention(null)).toBeNull();
+  });
+
+  it('stack drift: non-ok badges Home; error escalates to danger', () => {
+    expect(stackDriftAttention([{ id: 'managed_settings', state: 'ok', detail: '' }] as any)).toBeNull();
+    expect(
+      stackDriftAttention([
+        { id: 'plugin_sync_file', state: 'ok', detail: '' },
+        { id: 'plugin_sync_wiring', state: 'drift', detail: '' }
+      ] as any)
+    ).toEqual({ level: 'warn', count: 1 });
+    expect(
+      stackDriftAttention([{ id: 'managed_settings', state: 'error', detail: '' }] as any)
+    ).toEqual({ level: 'danger', count: 1 });
+    expect(stackDriftAttention(null)).toBeNull();
   });
 
   it('sessions: blocked=danger, done=teal, none otherwise (#10 herdr palette)', () => {

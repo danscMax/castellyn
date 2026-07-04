@@ -45,6 +45,14 @@ export default {
   home_relink: 'Перепривязать',
   home_cleanConflicts: 'Убрать',
   home_repairAll: 'Починить все',
+  // Ф1: карточка «Состояние стека» (владение стеком — hook plugin_sync, разводка, managed-settings)
+  home_drift_title: 'Состояние стека',
+  home_drift_label_file: 'Хук plugin_sync',
+  home_drift_label_wiring: 'Разводка по профилям',
+  home_drift_label_managed: 'managed-settings',
+  home_drift_fix_own: 'Забрать владение',
+  home_drift_fix_deploy: 'Передеплоить',
+  home_drift_deploy_hint: 'Запросит подтверждение Windows (UAC)',
   // Wave-4 config-drift / time keys
   drift_log: 'Дрейф конфига: {verb}…',
   drift_verb_check: 'проверка связей',

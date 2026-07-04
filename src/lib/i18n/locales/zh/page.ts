@@ -45,6 +45,14 @@ export default {
   home_relink: '重新链接',
   home_cleanConflicts: '清理',
   home_repairAll: '全部修复',
+  // Ф1：「技术栈状态」卡片（技术栈归属 — plugin_sync 钩子、接线、managed-settings）
+  home_drift_title: '技术栈状态',
+  home_drift_label_file: 'plugin_sync 钩子',
+  home_drift_label_wiring: '各配置档接线',
+  home_drift_label_managed: 'managed-settings',
+  home_drift_fix_own: '接管',
+  home_drift_fix_deploy: '重新部署',
+  home_drift_deploy_hint: '将触发 Windows (UAC) 提示',
   // Wave-4 config-drift / time keys
   drift_log: '配置漂移：{verb}…',
   drift_verb_check: '检查链接',

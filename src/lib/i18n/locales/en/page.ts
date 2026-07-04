@@ -45,6 +45,14 @@ export default {
   home_relink: 'Relink',
   home_cleanConflicts: 'Clean up',
   home_repairAll: 'Repair all',
+  // Ф1: "Stack state" card (stack ownership — plugin_sync hook, wiring, managed-settings)
+  home_drift_title: 'Stack state',
+  home_drift_label_file: 'plugin_sync hook',
+  home_drift_label_wiring: 'Per-profile wiring',
+  home_drift_label_managed: 'managed-settings',
+  home_drift_fix_own: 'Take ownership',
+  home_drift_fix_deploy: 'Redeploy',
+  home_drift_deploy_hint: 'Triggers a Windows (UAC) prompt',
   // Wave-4 config-drift / time keys
   drift_log: 'Config drift: {verb}…',
   drift_verb_check: 'checking links',
