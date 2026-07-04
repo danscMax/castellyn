@@ -21,6 +21,7 @@ import { readSessionsPrefs, writeSessionsPrefs } from './ipc';
 const KEYS = [
   'cmh-sessions-folders',
   'cmh-sessions-cols',
+  'cmh-sessions-rail',
   'cmh-sessions-workspaces',
   'cmh-sessions-defargs',
   'cmh-remote-recent',

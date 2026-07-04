@@ -35,6 +35,7 @@
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
   import { anchored } from '$lib/floating';
+  import ProfileUsageBadge from './ProfileUsageBadge.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { markMoved, peekMoved } from '$lib/sessionMove';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -94,6 +95,17 @@
   let panes = $state<Pane[]>([]);
   let seq = 0;
   let columns = $state(2);
+  // herdr W2: collapsible left agent rail. Persisted via localStorage (synced by sessionPrefs).
+  const RAILKEY = 'cmh-sessions-rail';
+  let railOpen = $state(true);
+  function setRail(v: boolean) {
+    railOpen = v;
+    try {
+      localStorage.setItem(RAILKEY, v ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }
   let maximized = $state<string | null>(null); // key of the pane shown full-screen, or null
 
   // Persisted prefs: column count + last folder used per profile (so re-launching a profile lands
@@ -141,6 +153,7 @@
       const fz = Number(localStorage.getItem('cmh-sessions-fontsize'));
       if (fz >= 8 && fz <= 28) globalFont = fz;
       launcherOpen = localStorage.getItem('cmh-sessions-launcher') === '1';
+      railOpen = localStorage.getItem(RAILKEY) !== '0';
     } catch {
       /* first run / private mode */
     }
@@ -745,6 +758,12 @@
   let gridEl: HTMLDivElement | undefined = $state();
   const activePanes = $derived(panes.filter((p) => !p.background));
   const bgPanes = $derived(panes.filter((p) => p.background));
+  // herdr W2 rail helpers: env icon, status-dot class (mirrors TerminalPane), click-to-focus.
+  const envIcon = (tool: string) => ENVS.find((e) => e.id === tool)?.icon ?? '';
+  function railFocus(key: string) {
+    if (maximized && maximized !== key) maximized = key; // switch which pane is full-screen
+    requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
+  }
   // Never show more columns than there are panes — 1 pane with "3 columns" selected should fill
   // the row, not sit in a third of it.
   const effCols = $derived(Math.min(columns, Math.max(1, activePanes.length)));
@@ -1574,10 +1593,38 @@
   {/if}
 
   {#if activePanes.length}
-    <div
-      class="grid"
-      class:focus-dim={focusMode && !maximized}
-      bind:this={gridEl}
+    <div class="stage">
+      <!-- herdr W2: left agent rail — one row per active pane (env icon · status dot · label · limit
+           chip); click focuses that pane. Same status dots as the pane headers. Collapsible. -->
+      {#if !railOpen && activePanes.length >= 2}
+        <button type="button" class="rail-reopen" onclick={() => setRail(true)}
+          title={t('sessions.railShow')} aria-label={t('sessions.railShow')}>›</button>
+      {/if}
+      {#if railOpen && activePanes.length >= 2}
+        <aside class="rail" aria-label={t('sessions.agents')}>
+          <div class="rail-head">
+            <span class="rail-title">{t('sessions.agents')}</span>
+            <button type="button" class="rail-toggle" onclick={() => setRail(false)}
+              title={t('sessions.railHide')} aria-label={t('sessions.railHide')}>‹</button>
+          </div>
+          {#each activePanes as pane (pane.key)}
+            {@const st = agentStates[sessionIds[pane.key]] ?? null}
+            <button type="button" class="rail-item" class:active={activeKey === pane.key}
+              onclick={() => railFocus(pane.key)}
+              title={st && st !== 'unknown' ? t(`sessions.state_${st}`) : paneLabel(pane)}>
+              <span class="env-ic">{@html envIcon(pane.tool)}</span>
+              <span class="dot" class:working={st === 'working'} class:blocked={st === 'blocked'}
+                class:done={st === 'done'} class:limited={st === 'limited'}></span>
+              <span class="rail-label">{paneLabel(pane)}</span>
+              {#if pane.tool === 'claude' && pane.profile}<ProfileUsageBadge profile={pane.profile} compact />{/if}
+            </button>
+          {/each}
+        </aside>
+      {/if}
+      <div
+        class="grid"
+        class:focus-dim={focusMode && !maximized}
+        bind:this={gridEl}
       style="grid-template-columns: {maximized ? '1fr' : colFr.map((f) => `minmax(0, ${f}fr)`).join(' ')}; grid-template-rows: {maximized ? '1fr' : rowFr.map((f) => `minmax(80px, ${f}fr)`).join(' ')};"
     >
       <!-- Every pane stays MOUNTED (sessions must survive maximize); non-maximized ones are just
@@ -1629,6 +1676,7 @@
             onpointerdown={(e) => startResize(e, k, 'row')}></button>
         {/each}
       {/if}
+      </div>
     </div>
   {/if}
 
@@ -2106,6 +2154,116 @@
     right: 0;
     height: 2px;
     transform: translateY(-50%);
+  }
+  /* herdr W2: horizontal stage = collapsible agent rail + terminal grid. */
+  .stage {
+    display: flex;
+    gap: var(--sw-space-3);
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+  .rail {
+    flex-shrink: 0;
+    width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow-y: auto;
+    padding-right: var(--sw-space-1);
+    border-right: 1px solid var(--sw-border);
+  }
+  .rail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px 4px;
+  }
+  .rail-title {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .rail-toggle,
+  .rail-reopen {
+    border: none;
+    background: transparent;
+    color: var(--sw-text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--sw-radius-sm);
+  }
+  .rail-toggle:hover,
+  .rail-reopen:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .rail-reopen {
+    flex-shrink: 0;
+    align-self: flex-start;
+    border: 1px solid var(--sw-border);
+  }
+  .rail-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: var(--sw-space-1) var(--sw-space-2);
+    border: 1px solid transparent;
+    border-radius: var(--sw-radius-sm);
+    background: transparent;
+    color: var(--sw-text-secondary);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    overflow: hidden;
+  }
+  .rail-item:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .rail-item.active {
+    background: var(--sw-accent-glow);
+    border-color: var(--sw-accent-text);
+    color: var(--sw-accent-text);
+  }
+  .rail-item .env-ic {
+    display: inline-flex;
+    opacity: 0.85;
+    flex-shrink: 0;
+  }
+  .rail-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--sw-text-xs);
+  }
+  /* Agent status dots — mirror TerminalPane (shared tokens + global sw-dot-pulse keyframe). */
+  .rail-item .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--sw-status-up);
+    flex-shrink: 0;
+  }
+  .rail-item .dot.working {
+    background: var(--sw-status-warn);
+    animation: sw-dot-pulse 1.1s ease-in-out infinite;
+  }
+  .rail-item .dot.blocked {
+    background: var(--sw-danger, #f85149);
+    animation: sw-dot-pulse 0.7s ease-in-out infinite;
+  }
+  .rail-item .dot.done {
+    background: var(--sw-status-done);
+  }
+  .rail-item .dot.limited {
+    background: var(--sw-status-down, #ef4444);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--sw-status-down, #ef4444) 35%, transparent);
   }
   .grid {
     position: relative;
