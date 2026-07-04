@@ -87,6 +87,7 @@
     attachId?: string;
     ownsSession?: boolean;
     background?: boolean;
+    space?: string; // herdr W3: project space this pane belongs to (undefined = default space)
   };
   function renamePane(key: string, name: string) {
     panes = panes.map((p) => (p.key === key ? { ...p, name: name || undefined } : p));
@@ -154,6 +155,10 @@
       if (fz >= 8 && fz <= 28) globalFont = fz;
       launcherOpen = localStorage.getItem('cmh-sessions-launcher') === '1';
       railOpen = localStorage.getItem(RAILKEY) !== '0';
+      const savedSpaces = JSON.parse(localStorage.getItem(SPACES_KEY) ?? 'null');
+      if (Array.isArray(savedSpaces) && savedSpaces.length) spaces = savedSpaces;
+      const savedActive = localStorage.getItem(SPACE_ACTIVE_KEY);
+      if (savedActive && spaces.some((s) => s.id === savedActive)) activeSpace = savedActive;
     } catch {
       /* first run / private mode */
     }
@@ -165,7 +170,7 @@
           const alive = new Set(await sessionList());
           for (const s of savedLive) {
             if (alive.has(s.id)) {
-              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name });
+              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name, space: s.space });
             }
           }
           // Dead entries = a full app restart (the PTYs died with it). Offer to rebuild
@@ -491,7 +496,7 @@
   }
   // ── Reload survival (#5): persist spawned-here sessions, re-attach the ones still alive on mount ──
   const LIVE_KEY = 'cmh-sessions-live';
-  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string };
+  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string; space?: string };
   // Captured synchronously at init — BEFORE the persist effect first runs and overwrites it with the
   // (empty) fresh panes — so a webview reload still sees the pre-reload session list.
   const savedLive: LivePane[] = (() => {
@@ -505,7 +510,7 @@
     try {
       const live: LivePane[] = panes
         .filter((p) => !p.attachId && sessionIds[p.key])
-        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]], name: p.name }));
+        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]], name: p.name, space: p.space }));
       // #3: keep the pending restore set (last run's dead sessions) in LIVE_KEY until the user
       // accepts or dismisses the bar — else a second webview reload before they act loses the offer.
       // Merge by id so a since-re-attached pane isn't listed twice; when restorable clears (accept /
@@ -694,12 +699,12 @@
       /* ignore */
     }
   }
-  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string }) {
+  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string; space?: string }) {
     // Don't block re-attaching an EXISTING session (e.g. a pane returned from a monitor) on the cap —
     // it's not a new spawn. Only new spawns count against MAX_PANES.
     if (atLimit && !v.attachId) return null;
     const key = `${v.tool}:${v.profile || 'sh'}#${seq++}`;
-    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name }];
+    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space: v.space ?? activeSpace }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
     rememberRecent(v.cwd);
     // Auto-focus the new pane's terminal so the user can type immediately (the obvious next action
@@ -764,10 +769,90 @@
     if (maximized && maximized !== key) maximized = key; // switch which pane is full-screen
     requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
   }
+  // ── herdr W3: spaces (project tabs). Each pane belongs to a space; the grid + rail show only the
+  //    ACTIVE space's panes, but EVERY pane stays MOUNTED (filtered by CSS, not unmounted) so no PTY
+  //    dies on a space switch. Spaces list + active id persist (synced via sessionPrefs). ──
+  const DEFAULT_SPACE = 'default';
+  const SPACES_KEY = 'cmh-sessions-spaces';
+  const SPACE_ACTIVE_KEY = 'cmh-sessions-space-active';
+  let spaces = $state<{ id: string; name: string }[]>([{ id: DEFAULT_SPACE, name: t('sessions.spaceDefault') }]);
+  let activeSpace = $state(DEFAULT_SPACE);
+  let spaceEditId = $state<string | null>(null); // tab being renamed inline
+  let spaceEditName = $state('');
+  const focusMount = (n: HTMLElement) => {
+    n.focus();
+    if (n instanceof HTMLInputElement) n.select();
+  };
+  const paneSpace = (p: Pane) => p.space ?? DEFAULT_SPACE;
+  const spacePanes = $derived(activePanes.filter((p) => paneSpace(p) === activeSpace));
+  function persistSpaces() {
+    try {
+      localStorage.setItem(SPACES_KEY, JSON.stringify(spaces));
+      localStorage.setItem(SPACE_ACTIVE_KEY, activeSpace);
+    } catch {
+      /* ignore */
+    }
+  }
+  function switchSpace(id: string) {
+    if (id === activeSpace) return;
+    activeSpace = id;
+    maximized = null; // the maximized pane may belong to another space
+    persistSpaces();
+  }
+  function addSpace() {
+    const id = `s${seq++}${Math.round(Math.random() * 1e4)}`;
+    spaces = [...spaces, { id, name: `${t('sessions.spaceBase')} ${spaces.length + 1}` }];
+    switchSpace(id);
+  }
+  function beginRenameSpace(id: string) {
+    spaceEditId = id;
+    spaceEditName = spaces.find((s) => s.id === id)?.name ?? '';
+  }
+  function commitRenameSpace() {
+    const id = spaceEditId;
+    const name = spaceEditName.trim();
+    if (id && name) spaces = spaces.map((s) => (s.id === id ? { ...s, name } : s));
+    spaceEditId = null;
+    persistSpaces();
+  }
+  function deleteSpace(id: string) {
+    if (spaces.length <= 1) return; // always keep at least one space
+    const rest = spaces.filter((s) => s.id !== id);
+    const fallback = rest[0].id;
+    // Reassign that space's panes to the first remaining space — non-destructive, no PTY killed.
+    panes = panes.map((p) => (paneSpace(p) === id ? { ...p, space: fallback } : p));
+    spaces = rest;
+    if (activeSpace === id) activeSpace = fallback;
+    persistSpaces();
+  }
+  function askDeleteSpace(id: string) {
+    const n = activePanes.filter((p) => paneSpace(p) === id).length;
+    if (n === 0) {
+      deleteSpace(id);
+      return;
+    }
+    askConfirm({
+      title: t('sessions.spaceDeleteTitle'),
+      message: t('sessions.spaceDeleteMsg', { n }),
+      run: () => deleteSpace(id)
+    });
+  }
+  const spaceCount = (id: string) => activePanes.filter((p) => paneSpace(p) === id).length;
+  function spaceWorst(id: string): '' | 'working' | 'blocked' | 'done' {
+    let w: '' | 'working' | 'done' = '';
+    for (const p of activePanes) {
+      if (paneSpace(p) !== id) continue;
+      const s = agentStates[sessionIds[p.key]] ?? null;
+      if (s === 'blocked') return 'blocked';
+      if (s === 'working') w = 'working';
+      else if (s === 'done' && w !== 'working') w = 'done';
+    }
+    return w;
+  }
   // Never show more columns than there are panes — 1 pane with "3 columns" selected should fill
   // the row, not sit in a third of it.
-  const effCols = $derived(Math.min(columns, Math.max(1, activePanes.length)));
-  const rowCount = $derived(Math.max(1, Math.ceil(activePanes.length / effCols)));
+  const effCols = $derived(Math.min(columns, Math.max(1, spacePanes.length)));
+  const rowCount = $derived(Math.max(1, Math.ceil(spacePanes.length / effCols)));
   // Persisted per-column-count widths (so a manual resize survives restarts).
   const COLFR_KEY = 'cmh-sessions-colfr';
   function loadColFr(n: number): number[] | null {
@@ -1198,7 +1283,8 @@
   let focusMode = $state(false);
   let activeKey = $state(''); // pane whose terminal currently holds keyboard focus (#14)
   function cycleFocus(dir: 1 | -1) {
-    const list = maximized ? panes.filter((p) => p.key === maximized) : panes;
+    // Only cycle VISIBLE panes (active space, non-background) — never focus a CSS-hidden pane.
+    const list = maximized ? panes.filter((p) => p.key === maximized) : spacePanes;
     if (!list.length) return;
     // Step from the pane that ACTUALLY holds focus, not a stale phantom counter.
     const cur = list.findIndex((p) => p.key === activeKey);
@@ -1216,7 +1302,7 @@
       columns = Number(e.key);
     } else if (e.altKey && !e.ctrlKey && e.key >= '1' && e.key <= '9') {
       // Alt+N — focus the N-th visible pane (#19).
-      const list = maximized ? panes.filter((p) => p.key === maximized) : activePanes;
+      const list = maximized ? panes.filter((p) => p.key === maximized) : spacePanes;
       const idx = Number(e.key) - 1;
       if (idx < list.length) {
         e.preventDefault();
@@ -1275,7 +1361,7 @@
       ) {
         args = `${args} --resume ${s.claudeSid}`.trim();
       }
-      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name });
+      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name, space: s.space });
     }
     // addPane's cap guard silently drops panes past the limit — tell the user how many landed.
     const restored = panes.length - before;
@@ -1577,11 +1663,40 @@
     </div>
   {/if}
 
+  <!-- herdr W3: project spaces. Switching a space shows only its panes; every pane stays mounted
+       (CSS-filtered, never unmounted) so no live session dies. Double-click a tab to rename. -->
+  {#if activePanes.length > 0 || spaces.length > 1}
+    <div class="spaces" role="tablist" aria-label={t('sessions.agents')}>
+      {#each spaces as sp (sp.id)}
+        {@const worst = spaceWorst(sp.id)}
+        <span class="space-tab" class:active={activeSpace === sp.id}>
+          {#if spaceEditId === sp.id}
+            <input class="space-edit sw-input text-sw-xs" bind:value={spaceEditName} use:focusMount
+              onkeydown={(e) => { if (e.key === 'Enter') commitRenameSpace(); else if (e.key === 'Escape') (spaceEditId = null); }}
+              onblur={commitRenameSpace} />
+          {:else}
+            <button type="button" class="space-go" role="tab" aria-selected={activeSpace === sp.id}
+              onclick={() => switchSpace(sp.id)} ondblclick={() => beginRenameSpace(sp.id)} title={t('sessions.spaceRename')}>
+              {#if worst}<span class="dot" class:working={worst === 'working'} class:blocked={worst === 'blocked'} class:done={worst === 'done'}></span>{/if}
+              <span class="space-name">{sp.name}</span>
+              {#if spaceCount(sp.id)}<span class="space-count">{spaceCount(sp.id)}</span>{/if}
+            </button>
+            {#if spaces.length > 1}
+              <button type="button" class="space-x" onclick={() => askDeleteSpace(sp.id)}
+                title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
+            {/if}
+          {/if}
+        </span>
+      {/each}
+      <button type="button" class="space-add" onclick={addSpace} title={t('sessions.spaceNew')} aria-label={t('sessions.spaceNew')}>＋</button>
+    </div>
+  {/if}
+
   <!-- While one pane is maximized the others are hidden; this switcher keeps them visible and
        one-click reachable so you never lose track of running sessions. -->
   {#if maximized}
     <div class="maxbar">
-      {#each activePanes as p (p.key)}
+      {#each spacePanes as p (p.key)}
         <button class="maxchip" class:active={maximized === p.key}
           onclick={() => { maximized = p.key; unread = { ...unread, [p.key]: false }; }} title={paneTitleElapsed(p)}>
           <span class="maxchip-dot" class:unread={unread[p.key] && maximized !== p.key}></span>{paneLabel(p)}
@@ -1596,18 +1711,18 @@
     <div class="stage">
       <!-- herdr W2: left agent rail — one row per active pane (env icon · status dot · label · limit
            chip); click focuses that pane. Same status dots as the pane headers. Collapsible. -->
-      {#if !railOpen && activePanes.length >= 2}
+      {#if !railOpen && spacePanes.length >= 2}
         <button type="button" class="rail-reopen" onclick={() => setRail(true)}
           title={t('sessions.railShow')} aria-label={t('sessions.railShow')}>›</button>
       {/if}
-      {#if railOpen && activePanes.length >= 2}
+      {#if railOpen && spacePanes.length >= 2}
         <aside class="rail" aria-label={t('sessions.agents')}>
           <div class="rail-head">
             <span class="rail-title">{t('sessions.agents')}</span>
             <button type="button" class="rail-toggle" onclick={() => setRail(false)}
               title={t('sessions.railHide')} aria-label={t('sessions.railHide')}>‹</button>
           </div>
-          {#each activePanes as pane (pane.key)}
+          {#each spacePanes as pane (pane.key)}
             {@const st = agentStates[sessionIds[pane.key]] ?? null}
             <button type="button" class="rail-item" class:active={activeKey === pane.key}
               onclick={() => railFocus(pane.key)}
@@ -1624,13 +1739,14 @@
       <div
         class="grid"
         class:focus-dim={focusMode && !maximized}
+        class:collapsed={spacePanes.length === 0}
         bind:this={gridEl}
       style="grid-template-columns: {maximized ? '1fr' : colFr.map((f) => `minmax(0, ${f}fr)`).join(' ')}; grid-template-rows: {maximized ? '1fr' : rowFr.map((f) => `minmax(80px, ${f}fr)`).join(' ')};"
     >
       <!-- Every pane stays MOUNTED (sessions must survive maximize); non-maximized ones are just
            hidden, so the maximized pane fills the single column. -->
       {#each activePanes as pane (pane.key)}
-        <div class="cell" class:hidden={maximized != null && maximized !== pane.key}
+        <div class="cell" class:hidden={paneSpace(pane) !== activeSpace || (maximized != null && maximized !== pane.key)}
           class:active={activeKey === pane.key && !maximized && panes.length > 1}>
           <TerminalPane
             bind:this={paneRefs[pane.key]}
@@ -1677,6 +1793,13 @@
         {/each}
       {/if}
       </div>
+      {#if spacePanes.length === 0}
+        <div class="space-empty">
+          <EmptyState icon={SquareTerminal} title={t('sessions.spaceEmptyTitle')}
+            description={t('sessions.spaceEmptyHint')} action={() => (newOpen = true)}
+            actionLabel={t('sessions.newSession')} />
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -2264,6 +2387,114 @@
   .rail-item .dot.limited {
     background: var(--sw-status-down, #ef4444);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--sw-status-down, #ef4444) 35%, transparent);
+  }
+  /* herdr W3: project space tabs. */
+  .spaces {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sw-space-1);
+    margin-bottom: var(--sw-space-3);
+  }
+  .space-tab {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    overflow: hidden;
+    background: var(--sw-bg-secondary);
+  }
+  .space-tab.active {
+    border-color: var(--sw-accent-text);
+    background: var(--sw-accent-glow);
+  }
+  .space-go {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: var(--sw-text-secondary);
+    cursor: pointer;
+    padding: var(--sw-space-1) var(--sw-space-2);
+    font-size: var(--sw-text-xs);
+    white-space: nowrap;
+  }
+  .space-tab.active .space-go {
+    color: var(--sw-accent-text);
+    font-weight: 600;
+  }
+  .space-go:hover {
+    color: var(--sw-text-primary);
+  }
+  .space-count {
+    min-width: 16px;
+    text-align: center;
+    padding: 0 5px;
+    border-radius: 9999px;
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-muted);
+    font-size: 10px;
+  }
+  .space-go .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--sw-status-up);
+    flex-shrink: 0;
+  }
+  .space-go .dot.working {
+    background: var(--sw-status-warn);
+    animation: sw-dot-pulse 1.1s ease-in-out infinite;
+  }
+  .space-go .dot.blocked {
+    background: var(--sw-danger, #f85149);
+    animation: sw-dot-pulse 0.7s ease-in-out infinite;
+  }
+  .space-go .dot.done {
+    background: var(--sw-status-done);
+  }
+  .space-x {
+    border: none;
+    background: transparent;
+    color: var(--sw-text-muted);
+    cursor: pointer;
+    padding: 3px 7px;
+    font-size: 10px;
+    border-left: 1px solid var(--sw-border);
+  }
+  .space-x:hover {
+    color: var(--sw-danger);
+  }
+  .space-add {
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    background: transparent;
+    color: var(--sw-text-secondary);
+    cursor: pointer;
+    padding: var(--sw-space-1) var(--sw-space-2);
+    font-size: var(--sw-text-sm);
+    line-height: 1;
+  }
+  .space-add:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .space-edit {
+    width: 120px;
+    margin: 2px;
+  }
+  .space-empty {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    min-height: 0;
+  }
+  .grid.collapsed {
+    flex: 0 0 auto;
+    min-height: 0;
+    height: 0;
+    padding-bottom: 0;
   }
   .grid {
     position: relative;

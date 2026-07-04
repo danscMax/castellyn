@@ -22,6 +22,8 @@ const KEYS = [
   'cmh-sessions-folders',
   'cmh-sessions-cols',
   'cmh-sessions-rail',
+  'cmh-sessions-spaces',
+  'cmh-sessions-space-active',
   'cmh-sessions-workspaces',
   'cmh-sessions-defargs',
   'cmh-remote-recent',
