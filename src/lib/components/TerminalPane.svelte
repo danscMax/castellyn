@@ -675,7 +675,7 @@
       <DropdownMenu glyph="⬈" title={t('sessions.toMonitorTip')} items={monItems} />
     {/if}
     {#if onDuplicate}
-      <button class="x" onclick={onDuplicate} title={t('sessions.duplicate')} aria-label={t('sessions.duplicate')}>⧉</button>
+      <button class="x clone" onclick={onDuplicate} title="{t('sessions.duplicate')} · Ctrl+Shift+D" aria-label={t('sessions.duplicate')}>⧉</button>
     {/if}
     {#if onBackground}
       <button class="x" onclick={onBackground} title={t('sessions.backgroundPane')} aria-label={t('sessions.backgroundPane')}>🗕</button>
@@ -880,6 +880,15 @@
   }
   .x:hover {
     color: var(--sw-text-primary);
+  }
+  /* V1: the "clone this agent" action is the 90% path — accent it so it stands out from the muted
+     icon row (Ctrl+Shift+D also triggers it). */
+  .x.clone {
+    color: var(--sw-accent-text);
+    font-size: 14px;
+  }
+  .x.clone:hover {
+    color: var(--sw-accent);
   }
   .term {
     flex: 1;

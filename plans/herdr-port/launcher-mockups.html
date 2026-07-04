@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Лаунчер «Сессий» — 10 вариантов (форма исчезает)</title>
+<style>
+  :root {
+    --bg: #0a0e14; --bg2: #121a24; --bg3: #1b2531; --bg-hover: #22303f;
+    --border: #2a3644; --text: #e6edf3; --muted: #8b98a8;
+    --accent: #3b82f6; --accent2: #2563eb; --accent-text: #7cb0ff;
+    --accent-glow: rgba(59,130,246,0.16);
+    --warn: #d9a441; --danger: #f85149; --done: #2dd4bf; --up: #3fb950;
+    --radius: 8px;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6fa; --bg2: #ffffff; --bg3: #eef1f6; --bg-hover: #e4e9f1;
+    --border: #d3dae4; --text: #1b2430; --muted: #5c6b7e;
+    --accent-text: #2563eb; --accent-glow: rgba(59,130,246,0.12);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 28px 20px 60px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .lede { color: var(--muted); max-width: 780px; }
+  .themebtn { flex: none; background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+  .locked { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px; margin: 18px 0 26px; color: var(--muted); font-size: 13px; }
+  .locked b { color: var(--text); }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px 22px; margin-bottom: 20px; }
+  .card h2 { font-size: 16px; margin: 0 0 2px; display: flex; align-items: baseline; gap: 10px; }
+  .card h2 .num { color: var(--accent-text); font-variant-numeric: tabular-nums; }
+  .card .desc { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  .mock { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  :root[data-theme="light"] .mock { background: var(--bg3); }
+  .kbd { font: 11px ui-monospace, monospace; background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+  .mono { font-family: ui-monospace, "Cascadia Code", monospace; }
+
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .lbl { color: var(--muted); font-size: 12px; }
+  .btn-primary { display: inline-flex; align-items: center; gap: 8px; border: none; cursor: pointer;
+    background: linear-gradient(180deg, var(--accent), var(--accent2)); color: #fff;
+    padding: 9px 16px; border-radius: var(--radius); font-size: 13px; font-weight: 600; }
+  .btn-ghost { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; background: transparent;
+    color: var(--text); border: 1px solid var(--border); padding: 8px 13px; border-radius: var(--radius); font-size: 13px; }
+  .huge { font-size: 16px; padding: 15px 26px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); display: inline-block; }
+  .dot.work { background: var(--warn); } .dot.done { background: var(--done); }
+
+  .envseg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .env { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; cursor: pointer; border: none;
+    border-right: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 13px; }
+  .env:last-child { border-right: none; } .env.sel { background: var(--accent-glow); color: var(--accent-text); }
+
+  /* V1 pane header */
+  .panehdr { display: flex; align-items: center; gap: 10px; background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px 12px; }
+  :root[data-theme="light"] .panehdr { background: #fff; }
+  .panehdr .spacer { flex: 1; }
+  .clonebtn { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-glow);
+    color: var(--accent-text); border: 1px solid var(--accent-text); border-radius: 6px; padding: 5px 10px;
+    cursor: pointer; font-size: 12px; font-weight: 600; }
+  .hbtn { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 3px 6px; }
+
+  /* V2 space tabs with preset + plus */
+  .stabs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .stab { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; background: var(--bg2); }
+  :root[data-theme="light"] .stab { background: #fff; }
+  .stab.sel { border-color: var(--accent-text); background: var(--accent-glow); }
+  .stab .name { padding: 7px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  .stab .preset { color: var(--muted); font-size: 11px; }
+  .stab .plus { border: none; border-left: 1px solid var(--border); background: transparent; color: var(--accent-text);
+    cursor: pointer; padding: 7px 11px; font-weight: 700; }
+
+  .menu { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); max-width: 440px; overflow: hidden; }
+  :root[data-theme="light"] .menu { background: #fff; }
+  .mi { padding: 9px 14px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .mi:last-child { border-bottom: none; } .mi:hover { background: var(--bg-hover); }
+  .mi.hdr { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; background: var(--bg); }
+  .mi .path, .mi .when { color: var(--muted); margin-left: auto; font-size: 11px; }
+
+  /* V4 palette */
+  .palette { border: 1px solid var(--accent-text); border-radius: var(--radius); background: var(--bg2); max-width: 460px; overflow: hidden; }
+  :root[data-theme="light"] .palette { background: #fff; }
+  .palette .q { padding: 11px 14px; border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; color: var(--text); }
+  .palette .res { padding: 8px 14px; display: flex; align-items: center; gap: 9px; font-size: 13px; }
+  .palette .res.on { background: var(--accent-glow); color: var(--accent-text); }
+
+  /* V5 drawer */
+  .drawer { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); max-width: 340px; overflow: hidden; }
+  :root[data-theme="light"] .drawer { background: #fff; }
+  .drawer .dh { padding: 8px 14px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); }
+  .drawer .proj { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+  .drawer .proj .pn { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+  .drawer .proj .pp { color: var(--muted); font-size: 11px; margin-left: 21px; }
+  .drawer .agents { margin: 6px 0 4px 21px; display: flex; flex-direction: column; gap: 4px; }
+  .drawer .ag { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+  .drawer .addhere { margin-left: 21px; color: var(--accent-text); font-size: 12px; cursor: pointer; }
+
+  /* V6 tiles */
+  .tiles { display: flex; gap: 12px; flex-wrap: wrap; }
+  .tile { width: 150px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); overflow: hidden; }
+  :root[data-theme="light"] .tile { background: #fff; }
+  .tile .th { padding: 10px 12px 6px; font-size: 13px; display: flex; align-items: center; gap: 7px; }
+  .tile .tp { padding: 0 12px; color: var(--muted); font-size: 11px; }
+  .tile .more { margin-top: 8px; border: none; border-top: 1px solid var(--border); background: transparent;
+    color: var(--accent-text); width: 100%; padding: 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .tile.new { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted);
+    border-style: dashed; min-height: 96px; cursor: pointer; }
+
+  /* V10 status bar */
+  .statusbar { display: flex; align-items: center; gap: 16px; background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px 14px; font-size: 12px; }
+  :root[data-theme="light"] .statusbar { background: #fff; }
+  .statusbar .seg { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .statusbar .proj { color: var(--text); font-weight: 600; }
+
+  .rec { background: var(--accent-glow); border: 1px solid var(--accent-text); border-radius: var(--radius);
+    padding: 14px 18px; margin-top: 8px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Лаунчер «Сессий» — 10 вариантов, где форма исчезает</h1>
+      <p class="lede">Принцип (из практики tmux/zellij/wezterm + флота агентов): частый запуск — это НЕ форма. Основное действие — «ещё один такой же / здесь». Полная форма — раз на проект.</p>
+    </div>
+    <button class="themebtn" id="theme">☀️ / 🌙 тема</button>
+  </header>
+
+  <div class="locked">
+    Общая модель: <b>Space = проект = запомненный пресет</b> (папка + среда + профиль + аргументы), задаётся один раз ·
+    запуск = <b>«клон этой панели»</b> или <b>«＋ агент в проекте»</b> без формы · папка <b>наследуется</b>, полным путём, не вводится ·
+    форма — только для <b>нового/редактируемого проекта</b>.
+  </div>
+
+  <!-- V1 -->
+  <div class="card">
+    <h2><span class="num">V1</span> Клон-первый (кнопка на панели)</h2>
+    <p class="desc">Главное действие живёт в шапке КАЖДОЙ панели: «⧉ клон» = ещё один такой же (та же папка/среда/аргументы). Хоткей <span class="kbd">Ctrl+Shift+D</span>. Отдельного лаунчера почти не надо.</p>
+    <div class="mock">
+      <div class="panehdr">
+        <span class="dot"></span><span data-ico="claude"></span>
+        <b style="font-weight:600">claude · cc1</b><span class="mono lbl">E:\Scripts\Castellyn</span>
+        <span class="spacer"></span>
+        <button class="clonebtn">⧉ Клон</button>
+        <button class="hbtn">⤢</button><button class="hbtn">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- V2 -->
+  <div class="card">
+    <h2><span class="num">V2</span> Проект-пресет + «＋» на вкладке</h2>
+    <p class="desc">Каждая вкладка проекта хранит пресет; «＋» прямо на ней = мгновенный агент по пресету. Форма — только при создании проекта.</p>
+    <div class="mock">
+      <div class="stabs">
+        <span class="stab sel"><span class="name"><span class="dot"></span>Castellyn <span class="preset">· Claude cc1</span></span><button class="plus">＋</button></span>
+        <span class="stab"><span class="name"><span class="dot done"></span>Docx <span class="preset">· codex</span></span><button class="plus">＋</button></span>
+        <button class="btn-ghost">＋ Проект</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- V3 -->
+  <div class="card">
+    <h2><span class="num">V3</span> «＋ Новая» = меню-память (повтор), не форма</h2>
+    <p class="desc">Кнопка раскрывает список последних запусков — 1 клик «повторить». Форма спрятана в «Свой запуск…».</p>
+    <div class="mock">
+      <button class="btn-primary" style="margin-bottom:10px">＋ Новая ▾</button>
+      <div class="menu">
+        <div class="mi"><span data-ico="claude"></span> ↻ Claude · cc1 <span class="path mono">E:\Scripts\Castellyn</span><span class="when">только что</span></div>
+        <div class="mi"><span data-ico="codex"></span> ↻ codex <span class="path mono">E:\Scripts\Docx…</span><span class="when">5 мин</span></div>
+        <div class="mi hdr">Проекты</div>
+        <div class="mi"><span data-ico="claude"></span> ＋ Castellyn <span class="path mono">E:\Scripts\Castellyn</span></div>
+        <div class="mi">⚙ Свой запуск…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V4 -->
+  <div class="card">
+    <h2><span class="num">V4</span> Командная палитра запуска (клавиатура)</h2>
+    <p class="desc"><span class="kbd">Ctrl+T</span> → печатаешь имя проекта/среды, Enter запускает. Ноль дропдаунов, ноль мыши.</p>
+    <div class="mock">
+      <div class="palette">
+        <div class="q">cast▏</div>
+        <div class="res on"><span data-ico="claude"></span> Claude · cc1 — <span class="mono">E:\Scripts\Castellyn</span></div>
+        <div class="res"><span data-ico="codex"></span> codex — <span class="mono">E:\Scripts\Castellyn</span></div>
+        <div class="res"><span data-ico="shell"></span> shell — <span class="mono">E:\Scripts\Castellyn</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V5 -->
+  <div class="card">
+    <h2><span class="num">V5</span> Дровер проектов (папка = контейнер)</h2>
+    <p class="desc">Слева список проектов; под каждым — его агенты + «＋ агент здесь» (в папке проекта). Проект первичен.</p>
+    <div class="mock">
+      <div class="drawer">
+        <div class="dh">Проекты</div>
+        <div class="proj">
+          <div class="pn"><span>▾</span><span class="dot"></span> Castellyn</div>
+          <div class="pp mono">E:\Scripts\Castellyn</div>
+          <div class="agents">
+            <div class="ag"><span data-ico="claude"></span><span class="dot"></span> claude cc1</div>
+            <div class="ag"><span data-ico="codex"></span><span class="dot work"></span> codex</div>
+          </div>
+          <div class="addhere">＋ агент здесь</div>
+        </div>
+        <div class="proj"><div class="pn"><span>▸</span><span class="dot done"></span> Docx</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V6 -->
+  <div class="card">
+    <h2><span class="num">V6</span> Плитки-ярлыки «ещё один»</h2>
+    <p class="desc">Домашний экран из плиток-пресетов; клик по «＋ ещё» = запуск дубля. Ярлык = «такой же ещё раз», не форма.</p>
+    <div class="mock">
+      <div class="tiles">
+        <div class="tile"><div class="th"><span data-ico="claude"></span> Castellyn</div><div class="tp mono">Claude · cc1</div><button class="more">＋ ещё</button></div>
+        <div class="tile"><div class="th"><span data-ico="codex"></span> Castellyn</div><div class="tp mono">codex</div><button class="more">＋ ещё</button></div>
+        <div class="tile"><div class="th"><span data-ico="claude"></span> Docx</div><div class="tp mono">Claude</div><button class="more">＋ ещё</button></div>
+        <div class="tile new">＋<span style="font-size:12px">новый проект</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V7 -->
+  <div class="card">
+    <h2><span class="num">V7</span> Одна большая кнопка + шеврон (95% / 5%)</h2>
+    <p class="desc">Гигантская «ещё агент в активном проекте» на 95% случаев; маленький ▾ — выбрать другой проект/среду.</p>
+    <div class="mock">
+      <div class="row">
+        <button class="btn-primary huge"><span data-ico="claude"></span> ▶ Ещё агент в Castellyn</button>
+        <button class="btn-ghost huge">▾</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- V8 -->
+  <div class="card">
+    <h2><span class="num">V8</span> Контекст-меню на всём (ноль постоянного хрома)</h2>
+    <p class="desc">Правый клик по панели/вкладке/пустому месту → «Клон», «Ещё здесь», «Новый проект». Лаунчер как бар вообще исчезает.</p>
+    <div class="mock">
+      <span class="lbl">правый клик по панели →</span>
+      <div class="menu" style="margin-top:8px; max-width:280px">
+        <div class="mi">⧉ Клон этой панели <span class="kbd" style="margin-left:auto">C-S-D</span></div>
+        <div class="mi"><span data-ico="claude"></span> ＋ Ещё Claude здесь</div>
+        <div class="mi">＋ Новый проект…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V9 -->
+  <div class="card">
+    <h2><span class="num">V9</span> Наследование cwd, как в tmux</h2>
+    <p class="desc">«＋» ВСЕГДА = новый агент в папке текущей/активной панели, среда = дефолт проекта. На частом пути выбора нет вообще. Зажать <span class="kbd">Alt</span> — выбрать среду.</p>
+    <div class="mock">
+      <div class="row">
+        <button class="btn-primary">＋</button>
+        <span class="lbl">→ claude в <span class="mono">E:\Scripts\Castellyn</span> (папка активной панели), профиль дефолт</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span class="lbl">Alt+＋ →</span>
+        <div class="envseg"><button class="env sel" data-ico="claude">Claude</button><button class="env" data-ico="codex">codex</button><button class="env" data-ico="shell">shell</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V10 -->
+  <div class="card">
+    <h2><span class="num">V10</span> Строка статуса снизу (vim/tmux-style)</h2>
+    <p class="desc">Тонкая строка внизу окна: активный проект + хоткеи запуска. Запуск — клавиатурой, подсказки всегда на виду, хром минимален.</p>
+    <div class="mock">
+      <div class="statusbar">
+        <span class="proj">▸ Castellyn</span>
+        <span class="seg">5 агентов</span>
+        <span class="seg">⧉ клон <span class="kbd">C-S-D</span></span>
+        <span class="seg">＋ агент <span class="kbd">C-T</span></span>
+        <span class="seg">новый проект <span class="kbd">C-S-P</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rec">
+    <b>Рекомендация:</b> ядро — <b>V9</b> (наследование cwd: «＋» = агент в текущей папке, без выбора) + <b>V1</b> (⧉ клон на панели) как самые «tmux-верные».
+    Сверху добавить <b>V2</b> (пресет на вкладке проекта) для явного запуска в другом проекте и <b>V3/V4</b> (память/палитра) для повторов.
+    Форма — только в <b>V6/V2</b> «＋ новый проект». Комбинируются в один цельный UX.
+  </div>
+  <div class="foot">Локальный файл. Открой в браузере (кнопка темы вверху). Скажи номера — соберу вживую.</div>
+</div>
+
+<script>
+  const ICONS = {
+    claude: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 6.4a2 2 0 0 0 1.7 1.7L22 12l-6.4 1.9a2 2 0 0 0-1.7 1.7L12 22l-1.9-6.4a2 2 0 0 0-1.7-1.7L2 12l6.4-1.9a2 2 0 0 0 1.7-1.7z"/></svg>',
+    opencode: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7L4 12l4.5 5M15.5 7L20 12l-4.5 5"/></svg>',
+    codex: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l-2 3 2 3M15 9l2 3-2 3"/></svg>',
+    shell: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l4 4-4 4M12 16h7"/></svg>'
+  };
+  document.querySelectorAll('[data-ico]').forEach((el) => {
+    const s = ICONS[el.getAttribute('data-ico')]; if (s) el.insertAdjacentHTML('afterbegin', s + ' ');
+  });
+  const root = document.documentElement; root.setAttribute('data-theme', 'dark');
+  document.getElementById('theme').addEventListener('click', () =>
+    root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
+</script>
+</body>
+</html>

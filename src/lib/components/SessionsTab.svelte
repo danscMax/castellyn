@@ -1221,7 +1221,9 @@
 
   function duplicate(key: string) {
     const p = panes.find((x) => x.key === key);
-    if (p) addPane({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget });
+    // V1 "clone": one more agent exactly like this one — same tool/folder/args AND same space
+    // (a clone belongs to the project it was cloned in, not whatever space is active).
+    if (p) addPane({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, space: p.space });
   }
 
   // Drag a pane's title bar over another to reorder (live, as you hover).
@@ -1296,6 +1298,10 @@
     if (e.ctrlKey && e.shiftKey && (e.key === 't' || e.key === 'T')) {
       e.preventDefault();
       launchPhrase();
+    } else if (e.ctrlKey && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+      // V1: clone the focused pane (same folder/env/args, same space) — the 90% "one more like this".
+      e.preventDefault();
+      if (activeKey) duplicate(activeKey);
     } else if (e.ctrlKey && e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
       // Ctrl+Alt+N — column count (moved off plain Alt+N, which now focuses a pane, #19).
       e.preventDefault();
