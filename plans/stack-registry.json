@@ -286,8 +286,9 @@
   ],
   "decisions_2026_07_04": {
     "note": "Owner decisions collected via AskUserQuestion; execution status per item.",
-    "blessedPackage": "ACCEPTED wholesale (all 7 sets below) — quarantine of losers executes in Ф2 with preview",
-    "securityGuidance": "NARROW to git commit/push only (remove Stop + per-edit LLM review) — execute in Ф2 (managed-settings source edit + redeploy)",
+    "f2_executed_2026_07_04": "Ф2 cleanup DONE: (1) security-guidance narrowed via official env knob ENABLE_STOP_REVIEW=0 in managed-settings env block (code-verified: 'does NOT gate the commit/push reviews'; per-edit = pattern rules, no LLM) — deployed+verified; (2) quarantined via enabledPlugins:false — serena (disconnected), comprehensive-review, sc-refactor (subsumed by blessed set) — deployed+verified; (3) chrome-devtools MCP removed from user scope (claude mcp remove); (4) dream quarantine-moved to C:\\Users\\User\\.claude\\quarantine\\dream-claude-2026-07-04 (skills dir is profile-symlinked — one copy); (5) cruft deleted: claude-mem 13.8.0 (~497MB), temp_git_* x7, 2 .bak. Residual: context7/playwright stdio dupes live in per-project scopes of OTHER projects (.claude.json) — remove via claude mcp remove from those cwds when touched.",
+    "blessedPackage": "ACCEPTED wholesale (all 7 sets below) — quarantine EXECUTED in Ф2 (see f2_executed)",
+    "securityGuidance": "NARROW to git commit/push only — EXECUTED via ENABLE_STOP_REVIEW=0 (see f2_executed)",
     "claudeMem": "KEEP as-is (memory completeness > latency; cost recorded)",
     "claudeReflect": "DELETE — EXECUTED 2026-07-04: removed from managed-settings source, redeployed (0 refs in %ProgramFiles%), marketplace+install records clean, cache dir removed. Memory consolidation = claude-mem only (overrides earlier blessed pick; dream also slated for removal in Ф2)",
     "iosSkills": "DELETE — EXECUTED 2026-07-04: 10 dirs removed (5 in skills\\gstack\\ + 5 duplicates in skills\\); restorable from gstack distribution"
