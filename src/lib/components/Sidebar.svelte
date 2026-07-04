@@ -115,14 +115,17 @@
         .map((id) => items.find((i) => i.id === id))
         .filter((i): i is (typeof items)[number] => !!i);
       const closed = !!closedGroups[g.id] && !its.some((i) => i.id === active);
-      // Aggregated attention for a closed header: total count + the highest level present.
+      // Aggregated attention for a closed header: total count + the highest-urgency level present.
+      // #10: danger (blocked) outranks warn outranks info/done, so a closed group shows the most
+      // urgent colour among its items.
       let attCount = 0;
       let attLevel: string | null = null;
+      const rank: Record<string, number> = { done: 0, info: 1, warn: 2, danger: 3 };
       for (const i of its) {
         const a = attention[i.id];
         if (!a) continue;
         attCount += a.count ?? 0;
-        if (attLevel !== 'warn') attLevel = a.level;
+        if (attLevel === null || (rank[a.level] ?? 0) > (rank[attLevel] ?? 0)) attLevel = a.level;
       }
       return { ...g, items: its, closed, attCount, attLevel };
     })
@@ -434,11 +437,25 @@
     background: var(--sw-warn);
     color: #1a1205;
   }
+  .att-danger {
+    background: var(--sw-danger);
+    color: #fff;
+  }
+  .att-done {
+    background: var(--sw-status-done);
+    color: #04231f;
+  }
   .att-dot.att-warn {
     background: var(--sw-warn);
   }
   .att-dot.att-info {
     background: var(--sw-accent);
+  }
+  .att-dot.att-danger {
+    background: var(--sw-danger);
+  }
+  .att-dot.att-done {
+    background: var(--sw-status-done);
   }
   .soon {
     font-size: 9px;

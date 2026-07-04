@@ -3,7 +3,7 @@
 
 import type { Component, ForkStatus, BackupList, ProfilesStatus, SyncStatus } from './ipc';
 
-export type Attention = { level: 'info' | 'warn'; count?: number };
+export type Attention = { level: 'info' | 'warn' | 'danger' | 'done'; count?: number };
 
 /** Sum of available updates across update components. */
 export function updatesAttention(
@@ -56,10 +56,14 @@ export function pluginsAttention(updateCount: number): Attention | null {
   return updateCount > 0 ? { level: 'info', count: updateCount } : null;
 }
 
-/** Sessions: agents waiting for input (warn) or finished-but-unseen (info). */
+/**
+ * Sessions: agents waiting for input, or finished-but-unseen. #10: use the SAME herdr palette the
+ * pane already uses (blocked = danger/red "waiting for you", done = teal "finished, unseen") so one
+ * fact is one colour across the sidebar and the tab — previously the sidebar showed warn/info.
+ */
 export function sessionsAttention(s: { blocked: number; done: number }): Attention | null {
-  if (s.blocked > 0) return { level: 'warn', count: s.blocked };
-  if (s.done > 0) return { level: 'info', count: s.done };
+  if (s.blocked > 0) return { level: 'danger', count: s.blocked };
+  if (s.done > 0) return { level: 'done', count: s.done };
   return null;
 }
 

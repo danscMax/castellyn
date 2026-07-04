@@ -5,7 +5,8 @@ import {
   backupAttention,
   profilesAttention,
   pluginsAttention,
-  syncAttention
+  syncAttention,
+  sessionsAttention
 } from './attention';
 
 describe('attention', () => {
@@ -63,5 +64,11 @@ describe('attention', () => {
     expect(syncAttention({ stignoreExists: true, stignoreMatches: true } as any)).toBeNull();
     expect(syncAttention({ stignoreExists: false, stignoreMatches: false } as any)).toBeNull();
     expect(syncAttention(null)).toBeNull();
+  });
+
+  it('sessions: blocked=danger, done=teal, none otherwise (#10 herdr palette)', () => {
+    expect(sessionsAttention({ blocked: 2, done: 1 })).toEqual({ level: 'danger', count: 2 });
+    expect(sessionsAttention({ blocked: 0, done: 3 })).toEqual({ level: 'done', count: 3 });
+    expect(sessionsAttention({ blocked: 0, done: 0 })).toBeNull();
   });
 });
