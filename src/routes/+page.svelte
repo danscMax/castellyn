@@ -72,6 +72,8 @@
     listPluginContents,
     runPlugin,
     runPluginsBulk,
+    runMarketplaceBump,
+    type BumpLevel,
     pluginSyncStatus,
     pluginSyncSet,
     runPluginSync,
@@ -1552,6 +1554,15 @@
     runPlugin(action, id).catch(onSpawnErr);
   }
 
+  // Ф3: own-marketplace version bump — same single-run contract as startPlugin (component
+  // "plugin-mgr"), run-done releases the lock and toasts via the generic operational path.
+  function onMarketplaceBump(id: string, level: BumpLevel) {
+    if (running) return;
+    running = 'plugin-mgr';
+    log = [t('page.plugin_bump_log', { id, level })];
+    runMarketplaceBump(id, level).catch(onSpawnErr);
+  }
+
   function onPluginAction(action: PluginAction, id: string) {
     // 'disable' is reversible (re-enable any time) → no confirm, matching bulk-disable. Only the
     // irreversible 'remove' gates behind a danger confirm.
@@ -2339,6 +2350,7 @@
               syncStatus={pluginSyncData}
               onAction={onPluginAction}
               {onBulkPlugin}
+              onBump={onMarketplaceBump}
               onRefresh={reloadExtensions}
               {onOpenSkills}
               {onOpenSkill}

@@ -70,6 +70,8 @@ export default {
   filterUpdates: 'С обновлением',
   filterEnabled: 'Только включённые',
   sortName: 'Сортировка: имя',
+  bumpBtnTip: 'Поднять версию своего плагина (оба манифеста + рефреш кэша)',
+  bumpLevel: 'bump {level}',
   changelogBtn: 'Чейнджлог',
   changelogBtnTip: 'История релизов на GitHub',
   changelogTitle: 'История релизов',

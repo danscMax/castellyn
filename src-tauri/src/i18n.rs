@@ -236,6 +236,8 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("log.claude_not_found", ["claude CLI не найден на PATH.", "claude CLI not found on PATH.", "PATH 中未找到 claude CLI。"]),
     ("log.plugin_header", ["=== Плагин: {action} {id} ===", "=== Plugin: {action} {id} ===", "=== 插件: {action} {id} ==="]),
     ("log.plugin_skip", ["  [skip] {p} (нет каталога)", "  [skip] {p} (no directory)", "  [skip] {p} (无目录)"]),
+    ("log.bump_header", ["=== Маркетплейс: bump {level} {id} ===", "=== Marketplace: bump {level} {id} ===", "=== 插件市场: bump {level} {id} ==="]),
+    ("log.bump_failed", ["bump не прошёл — рефреш пропущен", "bump failed — refresh skipped", "bump 失败 — 跳过刷新"]),
     ("log.done", ["Готово.", "Done.", "完成。"]),
     ("log.bulk_cancelled", ["Массовая операция отменена.", "Bulk operation cancelled.", "批量操作已取消。"]),
 

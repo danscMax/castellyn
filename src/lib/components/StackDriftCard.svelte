@@ -29,7 +29,9 @@
   function labelOf(id: StackDriftItem['id']): string {
     if (id === 'plugin_sync_file') return t('page.home_drift_label_file');
     if (id === 'plugin_sync_wiring') return t('page.home_drift_label_wiring');
-    return t('page.home_drift_label_managed');
+    if (id === 'marketplace_versions') return t('page.home_drift_label_marketplace');
+    if (id === 'managed_settings') return t('page.home_drift_label_managed');
+    return id; // unknown future item: show its id rather than mislabeling it
   }
   function fixLabel(fix: string): string {
     return fix === 'managed_deploy' ? t('page.home_drift_fix_deploy') : t('page.home_drift_fix_own');

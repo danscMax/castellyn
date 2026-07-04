@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease, PluginSyncStatus } from '$lib/ipc';
+  import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease, PluginSyncStatus, BumpLevel } from '$lib/ipc';
   import { listPluginReleases } from '$lib/ipc';
   import { t, pSkill, pCommand, pAgent, pPlugin } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
   import Spinner from './Spinner.svelte';
+  import DropdownMenu from './DropdownMenu.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
   import { Puzzle, SquareSlash, Bot } from '@lucide/svelte';
 
@@ -16,6 +17,7 @@
     syncStatus = null,
     onAction,
     onBulkPlugin,
+    onBump,
     onRefresh,
     onOpenSkills,
     onOpenSkill,
@@ -31,6 +33,8 @@
     syncStatus?: PluginSyncStatus | null;
     onAction: (action: PluginAction, id: string) => void;
     onBulkPlugin: (action: PluginAction, ids: string[]) => void;
+    /** Ф3: dual-manifest version bump of an own-marketplace plugin (+ cache refresh). */
+    onBump?: (id: string, level: BumpLevel) => void;
     onRefresh: () => void;
     onOpenSkills: () => void;
     onOpenSkill: (dir: string) => void;
@@ -346,6 +350,14 @@
           </span>
         {:else if col.key === 'actions'}
           <span class="act">
+            {#if p.mine && onBump}
+              <!-- Ф3: own-marketplace version bump (patch/minor/major) → dual-manifest write + refresh. -->
+              <DropdownMenu glyph="⇪" title={t('plugins.bumpBtnTip')} disabled={busy}
+                items={['patch', 'minor', 'major'].map((lv) => ({
+                  label: t('plugins.bumpLevel', { level: lv }),
+                  onClick: () => { actingId = p.id; onBump(p.id, lv as BumpLevel); }
+                }))} />
+            {/if}
             <button class="iconbtn" onclick={() => openChangelog(p.id)} title={t('plugins.changelogBtnTip')} aria-label={t('plugins.changelogBtn')}>{@render listIcon()}</button>
             {#if updateMap.has(p.id)}
               <button class="iconbtn" disabled={busy} onclick={() => act('update', p.id)} title={t('plugins.updateBtnTip', { version: updateMap.get(p.id) ?? '' })} aria-label={t('plugins.updateBtn')}>↑</button>

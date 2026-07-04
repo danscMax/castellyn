@@ -825,6 +825,10 @@ export const runPlugin = (action: PluginAction, id: string) =>
 // F17: bulk plugin op in its own backend domain (sequential inside, off the global run lock).
 export const runPluginsBulk = (action: PluginAction, ids: string[]) =>
   invoke<number>('run_plugins_bulk', { action, ids });
+// Ф3: dual-manifest version bump of an OWN (directory-source) marketplace plugin + cache refresh.
+export type BumpLevel = 'patch' | 'minor' | 'major';
+export const runMarketplaceBump = (id: string, level: BumpLevel) =>
+  invoke<number>('run_marketplace_bump', { id, level });
 
 // Plugin sync across profiles: SessionStart hook wiring status + on-demand reconcile.
 // wired/unwired hold profile DIR names (".claude", ".claude-cc1", …).
@@ -844,7 +848,7 @@ export const runPluginSync = () => invoke<number>('run_plugin_sync');
 // `fix` names the repair action (plugin_sync = enable/repair the hook; managed_deploy = redeploy
 // managed-settings, ONE Windows UAC prompt), null/absent when nothing to do.
 export type StackDriftItem = {
-  id: 'plugin_sync_file' | 'plugin_sync_wiring' | 'managed_settings';
+  id: 'plugin_sync_file' | 'plugin_sync_wiring' | 'managed_settings' | 'marketplace_versions';
   state: 'ok' | 'drift' | 'missing' | 'error';
   detail: string;
   fix?: 'plugin_sync' | 'managed_deploy' | null;

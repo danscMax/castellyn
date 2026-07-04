@@ -70,6 +70,8 @@ export default {
   filterUpdates: 'Has update',
   filterEnabled: 'Enabled only',
   sortName: 'Sort: name',
+  bumpBtnTip: "Bump this own plugin's version (both manifests + cache refresh)",
+  bumpLevel: 'bump {level}',
   changelogBtn: 'Changelog',
   changelogBtnTip: 'View release history on GitHub',
   changelogTitle: 'Release history',

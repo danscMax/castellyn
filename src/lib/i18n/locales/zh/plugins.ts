@@ -70,6 +70,8 @@ export default {
   filterUpdates: '有更新',
   filterEnabled: '仅已启用',
   sortName: '排序：名称',
+  bumpBtnTip: '提升自有插件版本（两个清单 + 刷新缓存）',
+  bumpLevel: 'bump {level}',
   changelogBtn: '更新日志',
   changelogBtnTip: '查看 GitHub 发布历史',
   changelogTitle: '发布历史',

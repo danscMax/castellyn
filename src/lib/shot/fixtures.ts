@@ -324,9 +324,13 @@ const handlers: Record<string, (args: any) => any> = {
   read_stack_drift: () => ([
     { id: 'plugin_sync_file', state: 'drift', detail: 'on-disk hook is an external version (no Castellyn marker)', fix: 'plugin_sync' },
     { id: 'plugin_sync_wiring', state: 'ok', detail: 'every profile wired; managed settings clean', fix: null },
-    { id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null }
+    { id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null },
+    // Ф3: own-marketplace version alignment.
+    { id: 'marketplace_versions', state: 'drift', detail: 'max@max-marketplace: installed 1.9.0 behind source 1.14.1 — update', fix: null }
   ]),
   run_managed_deploy: () => ({ id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null }),
+  // Ф3: dual-manifest bump of an own-marketplace plugin.
+  run_marketplace_bump: () => 0,
   // Ф2-GC: stack-garbage scan — stale versions + temp_git + .bak (deletable) + wrong-OS (report-only).
   read_gc_scan: () => ([
     { id: 'stale:thedotmack/claude-mem/13.8.0', category: 'stale_version', label: 'claude-mem 13.8.0 (thedotmack)', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\thedotmack\\claude-mem\\13.8.0', size_bytes: 521_000_000, deletable: true },

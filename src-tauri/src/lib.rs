@@ -8464,6 +8464,106 @@ async fn run_plugin(
     .await
 }
 
+/// Ф3: bump an OWN (directory-source) marketplace plugin's version via the vetted
+/// Check-MarketplaceVersions.ps1 (-Bump: atomic dual-manifest write, sibling-safe, non-interactive),
+/// then refresh the shared plugin cache via `claude plugin update`. Streams to the console under the
+/// same "plugin-mgr" component as the other per-plugin actions.
+#[tauri::command]
+async fn run_marketplace_bump(
+    app: AppHandle,
+    state: State<'_, RunState>,
+    id: String,
+    level: String,
+) -> Result<i32, String> {
+    if !matches!(level.as_str(), "patch" | "minor" | "major") {
+        return Err(format!("unknown bump level: {level}"));
+    }
+    // Same id guard as run_plugin: the id reaches process args and a filesystem path.
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-' | '/'))
+    {
+        return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
+    }
+    let Some(at) = id.rfind('@') else {
+        return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
+    };
+    let plugin = id[..at].to_string();
+    let market = id[at + 1..].to_string();
+    if !plugin_id_path_safe(&plugin) {
+        return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
+    }
+    if !own_marketplaces().contains(&market) {
+        return Err(format!("{market} is not an own (directory-source) marketplace"));
+    }
+    let Some((_, _, markets)) = load_installed_plugins() else {
+        return Err("installed_plugins.json unreadable".into());
+    };
+    let Some(loc) = markets
+        .get(&market)
+        .and_then(|m| m.get("installLocation"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+    else {
+        return Err(format!("no installLocation for {market}"));
+    };
+    let script = format!("{loc}\\Check-MarketplaceVersions.ps1");
+    if !std::path::Path::new(&script).is_file() {
+        return Err(format!("bump script not found: {script}"));
+    }
+    run_native_streamed(app, state, "plugin-mgr".to_string(), move |out, err| {
+        out(&trv(
+            "log.bump_header",
+            cur_lang(),
+            &[("level", &level), ("id", &id)],
+        ));
+        let code = match std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &script,
+                "-Bump",
+                &level,
+                "-Plugin",
+                &plugin,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            Ok(o) => {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    out(&format!("  {line}"));
+                }
+                for line in String::from_utf8_lossy(&o.stderr).lines() {
+                    err(&format!("  {line}"));
+                }
+                o.status.code().unwrap_or(-1)
+            }
+            Err(e) => {
+                err(&trv("log.claude_spawn", cur_lang(), &[("e", &e)]));
+                -1
+            }
+        };
+        if code != 0 {
+            err(tr("log.bump_failed", cur_lang()));
+            return code;
+        }
+        // Refresh the shared plugin cache so the recorded installed version follows the source.
+        let Some(claude) = exe_on_path("claude") else {
+            err(tr("log.claude_not_found", cur_lang()));
+            return 1;
+        };
+        out(&format!("  claude plugin update {id}"));
+        run_claude_plugin(&claude, None, "update", &id, out, err);
+        out(tr("log.done", cur_lang()));
+        0
+    })
+    .await
+}
+
 /// F17: bulk plugin op in its own domain — sequential inside (no config race), but off the global
 /// RunState so other work proceeds. Streams id-tagged lines to "run-log" (component "plugin-mgr",
 /// same channel the single op uses) and emits one "run-done" at the end. Cancellable between items.
@@ -9318,7 +9418,127 @@ fn managed_settings_drift_item() -> StackDriftItem {
     }
 }
 
-/// Report the three stack-drift checks (plugin_sync file, plugin_sync wiring, managed settings).
+/// One own-marketplace plugin's version triple: marketplace.json entry vs its plugin.json vs the
+/// installed version recorded in installed_plugins.json (None = not installed / unreadable).
+struct MarketVer {
+    plugin: String,
+    market: String,
+    mkt_ver: String,
+    src_ver: Option<String>,
+    installed: Option<String>,
+}
+
+/// Classify own-marketplace version alignment into a (state, detail) pair. A manifest mismatch
+/// needs a dual bump (Check-MarketplaceVersions -Bump); an installed version behind an aligned
+/// source needs a refresh (`claude plugin update`). "unknown" installed versions are ignored —
+/// directory-source plugins load content from the source dir anyway. Unit-tested.
+fn classify_marketplace_versions(rows: &[MarketVer]) -> (String, String) {
+    let mut probs: Vec<String> = Vec::new();
+    for r in rows {
+        let who = format!("{}@{}", r.plugin, r.market);
+        match &r.src_ver {
+            None => probs.push(format!("{who}: plugin.json unreadable")),
+            Some(sv) if sv != &r.mkt_ver => probs.push(format!(
+                "{who}: marketplace.json {} \u{2260} plugin.json {sv} — bump both manifests",
+                r.mkt_ver
+            )),
+            Some(sv) => {
+                if let Some(inst) = &r.installed {
+                    if inst != sv && inst != "unknown" {
+                        probs.push(format!("{who}: installed {inst} behind source {sv} — update"));
+                    }
+                }
+            }
+        }
+    }
+    if !probs.is_empty() {
+        ("drift".to_string(), probs.join("; "))
+    } else if rows.is_empty() {
+        ("ok".to_string(), "no own marketplaces".to_string())
+    } else {
+        ("ok".to_string(), "own marketplace versions aligned".to_string())
+    }
+}
+
+/// Ф3: version alignment of OWN (directory-source) marketplaces — marketplace.json vs each
+/// plugin.json vs installed versions. fix=None: the bump/update actions live on the Plugins tab.
+fn marketplace_versions_drift_item() -> StackDriftItem {
+    let id = "marketplace_versions".to_string();
+    let Some((_, installed, markets)) = load_installed_plugins() else {
+        return StackDriftItem {
+            id,
+            state: "error".into(),
+            detail: "installed_plugins.json unreadable".into(),
+            fix: None,
+        };
+    };
+    let mut rows: Vec<MarketVer> = Vec::new();
+    for name in own_marketplaces() {
+        let Some(loc) = markets
+            .get(&name)
+            .and_then(|m| m.get("installLocation"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let mtxt = match std::fs::read_to_string(format!("{loc}\\.claude-plugin\\marketplace.json")) {
+            Ok(s) => s,
+            Err(e) => {
+                return StackDriftItem {
+                    id,
+                    state: "error".into(),
+                    detail: format!("{name}: read marketplace.json: {e}"),
+                    fix: None,
+                }
+            }
+        };
+        let Ok(m) = parse_json_bom(&mtxt) else {
+            return StackDriftItem {
+                id,
+                state: "error".into(),
+                detail: format!("{name}: marketplace.json is not valid JSON"),
+                fix: None,
+            };
+        };
+        for p in m.get("plugins").and_then(|v| v.as_array()).map(|a| a.as_slice()).unwrap_or(&[]) {
+            let (Some(pn), Some(mv)) = (
+                p.get("name").and_then(|v| v.as_str()),
+                p.get("version").and_then(|v| v.as_str()),
+            ) else {
+                continue;
+            };
+            if !plugin_id_path_safe(pn) {
+                continue;
+            }
+            let src_ver = std::fs::read_to_string(format!(
+                "{loc}\\plugins\\{pn}\\.claude-plugin\\plugin.json"
+            ))
+            .ok()
+            .and_then(|s| parse_json_bom(&s).ok())
+            .and_then(|j| j.get("version").and_then(|v| v.as_str()).map(String::from));
+            let inst = installed
+                .get("plugins")
+                .and_then(|o| o.get(format!("{pn}@{name}")))
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|e| e.get("version"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            rows.push(MarketVer {
+                plugin: pn.to_string(),
+                market: name.clone(),
+                mkt_ver: mv.to_string(),
+                src_ver,
+                installed: inst,
+            });
+        }
+    }
+    let (state, detail) = classify_marketplace_versions(&rows);
+    StackDriftItem { id, state, detail, fix: None }
+}
+
+/// Report the four stack-drift checks (plugin_sync file, plugin_sync wiring, managed settings,
+/// own-marketplace versions).
 /// Never panics: every per-item IO failure degrades to that item's state=error with the error text.
 #[tauri::command]
 fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
@@ -9327,6 +9547,7 @@ fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
         plugin_sync_file_drift_item(&home),
         plugin_sync_wiring_drift_item(&home),
         managed_settings_drift_item(),
+        marketplace_versions_drift_item(),
     ])
 }
 
@@ -12223,6 +12444,7 @@ pub fn run() {
             list_plugin_releases,
             run_plugin,
             run_plugins_bulk,
+            run_marketplace_bump,
             plugin_sync_status,
             plugin_sync_set,
             run_plugin_sync,
@@ -12450,6 +12672,55 @@ mod tests {
         // A single file path returns its own length.
         assert_eq!(gc_dir_size(&root.join("a.txt")), 100);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn marketplace_versions_classify() {
+        fn row(plugin: &str, mkt: &str, src: Option<&str>, inst: Option<&str>) -> MarketVer {
+            MarketVer {
+                plugin: plugin.into(),
+                market: "max-marketplace".into(),
+                mkt_ver: mkt.into(),
+                src_ver: src.map(String::from),
+                installed: inst.map(String::from),
+            }
+        }
+        // Everything aligned → ok.
+        let (s, d) = classify_marketplace_versions(&[row("max", "1.14.1", Some("1.14.1"), Some("1.14.1"))]);
+        assert_eq!(s, "ok");
+        assert!(d.contains("aligned"));
+        // marketplace.json ≠ plugin.json → drift asking for a bump.
+        let (s, d) = classify_marketplace_versions(&[row("max", "1.14.1", Some("1.14.0"), None)]);
+        assert_eq!(s, "drift");
+        assert!(d.contains("bump"));
+        // Manifests aligned but installed lags → drift asking for an update.
+        let (s, d) = classify_marketplace_versions(&[row("max", "1.14.1", Some("1.14.1"), Some("1.9.0"))]);
+        assert_eq!(s, "drift");
+        assert!(d.contains("update") && d.contains("max@max-marketplace"));
+        // installed "unknown" is ignored; not installed at all is fine.
+        let (s, _) = classify_marketplace_versions(&[
+            row("max", "1.14.1", Some("1.14.1"), Some("unknown")),
+            row("speckit", "1.0.2", Some("1.0.2"), None),
+        ]);
+        assert_eq!(s, "ok");
+        // Unreadable plugin.json → drift (surfaced, not silently ok).
+        let (s, d) = classify_marketplace_versions(&[row("max", "1.14.1", None, None)]);
+        assert_eq!(s, "drift");
+        assert!(d.contains("unreadable"));
+        // No own marketplaces → ok with the explicit empty note.
+        let (s, d) = classify_marketplace_versions(&[]);
+        assert_eq!(s, "ok");
+        assert!(d.contains("no own marketplaces"));
+    }
+
+    /// Manual live smoke of the marketplace-versions drift check over the REAL disk (read-only).
+    /// Not part of the gates: `cargo test marketplace_drift_live_smoke -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn marketplace_drift_live_smoke() {
+        let item = marketplace_versions_drift_item();
+        println!("id={} state={} detail={}", item.id, item.state, item.detail);
+        assert_eq!(item.fix, None);
     }
 
     /// Manual live smoke over the REAL plugin stores (read-only). Not part of the gates:
