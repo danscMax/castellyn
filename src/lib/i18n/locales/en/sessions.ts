@@ -107,6 +107,7 @@ export default {
   phIn: 'in',
   phWith: 'with',
   phLaunch: 'Launch',
+  newSession: 'New session',
   locThisPc: 'this PC',
   locAdd: '＋ Add server…',
   pin: 'Pin to favourites',

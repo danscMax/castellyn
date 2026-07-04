@@ -107,6 +107,7 @@ export default {
   phIn: '于',
   phWith: '参数',
   phLaunch: '启动',
+  newSession: '新会话',
   locThisPc: '本机',
   locAdd: '＋ 添加服务器…',
   pin: '加入收藏',

@@ -107,6 +107,7 @@ export default {
   phIn: 'в папке',
   phWith: 'с',
   phLaunch: 'Запустить',
+  newSession: 'Новая сессия',
   locThisPc: 'этот ПК',
   locAdd: '＋ Добавить сервер…',
   pin: 'В избранное',

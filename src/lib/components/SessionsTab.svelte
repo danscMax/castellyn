@@ -34,6 +34,7 @@
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
+  import { anchored } from '$lib/floating';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { markMoved, peekMoved } from '$lib/sessionMove';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -109,6 +110,10 @@
   let defaultArgs = $state('');
   // Collapsible launcher settings (default args, projects root) — collapsed by default.
   let launcherOpen = $state(false);
+  // herdr W1: the launcher (env segment + phrase + settings) lives in an anchored popover behind a
+  // "＋ New session" button instead of eating ~4 permanent rows above the grid. newBtnEl anchors it.
+  let newOpen = $state(false);
+  let newBtnEl = $state<HTMLButtonElement | undefined>(undefined);
   // A workspace is a named set of session configs you can re-launch with one click.
   type WsConfig = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string };
   let workspaces = $state<Record<string, WsConfig[]>>({});
@@ -1049,6 +1054,7 @@
     if (v) {
       if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
       addPane(v);
+      newOpen = false; // close the launcher popover once a session starts
     }
   }
   // ─── Favorites: pin the whole phrase → 1-click relaunch ───
@@ -1357,8 +1363,29 @@
     </div>
   </header>
 
-  <!-- Launcher: environment × location × folder × args, read as a phrase (№20 + №8) -->
-  <div class="launcher">
+  <!-- herdr W1: compact launcher bar — "＋ New session" opens the phrase constructor in an anchored
+       popover (reclaiming the ~4 permanent rows the always-open launcher ate); favorites stay as
+       one-click chips right here so the common relaunch is still a single click. -->
+  <div class="newbar">
+    <button bind:this={newBtnEl} type="button" class="sw-btn sw-btn-primary text-sw-xs" class:active={newOpen}
+      onclick={() => (newOpen = !newOpen)} aria-expanded={newOpen} aria-haspopup="dialog" title={t('sessions.newSession')}>
+      ＋ {t('sessions.newSession')} ▾
+    </button>
+    {#if favorites.length}
+      {#each favorites as f (f.id)}
+        <span class="fav-chip">
+          <button type="button" class="fav-go" onclick={() => launchFav(f)} title={t('sessions.favLaunchTip')}>{f.label}</button>
+          <button type="button" class="fav-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
+        </span>
+      {/each}
+    {/if}
+  </div>
+
+  {#if newOpen && newBtnEl}
+    <!-- Launcher popover: environment × location × folder × args, read as a phrase (№20 + №8) -->
+    <div class="launcher launcher-pop" role="dialog" aria-label={t('sessions.newSession')} tabindex="-1"
+      use:anchored={{ anchor: newBtnEl, onOutside: () => (newOpen = false) }}
+      onkeydown={(e) => e.key === 'Escape' && (newOpen = false)}>
     <div class="launchhead">
       <div class="envseg" role="tablist" aria-label={t('sessions.dlgTool')}>
         {#each ENVS as e (e.id)}
@@ -1403,19 +1430,9 @@
       <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
     </div>
 
-    <!-- Favorites (pinned phrases) + save-workspace -->
-    {#if favorites.length || panes.length || savingWs}
+    <!-- Save the current panes as a workspace (favorites moved to the compact bar above the popover) -->
+    {#if panes.length || savingWs}
       <div class="favs">
-        {#if favorites.length}
-          <span class="text-sw-xs text-sw-text-muted">★</span>
-          {#each favorites as f (f.id)}
-            <span class="fav-chip">
-              <button type="button" class="fav-go" onclick={() => launchFav(f)} title={t('sessions.favLaunchTip')}>{f.label}</button>
-              <button type="button" class="fav-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
-            </span>
-          {/each}
-          <span class="text-sw-text-muted">·</span>
-        {/if}
         {#if savingWs}
           <input class="sw-input text-sw-xs" style="width:160px" bind:value={wsName} placeholder={t('sessions.wsNamePlaceholder')}
             onkeydown={(e) => e.key === 'Enter' && saveWorkspace()} />
@@ -1506,7 +1523,8 @@
         </div>
       </div>
     {/if}
-  </div>
+    </div>
+  {/if}
 
   {#if globalCount >= SESSION_LIMIT}
     <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-warn)">{t('sessions.globalLimitNote', { n: SESSION_LIMIT })}</p>
@@ -1715,6 +1733,26 @@
     margin-bottom: var(--sw-space-4);
     padding-bottom: var(--sw-space-3);
     border-bottom: 1px solid var(--sw-border);
+  }
+  /* herdr W1: compact bar holding the "＋ New session" button + favorite chips. */
+  .newbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sw-space-2);
+    margin-bottom: var(--sw-space-4);
+  }
+  /* The launcher rendered as an anchored popover: an elevated card (use:anchored sets position:fixed
+     + top/left inline), overriding the inline .launcher border-bottom/margins. */
+  .launcher-pop {
+    width: min(720px, 92vw);
+    margin-bottom: 0;
+    padding: var(--sw-space-3);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-secondary);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+    z-index: 60;
   }
   .launchhead {
     display: flex;
