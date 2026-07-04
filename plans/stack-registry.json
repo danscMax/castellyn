@@ -284,8 +284,16 @@
       "evidence": "27/27 SKILL.md non-empty descriptions; 18/18 commands non-empty. Control group; specific project-scoped members itemized separately (max-download-prod-to-local, slide-parity)."
     }
   ],
+  "decisions_2026_07_04": {
+    "note": "Owner decisions collected via AskUserQuestion; execution status per item.",
+    "blessedPackage": "ACCEPTED wholesale (all 7 sets below) — quarantine of losers executes in Ф2 with preview",
+    "securityGuidance": "NARROW to git commit/push only (remove Stop + per-edit LLM review) — execute in Ф2 (managed-settings source edit + redeploy)",
+    "claudeMem": "KEEP as-is (memory completeness > latency; cost recorded)",
+    "claudeReflect": "DELETE — EXECUTED 2026-07-04: removed from managed-settings source, redeployed (0 refs in %ProgramFiles%), marketplace+install records clean, cache dir removed. Memory consolidation = claude-mem only (overrides earlier blessed pick; dream also slated for removal in Ф2)",
+    "iosSkills": "DELETE — EXECUTED 2026-07-04: 10 dirs removed (5 in skills\\gstack\\ + 5 duplicates in skills\\); restorable from gstack distribution"
+  },
   "openDecisions": {
-    "note": "Recommendations only — actual decisions collected via AskUserQuestion after review.",
+    "note": "Original recommendations (superseded by decisions_2026_07_04 above).",
     "blessedWinners": {
       "codeReview": "built-in code-review (retire sc-refactor/comprehensive/ponytail overlaps; keep max:review for heavy passes)",
       "auditTechDebt": "fallow (JS/TS static) + max:audit (runtime); drop sc-codebase-health",
