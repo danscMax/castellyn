@@ -799,6 +799,17 @@
     maximized = null; // the maximized pane may belong to another space
     persistSpaces();
   }
+  // V2: "＋ agent here" on a project tab — one more agent like the project's primary (first-launched)
+  // agent: same folder/env/args, same space, no form. Empty project → open the launcher for its first.
+  function spacePlus(id: string) {
+    const src = activePanes.find((p) => paneSpace(p) === id);
+    if (src) {
+      addPane({ tool: src.tool, profile: src.profile, cwd: src.cwd, args: src.args, remoteDir: src.remoteDir, sshTarget: src.sshTarget, space: id });
+    } else {
+      switchSpace(id);
+      newOpen = true;
+    }
+  }
   function addSpace() {
     const id = `s${seq++}${Math.round(Math.random() * 1e4)}`;
     spaces = [...spaces, { id, name: `${t('sessions.spaceBase')} ${spaces.length + 1}` }];
@@ -1688,6 +1699,8 @@
               <span class="space-name">{sp.name}</span>
               {#if spaceCount(sp.id)}<span class="space-count">{spaceCount(sp.id)}</span>{/if}
             </button>
+            <button type="button" class="space-plus" onclick={() => spacePlus(sp.id)}
+              title={t('sessions.spaceNewAgent')} aria-label={t('sessions.spaceNewAgent')}>＋</button>
             {#if spaces.length > 1}
               <button type="button" class="space-x" onclick={() => askDeleteSpace(sp.id)}
                 title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
@@ -2472,6 +2485,21 @@
   }
   .space-x:hover {
     color: var(--sw-danger);
+  }
+  /* V2: per-project "＋ agent here" — accented so it reads as the primary action on the tab. */
+  .space-plus {
+    border: none;
+    border-left: 1px solid var(--sw-border);
+    background: transparent;
+    color: var(--sw-accent-text);
+    cursor: pointer;
+    padding: 4px 9px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .space-plus:hover {
+    background: var(--sw-accent-glow);
   }
   .space-add {
     border: 1px solid var(--sw-border);
