@@ -169,6 +169,9 @@
   let exited = $state(false);
   let error = $state('');
   let unlisteners: UnlistenFn[] = [];
+  // L13: set true in onDestroy so a start()/relaunch() listen() still awaiting can bail instead of
+  // pushing a listener that would fire post-destroy into a disposed terminal.
+  let destroyed = false;
   let ro: ResizeObserver | undefined;
   let themeObs: MutationObserver | undefined; // re-themes the terminal when the app flips dark/light
   let resizeTimer: ReturnType<typeof setTimeout> | undefined; // trailing-debounce the PTY resize
@@ -361,17 +364,20 @@
       return;
     }
     onIdChange?.(paneKey, id);
-    unlisteners.push(
-      await listen<number>(`pty:exit:${id}`, () => {
-        exited = true;
-        term?.writeln(`\r\n\x1b[90m${t('sessions.ended')}\x1b[0m`);
-        // Drop the dead session from SessionsTab's target set so broadcast / send-to-all / status
-        // counts stop hitting it. The child is already gone, so relaunch()'s pre-respawn kill guard
-        // (`if (id && !attachId)`) just skips a redundant kill; start() then reassigns a fresh id.
-        onIdChange?.(paneKey, null);
-        id = null;
-      })
-    );
+    // L13: the pane can be closed (onDestroy) during the await below; onDestroy already drained
+    // unlisteners, so a naive push would leak this listener — it'd later fire into a disposed term
+    // and forward a stale paneKey. Register it only if still alive, else tear it down immediately.
+    const exitUn = await listen<number>(`pty:exit:${id}`, () => {
+      exited = true;
+      term?.writeln(`\r\n\x1b[90m${t('sessions.ended')}\x1b[0m`);
+      // Drop the dead session from SessionsTab's target set so broadcast / send-to-all / status
+      // counts stop hitting it. The child is already gone, so relaunch()'s pre-respawn kill guard
+      // (`if (id && !attachId)`) just skips a redundant kill; start() then reassigns a fresh id.
+      onIdChange?.(paneKey, null);
+      id = null;
+    });
+    if (destroyed) exitUn();
+    else unlisteners.push(exitUn);
   }
 
   // F14: relaunch resets the terminal — confirm first so a stray click doesn't wipe the finished
@@ -567,6 +573,7 @@
   });
 
   onDestroy(() => {
+    destroyed = true; // L13
     ro?.disconnect();
     themeObs?.disconnect();
     clearTimeout(resizeTimer);

@@ -340,7 +340,7 @@
           {:else}<span class="ph">—</span>{/if}
         {:else if col.key === 'status'}
           <span class="statuscell">
-            {#if actingId === p.id}<Spinner size={13} />{/if}
+            {#if actingId === p.id && busy}<Spinner size={13} />{/if}
             <Toggle checked={p.enabled} disabled={busy} onCheckedChange={() => act(p.enabled ? 'disable' : 'enable', p.id)}
               title={p.enabled ? t('plugins.disableBtnTip') : t('plugins.enableBtnTip')} />
           </span>

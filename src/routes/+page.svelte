@@ -275,7 +275,7 @@
   // line in one place. String(e) so the typed t() slot receives a string, not a raw Error.
   function onSpawnErr(e: unknown) {
     running = null;
-    appendLog(t('page.log_error', { e: String(e) }));
+    // L9: toastErr() already appends the error line to the log — don't append it a second time here.
     // R5: a failed spawn must be visible — the log dock is collapsed by default, so a silent
     // append reads as "the click did nothing". Toast + reveal the console.
     toastErr(String(e));

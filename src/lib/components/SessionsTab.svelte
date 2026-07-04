@@ -112,9 +112,11 @@
   // A workspace is a named set of session configs you can re-launch with one click.
   type WsConfig = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string };
   let workspaces = $state<Record<string, WsConfig[]>>({});
-  // Lifecycle: this tab unmounts/remounts on every tab switch, so event listeners MUST be torn down
-  // (else they pile up and a returned pane gets added N times). `mounted` also gates async state
-  // writes (checkReach) that may resolve after unmount.
+  // Lifecycle (L12): once opened this tab stays MOUNTED — it's display-toggled, not unmounted, on tab
+  // switches (see +page.svelte's `sessionsEverOpened` + `{#if}`), so onDestroy does NOT fire when you
+  // switch away and these listeners don't pile up in normal use. The teardown machinery
+  // (offs/track/disposed) is kept defensive for a possible future lazy-unmount; `mounted` also gates
+  // async state writes (checkReach) that may resolve after such an unmount.
   let mounted = true;
   let disposed = false;
   const offs: UnlistenFn[] = [];
@@ -300,6 +302,9 @@
   });
   function maybeAutoContinue() {
     if (!autoContinueOn) return; // master escape hatch for ALL unattended limit handling (21c + 21e)
+    // L11: profiles switched-to during THIS pass — so a second pane that flips limited in the same
+    // tick doesn't pick the same free profile (pickResumeCandidate reads a snapshot not updated mid-loop).
+    const claimedThisTick = new Set<string>();
     for (const p of panes) {
       const id = sessionIds[p.key];
       if (!id || agentStates[id] !== 'limited') {
@@ -314,8 +319,9 @@
       // candidate → fall through to the wait-on-reset path below (the spec's "fallback wait").
       if (limitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
         switchAttempted.add(p.key);
-        const cand = pickResumeCandidate(p.profile, profileInfos, limitsByProfile);
+        const cand = pickResumeCandidate(p.profile, profileInfos, limitsByProfile, claimedThisTick);
         if (cand && switchPaneToProfile(p, id, cand)) {
+          claimedThisTick.add(cand); // L11: reserve it so a later pane this tick picks a different one
           // The old pane is gone (switchPaneToProfile removed it + cleaned its keys); nothing to guard.
           pushToast({ kind: 'info', title: t('sessions.switchedProfile', { name: p.name ?? p.profile, profile: cand }) });
           continue;
@@ -441,8 +447,20 @@
   function onIdChange(key: string, id: string | null) {
     if (id) sessionIds = { ...sessionIds, [key]: id };
     else {
+      const oldId = sessionIds[key];
       const { [key]: _drop, ...rest } = sessionIds;
       sessionIds = rest;
+      // L10: the id-keyed maps below are never pruned otherwise — they'd grow one small entry per
+      // ended session for the webview's lifetime. Drop the outgoing id once no remaining pane maps to
+      // it (session ids are never reused). Immutable delete matches this file's reassign-to-update style.
+      if (oldId && !Object.values(rest).includes(oldId)) {
+        const { [oldId]: _a, ...restA } = agentStates;
+        agentStates = restA;
+        const { [oldId]: _c, ...restC } = claudeSids;
+        claudeSids = restC;
+        const { [oldId]: _s, ...restS } = spawnedAt;
+        spawnedAt = restS;
+      }
     }
     refreshGlobalCount(); // F16: a spawn/exit here moved the global tally — re-read it
     // #21e: a switched-in pane just got its session — let `claude --resume` load the conversation,

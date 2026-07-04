@@ -17,6 +17,7 @@
   import { Users } from '@lucide/svelte';
   import EmptyState from './EmptyState.svelte';
   import { copyText } from '$lib/clipboard';
+  import { redactSecrets } from '$lib/redact';
   import { relTime } from '$lib/relativeTime';
   import { profileDotColor } from '$lib/statusColor';
   import { profileHasMissingLink } from '$lib/attention';
@@ -184,6 +185,9 @@
   let viewerContent = $state('');
   let viewerErr = $state('');
   let viewerLoading = $state(false);
+  // L17: mask secret-shaped values before they hit the DOM or the clipboard. settings.json commonly
+  // embeds MCP-server env API keys in plaintext; this viewer was the one surface that showed them raw.
+  const viewerDisplay = $derived(redactSecrets(viewerContent));
   async function loadViewer() {
     viewerLoading = true;
     viewerErr = '';
@@ -614,7 +618,7 @@
         onclick={() => setWhich('settings')}>{t('profiles.viewSettings')}</button>
       <button class="sw-btn text-sw-xs {viewerWhich === 'claude' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
         onclick={() => setWhich('claude')}>{t('profiles.viewClaudeMd')}</button>
-      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!viewerContent} onclick={() => copyText(viewerContent)}
+      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!viewerContent} onclick={() => copyText(viewerDisplay)}
         title={t('common.copy')}>{t('common.copy')}</button>
     </div>
   </div>
@@ -623,7 +627,7 @@
   {:else if viewerErr}
     <p class="text-sw-sm status-bad">{viewerErr}</p>
   {:else}
-    <pre class="cfg-view">{viewerContent}</pre>
+    <pre class="cfg-view">{viewerDisplay}</pre>
   {/if}
 </ModalShell>
 

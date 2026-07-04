@@ -5,17 +5,26 @@ import { listMonitors, openMonitorWindow, prepareDetach, type DetachPane, type M
 
 let cache: MonitorInfo[] | null = null;
 let inflight: Promise<MonitorInfo[]> | null = null;
+// L14: after a failed enumeration we deliberately don't cache (so a transient error retries), but a
+// caller that re-requests whenever the list is empty (e.g. TerminalPane's monitors-length effect)
+// would then spin with no backoff. Suppress retries for a short window after a failure.
+let coolUntil = 0;
+const FAIL_COOLDOWN_MS = 5000;
 
 /** The monitor list, cached. Concurrent callers share one in-flight request. */
 export async function getMonitors(): Promise<MonitorInfo[]> {
   if (cache) return cache;
+  if (Date.now() < coolUntil) return []; // L14: in post-failure cooldown — don't hammer list_monitors
   if (!inflight) {
     inflight = listMonitors()
       .then((m) => {
         cache = m;
         return m;
       })
-      .catch(() => [] as MonitorInfo[]) // transient failure → don't cache; next call retries
+      .catch(() => {
+        coolUntil = Date.now() + FAIL_COOLDOWN_MS; // transient failure → brief cooldown, then retry
+        return [] as MonitorInfo[];
+      })
       .finally(() => {
         inflight = null;
       });
@@ -26,6 +35,7 @@ export async function getMonitors(): Promise<MonitorInfo[]> {
 /** Drop the cache so the next getMonitors() re-enumerates (after a monitor hotplug / layout change). */
 export function invalidateMonitors(): void {
   cache = null;
+  coolUntil = 0; // a deliberate refresh must not be blocked by a stale failure cooldown
 }
 
 /**

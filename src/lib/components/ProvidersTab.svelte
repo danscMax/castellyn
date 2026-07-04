@@ -411,7 +411,7 @@
                   {t('providers.dashboard')}
                 </button>
               {/if}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => checkUrl('stack:' + s.id, 'http://127.0.0.1:' + s.port, s.protocol)}
+              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || hc === 'checking'} onclick={() => checkUrl('stack:' + s.id, 'http://127.0.0.1:' + s.port, s.protocol)}
                 title={t('providers.checkTip')}>
                 {hc === 'checking' ? t('common.busy') : t('common.check')}
               </button>
@@ -522,7 +522,7 @@
             {/if}
             <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => openEdit(e)}
               title={t('providers.editEndpointTitle')}>{t('providers.portUrl')}</button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => checkUrl('engine:' + e.id, e.baseUrl, e.protocol)}
+            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || he === 'checking'} onclick={() => checkUrl('engine:' + e.id, e.baseUrl, e.protocol)}
               title={t('providers.checkTip')}>
               {he === 'checking' ? t('common.busy') : t('common.check')}
             </button>
