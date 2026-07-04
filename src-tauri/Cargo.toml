@@ -1,6 +1,6 @@
 [package]
 name = "castellyn"
-version = "0.6.1"
+version = "0.7.0"
 description = "Castellyn — control center for your AI coding dev environment"
 authors = ["danscMax"]
 edition = "2021"

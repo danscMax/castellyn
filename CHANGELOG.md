@@ -3,6 +3,34 @@
 All notable changes to **Castellyn** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-07-04
+
+The reliability-and-polish release: two audit-driven improvement runs, a visual redesign, a live
+usage-limit monitor for the Anthropic 5-hour window, cross-profile plugin sync, and full profile
+hygiene including orphan-directory management.
+
+### Added
+- **Orphan profile management** — the Profiles tab now surfaces `~/.claude-<name>` directories on disk that aren't canon profiles (abandoned or foreign configs), each with **Adopt** (register as a real profile) and **Delete** (to the Recycle Bin). Guarded against canon-profile data loss (Windows trailing-space/dot path normalization and case-insensitive bypasses) and against sweeping junction targets — a dir with shared-folder junctions is refused, not recycled.
+- **Usage-limit monitor** — watches the Anthropic 5-hour OAuth window and detects "limit reached" from live PTY output; a limited Sessions pane can **auto-continue after its reset** or **switch to another profile**.
+- **Cross-profile plugin sync** — on-demand reconcile plus a SessionStart hook that keeps every profile's plugin set aligned.
+- **Sessions: agent status** — lifecycle hooks + PTY activity drive per-pane status, with sound and OS notifications on transitions; the previous run's session set is restored after an app restart; `Shift+PgUp/PgDn` scrollback and `Alt+N` pane focus.
+- **Durable personalization sidecar** — session personalization survives restarts.
+- **Create one missing profile** without reinstalling the rest.
+- **Updates** — auto re-check of the whole stack after Update-All, with live per-component progress.
+
+### Fixed
+- **Security & reliability hardening** — settings-write races, single-instance handling, status-engine correctness, and confirmed reliability bugs across three hardening waves.
+- **Providers** — a failed new-key write now rolls back the migrated slot 0 instead of losing the key.
+- **Shortcuts** — global shortcuts re-register teardown-first, so changing one while keeping another no longer silently fails ("already registered").
+- **Sync** — the Syncthing GUI address is read from `config.xml` (non-standard ports/binds work) instead of a hardcoded `127.0.0.1:8384`.
+- **Environments** — MCP deploy now reconciles: a server removed from the canonical `.mcp.json` is pulled from OpenCode and Codex too (with a "stale" drift badge), instead of lingering as a tail.
+- **Home** — profile counts and the "Repair" target match the sidebar badges.
+- **Hooks** — Castellyn's hook entries are unwired from orphaned/renamed profiles on disable.
+
+### Changed
+- **Visual redesign (waves 1.5–2D)** — a typography + density foundation, an actionable Home cockpit, a rolled-up Updates header with state sections, Providers chips + diagnostics behind Details, and a split Sessions toolbar.
+- **Build** — migrated to Vite 8 (Rolldown) + vite-plugin-svelte 7, TypeScript 6, Svelte 5.5; dependency bumps.
+
 ## [0.6.1] — 2026-07-02
 
 A same-day hotfix for v0.6.0 plus the Codex fan-outs that complete the multi-environment story.
