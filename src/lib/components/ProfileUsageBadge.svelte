@@ -52,8 +52,8 @@
 {#if r5 != null || r7 != null}
   {#if compact}
     <span class="flex items-center gap-x-sw-2 text-sw-xs whitespace-nowrap" title={t('profiles.usageTip')}>
-      {#if r5 != null}<span><span class="text-sw-text-muted">{t('profiles.usage5h')}</span><span class={color(r5)}>{r5}%</span></span>{/if}
-      {#if r7 != null}<span><span class="text-sw-text-muted">{t('profiles.usage7d')}</span><span class={color(r7)}>{r7}%</span></span>{/if}
+      {#if r5 != null}<span><span class="text-sw-text-muted">{t('profiles.usage5h')}</span> <span class={color(r5)}>{r5}%</span></span>{/if}
+      {#if r7 != null}<span><span class="text-sw-text-muted">{t('profiles.usage7d')}</span> <span class={color(r7)}>{r7}%</span></span>{/if}
     </span>
   {:else}
     <div class="flex flex-wrap items-center gap-x-sw-3 gap-y-1 text-sw-xs" title={t('profiles.usageTip')}>

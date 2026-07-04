@@ -1676,7 +1676,8 @@
               onblur={commitRenameSpace} />
           {:else}
             <button type="button" class="space-go" role="tab" aria-selected={activeSpace === sp.id}
-              onclick={() => switchSpace(sp.id)} ondblclick={() => beginRenameSpace(sp.id)} title={t('sessions.spaceRename')}>
+              onclick={() => switchSpace(sp.id)} ondblclick={() => beginRenameSpace(sp.id)}
+              oncontextmenu={(e) => { e.preventDefault(); beginRenameSpace(sp.id); }} title={t('sessions.spaceRename')}>
               {#if worst}<span class="dot" class:working={worst === 'working'} class:blocked={worst === 'blocked'} class:done={worst === 'done'}></span>{/if}
               <span class="space-name">{sp.name}</span>
               {#if spaceCount(sp.id)}<span class="space-count">{spaceCount(sp.id)}</span>{/if}
@@ -2480,9 +2481,13 @@
     background: var(--sw-bg-hover);
     color: var(--sw-text-primary);
   }
+  /* Inline rename: sized to sit INSIDE the tab without growing its height (was jumping the whole row). */
   .space-edit {
     width: 120px;
-    margin: 2px;
+    margin: 0;
+    padding: 2px 6px;
+    font-size: var(--sw-text-xs);
+    box-sizing: border-box;
   }
   .space-empty {
     flex: 1;
