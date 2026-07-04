@@ -1575,8 +1575,16 @@
   // Sessions tab is lazy: mount it (and pull the xterm chunk) only once the user first opens it,
   // then keep it mounted so running terminals survive tab switches.
   let sessionsEverOpened = $state(false);
+  // #13: the stateful tabs (health/balance checks, expanded rows, inline editors) keep their
+  // transient state across a tab switch by staying mounted and display-toggled instead of being
+  // remounted by {#key active}. They self-load nothing on mount — data flows via reactive props
+  // from +page — so keeping them mounted never freezes stale data. The light/stateless tabs stay
+  // on the cheaper {#key}-fade path. Sessions is handled separately (full-bleed overlay) above.
+  const PERSIST_TABS = ['providers', 'profiles', 'extensions'];
+  let everOpened = $state<Record<string, boolean>>({});
   $effect(() => {
     if (active === 'sessions') sessionsEverOpened = true;
+    if (PERSIST_TABS.includes(active)) everOpened[active] = true;
   });
 
   // Command palette (Ctrl+K): jump to any tab + a few quick actions.
@@ -2087,28 +2095,6 @@
         <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} />
       {:else if active === 'backup'}
         <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} />
-      {:else if active === 'profiles'}
-        <ProfilesTab
-          data={profilesData}
-          config={profilesConfig}
-          {launchConfig}
-          providers={providersData}
-          engines={enginesData}
-          {running}
-          onAction={onProfileAction}
-          onMgmt={onProfileMgmt}
-          orphans={orphansData}
-          {onDeleteOrphan}
-          onOpen={onProfileOpen}
-          onLaunch={onProfileLaunch}
-          {onSaveLaunch}
-          {onMeasure}
-          {onProviderSet}
-          {onProviderClear}
-          myProviders={myProvidersData}
-          {onRepairElevated}
-          {onRelaunchAdmin}
-        />
       {:else if active === 'mcp'}
         <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy}
           onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra} />
@@ -2123,60 +2109,13 @@
         <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}
           driftData={driftData} conflictCount={profilesData?.syncConflicts?.count ?? 0}
           onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} />
-      {:else if active === 'providers'}
-        <ProvidersTab
-          engines={enginesData}
-          providers={providersData}
-          {confirmDestructive}
-          stack={stackData}
-          {running}
-          onEngine={onEngineAction}
-          onStack={onStack}
-          onProviderSet={onProviderSet}
-          onRouterInstall={onRouterInstall}
-          onConnectRouter={onConnectRouter}
-          onConnectOpencode={onConnectOpencode}
-          onOpenProfiles={() => (active = 'profiles')}
-          myProviders={myProvidersData}
-          {onMyProviderSave}
-          {onMyProviderDelete}
-          {onMyProviderConnect}
-          {onMyProviderAddKey}
-          {onMyProviderRemoveKey}
-          {onMyProviderNextKey}
-          {onSetFreellmapiAuth}
-          {onDeleteFreellmapiAuth}
-          onRefresh={() => {
-            reloadProviders();
-            reloadStack();
-            reloadOpencode();
-          }}
-          {onOpenUrl}
-        />
       {:else if active === 'analytics'}
         <AnalyticsTab onOpenProviders={() => (active = 'providers')} />
-      {:else if active === 'extensions'}
-        <PluginsTab
-          plugins={pluginsData}
-          skills={skillsData}
-          updates={pluginUpdates}
-          contents={pluginContents}
-          running={bulkActive ? 'plugin-mgr' : running}
-          syncStatus={pluginSyncData}
-          onAction={onPluginAction}
-          {onBulkPlugin}
-          onRefresh={reloadExtensions}
-          {onOpenSkills}
-          {onOpenSkill}
-          {onDeleteSkill}
-          onSyncNow={onPluginSyncNow}
-          onSyncHookToggle={onPluginSyncHookToggle}
-        />
       {:else if active === 'schedule'}
         <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} />
       {:else if active === 'settings'}
         <SettingsTab {theme} onSetTheme={setTheme} {density} {fullWidth} onSetDensity={setDensity} onSetFullWidth={setFullWidth} {confirmDestructive} onSetConfirmDestructive={setConfirmDestructive} />
-      {:else if active !== 'sessions'}
+      {:else if active !== 'sessions' && !PERSIST_TABS.includes(active)}
         <div class="grid h-full place-items-center p-sw-6 text-center text-sw-text-muted">
           <div>
             <div class="mb-sw-2 text-2xl">🛠</div>
@@ -2187,6 +2126,91 @@
       {/if}
       </div>
       {/key}
+
+      <!-- #13: stateful tabs kept mounted and display-toggled (not remounted by {#key}) so their
+           health/balance checks, expanded rows and inline editors survive a tab switch. Same
+           centered container as the chain; data flows via reactive props so nothing goes stale.
+           No fade here (matches the Sessions overlay's display-toggle). -->
+      <div class:opacity-40={blockingRefresh} class:pointer-events-none={blockingRefresh}>
+        {#if everOpened.providers}
+          <div class:hidden={active !== 'providers'}>
+            <ProvidersTab
+              engines={enginesData}
+              providers={providersData}
+              {confirmDestructive}
+              stack={stackData}
+              {running}
+              onEngine={onEngineAction}
+              onStack={onStack}
+              onProviderSet={onProviderSet}
+              onRouterInstall={onRouterInstall}
+              onConnectRouter={onConnectRouter}
+              onConnectOpencode={onConnectOpencode}
+              onOpenProfiles={() => (active = 'profiles')}
+              myProviders={myProvidersData}
+              {onMyProviderSave}
+              {onMyProviderDelete}
+              {onMyProviderConnect}
+              {onMyProviderAddKey}
+              {onMyProviderRemoveKey}
+              {onMyProviderNextKey}
+              {onSetFreellmapiAuth}
+              {onDeleteFreellmapiAuth}
+              onRefresh={() => {
+                reloadProviders();
+                reloadStack();
+                reloadOpencode();
+              }}
+              {onOpenUrl}
+            />
+          </div>
+        {/if}
+        {#if everOpened.profiles}
+          <div class:hidden={active !== 'profiles'}>
+            <ProfilesTab
+              data={profilesData}
+              config={profilesConfig}
+              {launchConfig}
+              providers={providersData}
+              engines={enginesData}
+              {running}
+              onAction={onProfileAction}
+              onMgmt={onProfileMgmt}
+              orphans={orphansData}
+              {onDeleteOrphan}
+              onOpen={onProfileOpen}
+              onLaunch={onProfileLaunch}
+              {onSaveLaunch}
+              {onMeasure}
+              {onProviderSet}
+              {onProviderClear}
+              myProviders={myProvidersData}
+              {onRepairElevated}
+              {onRelaunchAdmin}
+            />
+          </div>
+        {/if}
+        {#if everOpened.extensions}
+          <div class:hidden={active !== 'extensions'}>
+            <PluginsTab
+              plugins={pluginsData}
+              skills={skillsData}
+              updates={pluginUpdates}
+              contents={pluginContents}
+              running={bulkActive ? 'plugin-mgr' : running}
+              syncStatus={pluginSyncData}
+              onAction={onPluginAction}
+              {onBulkPlugin}
+              onRefresh={reloadExtensions}
+              {onOpenSkills}
+              {onOpenSkill}
+              {onDeleteSkill}
+              onSyncNow={onPluginSyncNow}
+              onSyncHookToggle={onPluginSyncHookToggle}
+            />
+          </div>
+        {/if}
+      </div>
       </div>
 
       <!-- Sessions tab is full-bleed and, once first opened, stays MOUNTED (display-toggled) so
