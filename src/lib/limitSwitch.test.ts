@@ -62,4 +62,15 @@ describe('pickResumeCandidate (#21e)', () => {
   it('returns null when nothing qualifies', () => {
     expect(pickResumeCandidate('cur', [prof('cur')], { cur: lim('cur', 10) })).toBeNull();
   });
+
+  it('L11: excludes candidates already claimed this tick, so a second pane picks the next-best', () => {
+    const profiles = [prof('cur'), prof('a'), prof('b')];
+    const limits = { a: lim('a', 40), b: lim('b', 10), cur: lim('cur', 100) };
+    // b is least-utilised; if it was already claimed this pass, fall through to a.
+    expect(pickResumeCandidate('cur', profiles, limits, new Set(['b']))).toBe('a');
+    // both claimed → nothing eligible remains.
+    expect(pickResumeCandidate('cur', profiles, limits, new Set(['a', 'b']))).toBeNull();
+    // no exclude set → unchanged behaviour (picks b).
+    expect(pickResumeCandidate('cur', profiles, limits)).toBe('b');
+  });
 });
