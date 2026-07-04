@@ -853,6 +853,25 @@ export const readStackDrift = () => invoke<StackDriftItem[]>('read_stack_drift')
 // Redeploys managed-settings — triggers ONE Windows UAC prompt. Returns the post-deploy check.
 export const runManagedDeploy = () => invoke<StackDriftItem>('run_managed_deploy');
 
+// Ф2-GC: "stack garbage" — stale plugin versions, temp_git dirs, .bak leftovers, wrong-OS binaries.
+// `id` is a stable key ("stale:org/plugin/ver" | "tempgit:<dir>" | "bak:<name>" | "wrongos:<store>");
+// wrong_os items are report-only (deletable=false). Deletes go to the Recycle Bin (reversible).
+export interface GcItem {
+  id: string;
+  category: 'stale_version' | 'temp_git' | 'bak' | 'wrong_os';
+  label: string;
+  path: string;
+  size_bytes: number;
+  deletable: boolean;
+}
+export interface GcDeleteReport {
+  deleted: string[];
+  skipped: [string, string][];
+  freed_bytes: number;
+}
+export const readGcScan = () => invoke<GcItem[]>('read_gc_scan');
+export const runGcDelete = (ids: string[]) => invoke<GcDeleteReport>('run_gc_delete', { ids });
+
 // Agent-status lifecycle hook (Sessions): castellyn_status.py wired into five Claude Code
 // events of every profile. `agent-status` events then drive the pane badges.
 export type AgentStatusHookState = { wired: string[]; unwired: string[] };

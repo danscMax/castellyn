@@ -3,7 +3,8 @@
   import { statusTextClass } from '$lib/statusColor';
   import { profileHasMissingLink } from '$lib/attention';
   import StackDriftCard from './StackDriftCard.svelte';
-  import type { SyncStatus, ConfigDriftStatus, ProfilesStatus, SchedulesStatus, StackService, StackDriftItem } from '$lib/ipc';
+  import StackGcCard from './StackGcCard.svelte';
+  import type { SyncStatus, ConfigDriftStatus, ProfilesStatus, SchedulesStatus, StackService, StackDriftItem, GcItem } from '$lib/ipc';
 
   // USE-1: single-pane "is my Claude setup healthy?" overview. Pure aggregation of data the
   // other tabs already load; each chip deep-links to the tab that owns it.
@@ -16,12 +17,15 @@
     stack = null,
     sessionCount = null,
     stackDrift = null,
+    gcItems = null,
     busy = false,
     components = null,
     statuses = null,
     onOpen,
     onRefresh,
     onReloadDrift,
+    onReloadGc,
+    onGcDelete,
     onAction
   }: {
     profiles: ProfilesStatus | null;
@@ -32,6 +36,8 @@
     sessionCount?: number | null;
     /** Ф1: stack-ownership drift (owned by +page so the sidebar badge reads the same array). */
     stackDrift?: StackDriftItem[] | null;
+    /** Ф2-GC: stack-garbage scan (null = not scanned yet / scanning). */
+    gcItems?: GcItem[] | null;
     /** U3: the global run lock is held — quick actions would be silent no-ops, so disable them. */
     busy?: boolean;
     /** Redesign 2A: manifest components + their last-run envelopes feed the recent-runs strip. */
@@ -40,6 +46,8 @@
     onOpen: (id: string) => void;
     onRefresh?: () => void;
     onReloadDrift?: () => void | Promise<void>;
+    onReloadGc?: () => void | Promise<void>;
+    onGcDelete?: (ids: string[], labels: string[]) => void | Promise<void>;
     onAction?: (id: string) => void;
   } = $props();
 
@@ -219,6 +227,9 @@
 
   <!-- Ф1: stack-ownership drift (plugin_sync hook + wiring, managed-settings). -->
   <StackDriftCard items={stackDrift} onReload={onReloadDrift} {busy} />
+
+  <!-- Ф2-GC: stack garbage (stale plugin versions, temp_git, .bak, wrong-OS binaries). -->
+  <StackGcCard items={gcItems} onReload={onReloadGc} onDelete={onGcDelete} {busy} />
 
   {#if overall === 'muted'}
     <!-- First run: no data yet → a 3-step orientation instead of an empty grid. -->

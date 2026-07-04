@@ -327,6 +327,15 @@ const handlers: Record<string, (args: any) => any> = {
     { id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null }
   ]),
   run_managed_deploy: () => ({ id: 'managed_settings', state: 'ok', detail: 'deployed matches source', fix: null }),
+  // Ф2-GC: stack-garbage scan — stale versions + temp_git + .bak (deletable) + wrong-OS (report-only).
+  read_gc_scan: () => ([
+    { id: 'stale:thedotmack/claude-mem/13.8.0', category: 'stale_version', label: 'claude-mem 13.8.0 (thedotmack)', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\thedotmack\\claude-mem\\13.8.0', size_bytes: 521_000_000, deletable: true },
+    { id: 'stale:danscmax/max/1.7.0', category: 'stale_version', label: 'max 1.7.0 (danscmax)', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\danscmax\\max\\1.7.0', size_bytes: 12_600_000, deletable: true },
+    { id: 'tempgit:temp_git_a1b2c3', category: 'temp_git', label: 'temp_git_a1b2c3', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\temp_git_a1b2c3', size_bytes: 2_600_000, deletable: true },
+    { id: 'bak:known_marketplaces.json.bak', category: 'bak', label: 'known_marketplaces.json.bak', path: 'C:\\Users\\User\\.claude\\plugins\\known_marketplaces.json.bak', size_bytes: 10_240, deletable: true },
+    { id: 'wrongos:.claude', category: 'wrong_os', label: 'darwin/linux binaries (.claude)', path: 'C:\\Users\\User\\.claude\\plugins\\cache', size_bytes: 249_000_000, deletable: false }
+  ]),
+  run_gc_delete: (args) => ({ deleted: args?.ids ?? [], skipped: [], freed_bytes: 536_200_000 }),
   list_plugin_contents: () => ([
     { id: 'superpowers', skills: ['brainstorming', 'systematic-debugging', 'test-driven-development'], commands: ['/spec'], agents: ['Plan', 'Explore'] },
     { id: 'max', skills: ['max-dedup', 'max-modernize'], commands: ['/max:audit', '/max:review'], agents: ['max:review-critic'] }

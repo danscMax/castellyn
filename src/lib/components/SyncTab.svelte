@@ -4,6 +4,7 @@
   import Toggle from './Toggle.svelte';
   import { t, pConflict } from '$lib/i18n';
   import { relTime } from '$lib/relativeTime';
+  import { fmtBytes as fmtBytesShared } from '$lib/bytes';
 
   let {
     data,
@@ -59,15 +60,8 @@
 
   function fmtBytes(n?: number) {
     if (n === undefined || n === null) return t('common.dash');
-    // Read units reactively from the dictionary (re-runs on locale change via markup).
-    const u = t('sync.byteUnits').split(',');
-    let v = n;
-    let i = 0;
-    while (v >= 1024 && i < u.length - 1) {
-      v /= 1024;
-      i++;
-    }
-    return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+    // Units read reactively from the dictionary (re-runs on locale change via markup).
+    return fmtBytesShared(n, t('sync.byteUnits'));
   }
 
   // L3: config-file drift states are internal enum words — show localized labels.

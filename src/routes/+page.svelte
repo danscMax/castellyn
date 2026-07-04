@@ -114,8 +114,12 @@
     type PluginSyncStatus,
     type LimitsAlertEvent,
     readStackDrift,
-    type StackDriftItem
+    type StackDriftItem,
+    readGcScan,
+    runGcDelete,
+    type GcItem
   } from '$lib/ipc';
+  import { fmtBytes } from '$lib/bytes';
   import {
     updatesAttention,
     forksAttention,
@@ -986,7 +990,51 @@
       stackDrift = null;
     }
   }
+  // Ф2-GC: stack-garbage scan — heavy disk walk, so it runs once (gated) and fire-and-forget,
+  // never blocking the rest of the Home load. null = not scanned / scanning.
+  let gcItems = $state<GcItem[] | null>(null);
+  let gcScanned = false;
+  async function reloadGc() {
+    try {
+      gcItems = await readGcScan();
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('page.toast_generic_error'), detail: String(e) });
+      gcItems = [];
+    }
+  }
+  function onGcDelete(ids: string[], labels: string[]) {
+    askConfirm(
+      t('page.home_gc_confirm_title'),
+      t('page.home_gc_confirm_msg'),
+      t('page.home_gc_confirm_btn'),
+      async () => {
+        try {
+          const rep = await runGcDelete(ids);
+          pushToast({
+            kind: 'success',
+            title: t('page.home_gc_deleted_toast', { n: rep.deleted.length, size: fmtBytes(rep.freed_bytes, t('sync.byteUnits')) })
+          });
+          if (rep.skipped.length) {
+            pushToast({
+              kind: 'warn',
+              title: t('page.home_gc_skipped_toast', { n: rep.skipped.length }),
+              detail: rep.skipped.map(([id, reason]) => `${id}: ${reason}`).join('\n')
+            });
+          }
+        } catch (e) {
+          pushToast({ kind: 'error', title: t('page.toast_generic_error'), detail: String(e) });
+        }
+        await reloadGc();
+      },
+      { danger: true, details: labels }
+    );
+  }
   async function reloadHome() {
+    // Ф2-GC: kick the heavy scan once, off the critical path (don't await it here).
+    if (!gcScanned) {
+      gcScanned = true;
+      void reloadGc();
+    }
     await Promise.all([
       reloadProfiles(),
       reloadConfigDrift(),
@@ -2175,8 +2223,9 @@
       >
       {#if active === 'home'}
         <HomeTab profiles={profilesData} sync={syncData} drift={driftData} schedules={schedulesData}
-          stack={stackData} sessionCount={homeSessionCount} {stackDrift} busy={!!running} {components} {statuses}
-          onOpen={(id) => (active = id)} onRefresh={reloadHome} onReloadDrift={reloadStackDrift} onAction={onHomeAction} />
+          stack={stackData} sessionCount={homeSessionCount} {stackDrift} {gcItems} busy={!!running} {components} {statuses}
+          onOpen={(id) => (active = id)} onRefresh={reloadHome} onReloadDrift={reloadStackDrift}
+          onReloadGc={reloadGc} onGcDelete={onGcDelete} onAction={onHomeAction} />
       {:else if active === 'updates'}
         <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
       {:else if active === 'forks'}
