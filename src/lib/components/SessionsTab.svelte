@@ -5,6 +5,7 @@
   import Toggle from './Toggle.svelte';
   import DropdownMenu from './DropdownMenu.svelte';
   import EmptyState from './EmptyState.svelte';
+  import ModalShell from './ModalShell.svelte';
   import { SquareTerminal } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import {
@@ -533,22 +534,29 @@
       /* ignore */
     }
   });
+  // Broadcast and send-to-all are scoped to the ACTIVE project (space): with several projects
+  // open, mirrored keystrokes must never leak into another project's panes or a remote SSH
+  // session in a background space.
   function broadcastInput(data: string) {
-    for (const id of Object.values(sessionIds)) sessionWrite(id, data);
+    for (const p of spacePanes) {
+      const id = sessionIds[p.key];
+      if (id) sessionWrite(id, data);
+    }
   }
-  // One-shot: send a typed command (+Enter) to EVERY running session, without enabling
-  // continuous broadcast.
+  // One-shot: send a typed command (+Enter) to every running session OF THIS PROJECT, without
+  // enabling continuous broadcast.
   let sendAllText = $state('');
-  // Send-to-all fires a command (+Enter) into EVERY live session at once — including SSH/remote panes.
-  // That's the most destructive surface in the app, so gate it behind the canonical confirm dialog
-  // (project rule: destructive actions confirm first) showing the exact command + how many panes.
+  // Send-to-all fires a command (+Enter) into every live pane of the active space at once —
+  // including SSH/remote panes. That's the most destructive surface in the app, so gate it behind
+  // the canonical confirm dialog (project rule: destructive actions confirm first) showing the
+  // exact command + the pane list.
   let confirmSend = $state<{ cmd: string; targets: string[] } | null>(null);
   function sendToAll() {
     const cmd = sendAllText.trim();
     if (!cmd) return;
     // F15: list the exact panes the command lands in (tool@profile · cwd/host) — count alone hid
     // which sessions get hit, so the user couldn't catch a stray SSH pane before sending.
-    const targets = panes
+    const targets = spacePanes
       .filter((p) => sessionIds[p.key])
       .map((p) => {
         const where = p.sshTarget ? `🖥 ${p.sshTarget}` : p.cwd || '~';
@@ -558,7 +566,10 @@
   }
   function doSendToAll() {
     if (!confirmSend) return;
-    for (const id of Object.values(sessionIds)) sessionWrite(id, confirmSend.cmd + '\r');
+    for (const p of spacePanes) {
+      const id = sessionIds[p.key];
+      if (id) sessionWrite(id, confirmSend.cmd + '\r');
+    }
     sendAllText = '';
     confirmSend = null;
   }
@@ -896,6 +907,41 @@
       message: t('sessions.spaceDeleteMsg', { n }),
       run: () => deleteSpace(id)
     });
+  }
+  // Move a pane to another project tab — pure reassignment (deleteSpace's pattern), PTY untouched.
+  function movePaneToSpace(key: string, spaceId: string) {
+    panes = panes.map((p) => (p.key === key ? { ...p, space: spaceId } : p));
+  }
+  // Close every pane of the active project at once (one confirm, no per-pane reopen toasts).
+  function closeSpacePanes() {
+    const keys = spacePanes.map((p) => p.key);
+    if (!keys.length) return;
+    askConfirm({
+      title: t('sessions.closeSpaceTitle'),
+      message: t('sessions.closeSpaceMsg', { n: keys.length }),
+      run: () => {
+        panes = panes.filter((p) => !keys.includes(p.key));
+        for (const k of keys) delete paneRefs[k];
+        maximized = null;
+        if (panes.length <= 1) broadcast = false;
+      }
+    });
+  }
+  // Drag a project tab over another to reorder (same live pattern as pane reorder above).
+  let dragSpaceId = $state<string | null>(null);
+  function onSpaceDragEnter(targetId: string) {
+    if (!dragSpaceId || dragSpaceId === targetId) return;
+    const from = spaces.findIndex((s) => s.id === dragSpaceId);
+    const to = spaces.findIndex((s) => s.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...spaces];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    spaces = next;
+  }
+  function onSpaceDragEnd() {
+    dragSpaceId = null;
+    persistSpaces();
   }
   const spaceCount = (id: string) => activePanes.filter((p) => paneSpace(p) === id).length;
   function spaceWorst(id: string): '' | 'working' | 'blocked' | 'done' {
@@ -1481,8 +1527,26 @@
       // Ctrl+] / Ctrl+[ — focus next / previous pane terminal.
       e.preventDefault();
       cycleFocus(e.key === ']' ? 1 : -1);
+    } else if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
+      // Ctrl+PageDown / Ctrl+PageUp — next / previous project tab (space), wrap-around.
+      if (spaces.length > 1) {
+        e.preventDefault();
+        const cur = spaces.findIndex((s) => s.id === activeSpace);
+        const dir = e.key === 'PageDown' ? 1 : -1;
+        switchSpace(spaces[(cur + dir + spaces.length) % spaces.length].id);
+      }
     }
   }
+  // ⌨ cheatsheet: the shortcuts above live only in scattered tooltips — one modal lists them all.
+  let hotkeysOpen = $state(false);
+  const HOTKEYS: [string, string][] = [
+    ['Ctrl+Shift+T', 'sessions.hkNew'],
+    ['Ctrl+Shift+D', 'sessions.hkClone'],
+    ['Ctrl+Alt+1/2/3', 'sessions.hkCols'],
+    ['Alt+1…9', 'sessions.hkFocusN'],
+    ['Ctrl+] / Ctrl+[', 'sessions.hkCycle'],
+    ['Ctrl+PgUp/PgDn', 'sessions.hkSpaces']
+  ];
 
   // ── Workspaces: save the current set of panes under a name, re-launch it later ──
   let savingWs = $state(false);
@@ -1556,13 +1620,28 @@
 <ConfirmDialog
   open={!!confirmSend}
   title={t('sessions.sendAllConfirmTitle')}
-  message={t('sessions.sendAllConfirmMsg', { count: Object.keys(sessionIds).length })}
+  message={t('sessions.sendAllConfirmMsg', { count: confirmSend?.targets.length ?? 0 })}
   details={confirmSend ? [confirmSend.cmd, ...confirmSend.targets] : []}
   confirmLabel={t('sessions.sendAllConfirmOk')}
   danger
   onConfirm={doSendToAll}
   onCancel={() => (confirmSend = null)}
 />
+
+<!-- ⌨ hotkey cheatsheet — one place listing the tab-scoped shortcuts (they otherwise live only in
+     scattered tooltips). ModalShell handles Escape/backdrop/focus. -->
+<ModalShell open={hotkeysOpen} onClose={() => (hotkeysOpen = false)} size="sm" labelledBy="hk-title">
+  <h3 id="hk-title" class="mb-sw-3 text-sw-base font-semibold">⌨ {t('sessions.hotkeys')}</h3>
+  <div class="hk-list">
+    {#each HOTKEYS as [combo, key] (combo)}
+      <span class="hk-combo">{combo}</span>
+      <span class="text-sw-sm text-sw-text-secondary">{t(key)}</span>
+    {/each}
+  </div>
+  <div class="mt-sw-4 flex justify-end">
+    <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (hotkeysOpen = false)}>{t('common.close')}</button>
+  </div>
+</ModalShell>
 
 <!-- F14: generic destructive confirm for ✕ actions (remove favorite / SSH host / workspace). -->
 <ConfirmDialog
@@ -1608,7 +1687,7 @@
         <label class="flex cursor-pointer items-center gap-1" title={t('sessions.broadcastTip')}>
           <Toggle bind:checked={broadcast} />
           <span class="text-sw-xs" class:broadcast-armed={broadcast} class:text-sw-text-secondary={!broadcast}
-            >{broadcast ? t('sessions.broadcastArmed', { count: panes.length }) : t('sessions.broadcast')}</span>
+            >{broadcast ? t('sessions.broadcastArmed', { count: spacePanes.length }) : t('sessions.broadcast')}</span>
         </label>
         <span class="text-sw-text-muted">·</span>
       {/if}
@@ -1627,6 +1706,7 @@
             { label: `A+ ${t('sessions.zoomAllIn')}`, onClick: () => zoomAll(1) },
             { label: `◎ ${t('sessions.focusMode')}${focusMode ? ' ✓' : ''}`, onClick: () => (focusMode = !focusMode) },
             { label: `⬈ ${t('sessions.distribute')}`, onClick: distributeToMonitors },
+            { label: `⌨ ${t('sessions.hotkeys')}`, onClick: () => (hotkeysOpen = true) },
             ...(savedLayoutExists ? [{ label: `↺ ${t('sessions.forgetLayout')}`, onClick: forgetLayout }] : [])
           ]}
         />
@@ -1874,7 +1954,10 @@
     <div class="spaces" role="tablist" aria-label={t('sessions.agents')}>
       {#each spaces as sp (sp.id)}
         {@const worst = spaceWorst(sp.id)}
-        <span class="space-tab" class:active={activeSpace === sp.id}>
+        <span class="space-tab" class:active={activeSpace === sp.id} draggable={spaces.length > 1}
+          role="presentation"
+          ondragstart={() => (dragSpaceId = sp.id)} ondragenter={() => onSpaceDragEnter(sp.id)}
+          ondragover={(e) => e.preventDefault()} ondragend={onSpaceDragEnd}>
           {#if spaceEditId === sp.id}
             <input class="space-edit sw-input text-sw-xs" bind:value={spaceEditName} use:focusMount
               onkeydown={(e) => { if (e.key === 'Enter') commitRenameSpace(); else if (e.key === 'Escape') (spaceEditId = null); }}
@@ -1957,6 +2040,18 @@
             onclick={() => railMenuAct(toggleBackground)}>{t('sessions.backgroundPane')}</button>
           <button type="button" class="pm-item" role="menuitem"
             onclick={() => railMenuAct(closePane)}>{t('sessions.closePane')}</button>
+          {#if spaces.length > 1}
+            {@const curSpace = panes.find((p) => p.key === railMenuFor)?.space ?? DEFAULT_SPACE}
+            <div class="pm-hdr">{t('sessions.moveToSpace')}</div>
+            {#each spaces.filter((s) => s.id !== curSpace) as sp (sp.id)}
+              <button type="button" class="pm-item" role="menuitem"
+                onclick={() => railMenuAct((k) => movePaneToSpace(k, sp.id))}>→ {sp.name}</button>
+            {/each}
+          {/if}
+          {#if spacePanes.length > 1}
+            <button type="button" class="pm-item" role="menuitem"
+              onclick={() => railMenuAct(() => closeSpacePanes())}>{t('sessions.closeSpace')}</button>
+          {/if}
         </div>
       {/if}
       <div
@@ -2796,6 +2891,39 @@
   }
   .space-plus:hover {
     background: var(--sw-accent-glow);
+  }
+  /* ＋/✕ appear on hover / on the active tab / on keyboard focus — with 5+ projects the
+     unconditional pair on every tab was pure noise. Opacity (not display) keeps tab widths stable. */
+  .space-tab .space-plus,
+  .space-tab .space-x {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .space-tab:hover .space-plus,
+  .space-tab:hover .space-x,
+  .space-tab.active .space-plus,
+  .space-tab.active .space-x,
+  .space-tab:focus-within .space-plus,
+  .space-tab:focus-within .space-x {
+    opacity: 1;
+  }
+  /* ⌨ cheatsheet rows */
+  .hk-list {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--sw-space-2) var(--sw-space-4);
+    align-items: baseline;
+  }
+  .hk-combo {
+    font-family: var(--sw-font-mono, monospace);
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-primary);
+    background: var(--sw-bg-tertiary, var(--sw-bg-hover));
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-sm);
+    padding: 2px 6px;
+    white-space: nowrap;
+    justify-self: start;
   }
   .space-add {
     border: 1px solid var(--sw-border);

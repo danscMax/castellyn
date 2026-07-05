@@ -77,6 +77,7 @@ export default {
   noMatch: '没有符合筛选条件的项。',
   filterUpdates: '有更新',
   filterEnabled: '仅已启用',
+  filterManaged: '已锁定 ({n})',
   sortName: '排序：名称',
   bumpBtnTip: '提升自有插件版本（两个清单 + 刷新缓存）',
   bumpLevel: 'bump {level}',

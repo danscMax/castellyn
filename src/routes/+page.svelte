@@ -1768,7 +1768,13 @@
           await unblockManagedPlugin(id);
           const res = await runManagedDeploy();
           if (res.state === 'ok') {
-            pushToast({ kind: 'success', title: t('page.unblock_done', { id }) });
+            // Unblocking is only half the intent — the plugin is still disabled per-profile.
+            // Offer the enable right on the toast instead of demanding another hunt+click.
+            pushToast({
+              kind: 'success',
+              title: t('page.unblock_done', { id }),
+              action: { label: t('page.unblock_enable_now'), onClick: () => startPlugin('enable', id) }
+            });
           } else {
             pushToast({ kind: 'error', title: t('page.toast_generic_error'), detail: res.detail });
           }
@@ -2453,7 +2459,8 @@
         <!-- New-machine deployment checklist — replaces the tab area (tabs stay mounted, just
              hidden); the console below stays visible so streamed steps are watchable live. -->
         <OnboardingView steps={onbViewSteps} busy={!!running} onFix={onbFix} onRunAll={onbRunAll}
-          onRefresh={reloadOnboarding} onDismiss={() => (showOnboarding = false)} />
+          onRefresh={reloadOnboarding} onDismiss={() => (showOnboarding = false)}
+          onOpen={(tab) => { active = tab; showOnboarding = false; }} />
       {/if}
 
       {#key active}

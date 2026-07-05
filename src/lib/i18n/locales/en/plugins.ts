@@ -77,6 +77,7 @@ export default {
   noMatch: 'Nothing matches the filter.',
   filterUpdates: 'Has update',
   filterEnabled: 'Enabled only',
+  filterManaged: 'Blocked ({n})',
   sortName: 'Sort: name',
   bumpBtnTip: "Bump this own plugin's version (both manifests + cache refresh)",
   bumpLevel: 'bump {level}',

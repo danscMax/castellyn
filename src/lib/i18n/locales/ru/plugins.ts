@@ -77,6 +77,7 @@ export default {
   noMatch: 'Ничего не найдено по фильтру.',
   filterUpdates: 'С обновлением',
   filterEnabled: 'Только включённые',
+  filterManaged: 'Заблокированные ({n})',
   sortName: 'Сортировка: имя',
   bumpBtnTip: 'Поднять версию своего плагина (оба манифеста + рефреш кэша)',
   bumpLevel: 'bump {level}',

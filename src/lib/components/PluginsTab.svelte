@@ -103,9 +103,11 @@
   // Toolbar filters (persisted). Search + sort live inside DataTable.
   let onlyUpdates = $state(false);
   let onlyEnabled = $state(false);
+  let onlyManaged = $state(false);
   try {
     onlyUpdates = localStorage.getItem('cmh-plugins-only-updates') === '1';
     onlyEnabled = localStorage.getItem('cmh-plugins-only-enabled') === '1';
+    onlyManaged = localStorage.getItem('cmh-plugins-only-managed') === '1';
   } catch {
     /* ignore */
   }
@@ -113,13 +115,20 @@
     try {
       localStorage.setItem('cmh-plugins-only-updates', onlyUpdates ? '1' : '0');
       localStorage.setItem('cmh-plugins-only-enabled', onlyEnabled ? '1' : '0');
+      localStorage.setItem('cmh-plugins-only-managed', onlyManaged ? '1' : '0');
     } catch {
       /* ignore */
     }
   });
 
+  const managedCount = $derived(pluginList.filter((p) => p.managedPolicy === false).length);
   const pluginRows = $derived(
-    pluginList.filter((p) => (!onlyUpdates || updateMap.has(p.id)) && (!onlyEnabled || p.enabled))
+    pluginList.filter(
+      (p) =>
+        (!onlyUpdates || updateMap.has(p.id)) &&
+        (!onlyEnabled || p.enabled) &&
+        (!onlyManaged || p.managedPolicy === false)
+    )
   );
   const disabledCount = $derived(pluginList.filter((p) => !p.enabled).length);
   const updateIds = $derived(pluginList.filter((p) => updateMap.has(p.id)).map((p) => p.id));
@@ -315,6 +324,9 @@
           <button class="sw-btn text-sw-xs {onlyUpdates ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={() => (onlyUpdates = !onlyUpdates)}>{t('plugins.filterUpdates')}</button>
         {/if}
         <button class="sw-btn text-sw-xs {onlyEnabled ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={() => (onlyEnabled = !onlyEnabled)}>{t('plugins.filterEnabled')}</button>
+        {#if managedCount}
+          <button class="sw-btn text-sw-xs {onlyManaged ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={() => (onlyManaged = !onlyManaged)}>🔒 {t('plugins.filterManaged', { n: managedCount })}</button>
+        {/if}
       {/snippet}
 
       {#snippet bulkbar(ids, clear)}

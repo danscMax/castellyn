@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t, plural, pFile } from '$lib/i18n';
   import { statusTextClass } from '$lib/statusColor';
+  import { agentSummary } from '$lib/agentStatus.svelte';
   import { profileHasMissingLink } from '$lib/attention';
   import StackDriftCard from './StackDriftCard.svelte';
   import StackGcCard from './StackGcCard.svelte';
@@ -163,10 +164,17 @@
     }
 
     if (sessionCount != null) {
+      // herdr rollup on the cockpit: "N wait" (a decision is needed) beats a bare pane count.
+      // agentSummary already feeds the sidebar badge — same source, same sessions.sum* keys.
+      const parts = [
+        agentSummary.blocked > 0 ? t('sessions.sumBlocked', { n: agentSummary.blocked }) : '',
+        agentSummary.working > 0 ? t('sessions.sumWorking', { n: agentSummary.working }) : '',
+        agentSummary.done > 0 ? t('sessions.sumDone', { n: agentSummary.done }) : ''
+      ].filter(Boolean).join(' · ');
       out.push({
         key: 'sessions', tab: 'sessions', title: t('page.home_sessions'),
-        value: t('page.home_sessionsActive', { n: sessionCount }),
-        level: sessionCount > 0 ? 'ok' : 'muted'
+        value: parts || t('page.home_sessionsActive', { n: sessionCount }),
+        level: agentSummary.blocked > 0 ? 'bad' : sessionCount > 0 ? 'ok' : 'muted'
       });
     }
 

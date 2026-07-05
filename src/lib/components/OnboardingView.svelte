@@ -7,7 +7,7 @@
   // New-machine deployment checklist (reconciler, not a one-shot wizard): the parent owns the
   // steps array and every action (fixes route to existing commands + the run-lock/console).
   // Shown full-screen on a bare machine (first run) and re-openable from Settings.
-  let { steps = null, busy = false, onFix, onRunAll, onRefresh, onDismiss }:
+  let { steps = null, busy = false, onFix, onRunAll, onRefresh, onDismiss, onOpen }:
     {
       steps: OnbStep[] | null;
       busy?: boolean;
@@ -15,6 +15,8 @@
       onRunAll: () => void | Promise<void>;
       onRefresh: () => void | Promise<void>;
       onDismiss: () => void;
+      /** Navigate to the tab owning a step (inspect before fixing); closes the overlay. */
+      onOpen: (tab: string) => void;
     } = $props();
 
   let working = $state<string | null>(null); // '*' = refresh/run-all, else the step id
@@ -34,6 +36,15 @@
     const v = t(key);
     return v === key ? id : v; // unknown future step: show its id rather than mislabeling
   }
+  // Step → owning tab, for "inspect before fixing" (prereqs/junction/verify have no tab).
+  const STEP_TAB: Record<string, string> = {
+    tree: 'backup',
+    creds: 'backup',
+    profiles: 'profiles',
+    mcp: 'mcp',
+    managed: 'home',
+    syncthing: 'sync'
+  };
   const FIX_LABEL: Record<string, string> = {
     install_profiles: 'onb_fix_install',
     mcp_deploy: 'onb_fix_mcp',
@@ -89,10 +100,19 @@
               <span class="text-sw-xs text-sw-text-muted">· {t('page.onb_state_blocked')}</span>
             {/if}
             {#if r.fix && r.state !== 'blocked' && r.state !== 'ok'}
-              <button class="sw-btn sw-btn-ghost text-sw-xs ml-auto shrink-0" disabled={!!working || busy}
-                onclick={() => doFix(r)}>
-                {#if working === r.id}{t('common.loading')}{:else}{t(`page.${FIX_LABEL[r.fix] ?? 'onb_fix_run'}`)}{/if}
-              </button>
+              <span class="ml-auto flex shrink-0 items-center gap-sw-1">
+                {#if STEP_TAB[r.id]}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => onOpen(STEP_TAB[r.id])}
+                    title={t('page.onb_open_tab')}>{t('page.onb_open_tab')}</button>
+                {/if}
+                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!!working || busy}
+                  onclick={() => doFix(r)}>
+                  {#if working === r.id}{t('common.loading')}{:else}{t(`page.${FIX_LABEL[r.fix] ?? 'onb_fix_run'}`)}{/if}
+                </button>
+              </span>
+            {:else if STEP_TAB[r.id] && r.state !== 'blocked' && r.state !== 'ok'}
+              <button class="sw-btn sw-btn-ghost text-sw-xs ml-auto shrink-0" onclick={() => onOpen(STEP_TAB[r.id])}
+                title={t('page.onb_open_tab')}>{t('page.onb_open_tab')}</button>
             {/if}
           </div>
         {/each}
