@@ -1292,7 +1292,14 @@
     if (running) return;
     running = 'sync';
     log = [action === 'set' ? t('page.sync_log_set') : t('page.sync_log_query')];
-    runSync(action, enabled).catch(onSpawnErr);
+    // run_sync is a direct async command (no spawn_streamed → no run-done event), so the promise
+    // resolving IS the completion signal. Clear the lock here; otherwise `running='sync'` sticks
+    // forever and `busy` disables controls across every tab (the "everything is dead" symptom).
+    runSync(action, enabled)
+      .catch(onSpawnErr)
+      .finally(() => {
+        if (running === 'sync') running = null;
+      });
   }
 
   // Lazy-load on first open + run a fresh query to fetch live Syncthing status.
@@ -1602,7 +1609,12 @@
   });
 
   function startSchedule(action: ScheduleAction, id: string, time?: string) {
-    if (running) return;
+    if (running) {
+      // Don't silently drop the click — tell the user why (a run holds the single slot). Without this,
+      // clicking "Создать расписание" while busy looked like a dead button.
+      pushToast({ kind: 'info', title: t('page.busy_running', { name: opName(running) }) });
+      return;
+    }
     running = 'schedule';
     const verb: Record<ScheduleAction, string> = {
       enable: t('page.sched_verb_enable'),

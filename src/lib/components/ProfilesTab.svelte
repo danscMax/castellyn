@@ -335,13 +335,15 @@
   }
 
   type Prof = (typeof profiles)[number];
+  // Column widths trimmed so the six columns fit a ~1150px content pane without horizontal scroll
+  // clipping the Действия column (the owner's "table doesn't fit / gets cut off"). name still grows.
   const COLS: DTColumn[] = $derived([
     { key: 'name', label: t('profiles.colName'), grow: true, sortable: true },
-    { key: 'status', label: t('profiles.colStatus'), width: '150px', sortable: true },
-    { key: 'usage', label: t('profiles.colUsage'), width: '170px' },
-    { key: 'provider', label: t('profiles.colProvider'), width: '200px', interactive: true, sortable: true },
-    { key: 'links', label: t('profiles.colLinks'), width: '92px', align: 'center', sortable: true },
-    { key: 'actions', label: t('profiles.colActions'), width: '240px', interactive: true }
+    { key: 'status', label: t('profiles.colStatus'), width: '120px', sortable: true },
+    { key: 'usage', label: t('profiles.colUsage'), width: '140px' },
+    { key: 'provider', label: t('profiles.colProvider'), width: '170px', interactive: true, sortable: true },
+    { key: 'links', label: t('profiles.colLinks'), width: '80px', align: 'center', sortable: true },
+    { key: 'actions', label: t('profiles.colActions'), width: '210px', interactive: true }
   ]);
   function linkedCount(p: Prof): number {
     return Object.values(p.sharedLinks).filter(

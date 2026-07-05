@@ -252,10 +252,10 @@
       <div class="min-w-0">
         <div class="flex items-center gap-sw-2">
           {#if busy}<span class="busy-dot shrink-0" title={t('common.busy')}></span>{/if}
-          <h3 class="truncate font-medium">{repo.Name}</h3>
-          <span class="badge {repo.isOwn ? 'badge-muted' : 'badge-info'}" title={repo.isOwn ? t('forks.badgeOwnTip') : t('forks.badgeForkTip')}>{repo.isOwn ? t('forks.badgeOwn') : t('forks.badgeFork')}</span>
+          <h3 class="truncate font-medium" title={repo.Name}>{repo.Name}</h3>
         </div>
         <p class="truncate text-sw-xs text-sw-text-muted">
+          <span class="badge {repo.isOwn ? 'badge-muted' : 'badge-info'}" title={repo.isOwn ? t('forks.badgeOwnTip') : t('forks.badgeForkTip')}>{repo.isOwn ? t('forks.badgeOwn') : t('forks.badgeFork')}</span>
           {repo.defaultBranch ?? t('common.dash')}{repo.currentBranch && repo.currentBranch !== repo.defaultBranch ? t('forks.onBranch', { branch: repo.currentBranch }) : ''}
           · {branches.length} {pBranch(branches.length)}
         </p>

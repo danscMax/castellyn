@@ -72,11 +72,10 @@
     const only = ALL_PROFILES.filter((p) => bulkSel[p]);
     if (only.length) onDeploy(only);
   }
-  // Real profile list from the backend (read_mcp); falls back to the canonical set on first paint
-  // so the n/total badge and the per-profile chips never lie when profiles are added/removed.
-  const ALL_PROFILES = $derived(
-    data?.profiles?.length ? data.profiles : ['ccmy', 'cc1', 'cc2', 'cc3', 'cc4', 'cc5']
-  );
+  // Real profile list from the backend (read_mcp). Empty until it resolves — do NOT fall back to a
+  // canned cc1..cc5 list: a fresh user (or anyone whose profiles are named differently) would see
+  // wrong chips and a lying n/total badge. Empty-on-first-paint is honest; the chips fill in on load.
+  const ALL_PROFILES = $derived(data?.profiles ?? []);
   // Provided by the plugin marketplace, not deployed per-profile (installer skips them).
   const PLUGIN_PROVIDED = ['context7', 'serena'];
 

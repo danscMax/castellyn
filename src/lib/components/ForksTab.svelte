@@ -39,8 +39,13 @@
   } = $props();
 
   const anyRunning = $derived(!!running);
+  // Per-repo action buttons must NOT be disabled by an unrelated global run (sync/rtk/plugins): the
+  // backend `run_fork_repo` only blocks on a whole-stack fork sweep or the same repo. So the cards
+  // gate on a fork sweep specifically, not "any run holds the slot". (Fixes the greyed wip-sync while
+  // the card recommends it — it was disabled by the stuck sync run.)
+  const forkSweepRunning = $derived(running === 'forks');
   // A whole-stack action must not run while any single-repo run is in flight (they'd contend on the
-  // same repos' git + the shared status file) — and vice-versa (per-repo buttons gate on anyRunning).
+  // same repos' git + the shared status file); the whole-stack buttons below gate on `anyRunning`.
   const anyForkRunning = $derived(Object.values(forkRuns).some((r) => r?.running));
   const repos = $derived(status?.repos ?? []);
   const summary = $derived(status?.summary);
@@ -258,7 +263,7 @@
         <div data-highlight-id={repo.Name ? `repo:${repo.Name}` : undefined}>
         <ForkRepoCard
           {repo}
-          {anyRunning}
+          anyRunning={forkSweepRunning}
           run={forkRuns[repo.Path]}
           onAction={(a, p, l) => onAction(a, p, l)}
           onCancel={() => onCancelFork?.(repo.Path)}

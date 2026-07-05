@@ -249,11 +249,15 @@
       </div>
     {/if}
 
-    <!-- Drift warning -->
+    <!-- Drift warning — carries the Apply action itself so the banner isn't a dead reference to a
+         greyed button far below. -->
     {#if data.stignoreExists && data.stignoreMatches === false}
-      <div class="sw-card mb-sw-4 border border-amber-500/40 text-sw-sm">
+      <div class="sw-card mb-sw-4 border border-amber-500/40 text-sw-sm flex items-center gap-sw-3 flex-wrap">
         <span class="badge badge-warn">{t('sync.needsApplyBadge')}</span>
-        {t('sync.driftWarning')}
+        <span class="min-w-0 flex-1">{t('sync.driftWarning')}</span>
+        <button class="sw-btn sw-btn-primary" disabled={busy} onclick={apply} title={t('sync.applyTitle')}>
+          {t('common.apply')}
+        </button>
       </div>
     {/if}
 
@@ -275,7 +279,7 @@
     </div>
 
     <div class="mt-sw-4 flex items-center gap-sw-3">
-      <button class="sw-btn" disabled={busy || !dirty} onclick={apply}
+      <button class="sw-btn" disabled={busy || (!dirty && data.stignoreMatches !== false)} onclick={apply}
         title={t('sync.applyTitle')}>
         {t('common.apply')}
       </button>
