@@ -18,6 +18,13 @@ describe('attention', () => {
     expect(updatesAttention(comps, { a: { counts: { changed: 0 } } })).toBeNull();
   });
 
+  it('updates count honours legacy envelope shapes via countOf', () => {
+    const comps = [{ id: 'a' }, { id: 'b' }] as any;
+    // a: legacy `changed[]` array; b: older `plugins_changed` number — neither has counts.changed.
+    const st = { a: { changed: ['x', 'y'] }, b: { plugins_changed: 3 } };
+    expect(updatesAttention(comps, st)).toEqual({ level: 'info', count: 5 });
+  });
+
   it('forks reflect needHands', () => {
     expect(forksAttention({ summary: { needHands: 4 } } as any)).toEqual({ level: 'warn', count: 4 });
     expect(forksAttention({ summary: { needHands: 0 } } as any)).toBeNull();

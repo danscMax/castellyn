@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ForkRepo, ForkAction, SessionTool } from '$lib/ipc';
-  import { openTerminal, openUrl } from '$lib/ipc';
+  import { openTerminal, openUrl, confFiles } from '$lib/ipc';
   import { pConflict, pBranch, pCommit, outcomeLabel, t } from '$lib/i18n';
   import DropdownMenu from './DropdownMenu.svelte';
   import { copyText } from '$lib/clipboard';
@@ -38,10 +38,7 @@
   const branches = $derived(repo.branches ?? []);
   const conflictBranches = $derived(branches.filter((b) => b.outcome === 'conflict'));
 
-  // PowerShell's `Select-Object -Unique` returns a scalar string for a single conflict file
-  // (array only for 2+), so conflictFiles arrives as string | string[] | null — normalize it.
-  const confFiles = (cf: string | string[] | null): string[] =>
-    Array.isArray(cf) ? cf : cf ? [cf] : [];
+  // conflictFiles arrives as string | string[] | null — normalize with the shared confFiles().
 
   // Auto-assemble ONE AI prompt from whatever is actually wrong with this repo. Every detected
   // problem (mid-op, detached HEAD, branch conflicts, diverged/behind default, dirty tree, upstream

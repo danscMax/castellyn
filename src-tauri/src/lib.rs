@@ -574,6 +574,26 @@ struct RunDone {
     code: i32,
 }
 
+/// Canonical stream-component ids emitted as the `component` field of `run-done` for the native /
+/// script streaming paths (NOT the manifest component ids, which flow through generically). These
+/// are a cross-boundary contract: the frontend's `run-done` handler keys reloads on the same
+/// strings. Named here so a rename is one edit per side, and kept in lock-step with the TS mirror
+/// `STREAM_IDS` in `src/lib/ipc.ts` — enforced by the parity test in `src/lib/ipc.test.ts`.
+/// If you add/rename one, update all three: this module, `STREAM_IDS`, and that test's expectation.
+mod stream_id {
+    pub const FORKS: &str = "forks";
+    pub const BACKUP: &str = "backup";
+    pub const PROFILES: &str = "profiles";
+    pub const SYNC: &str = "sync";
+    pub const ENGINE: &str = "engine";
+    pub const PROVIDER: &str = "provider";
+    pub const SCHEDULE: &str = "schedule";
+    pub const MCP: &str = "mcp";
+    pub const PLUGIN_MGR: &str = "plugin-mgr";
+    pub const PLUGIN_SYNC: &str = "pluginsync";
+    pub const ONBOARDING: &str = "onboarding";
+}
+
 /// Spawn `pwsh -File <script> <args>`, streaming each output line to the UI via "run-log"
 /// and finishing with "run-done" (component = `id`). Only one run at a time (RunState guard).
 async fn spawn_streamed(
@@ -751,7 +771,24 @@ async fn pump_and_wait(
             BufReader::new(stderr).lines(),
         )));
     }
-    let status = child.wait().await;
+    // Backstop (V-14): a wedged script (infinite loop, a network call with no timeout of its own,
+    // an unexpected interactive prompt) would otherwise hold the single run slot forever until the
+    // user hits Cancel. Cap the wait at a generous ceiling so a genuinely-stuck run frees its slot
+    // on its own; legitimately long runs (big fork syncs) finish well within it. On expiry, reuse
+    // the same tree-kill as cancel_run (taskkill /T /F — child.kill() would orphan the pwsh subtree)
+    // then reap so no zombie/handle leaks. kill_tree is idempotent (128 → Ok), so a Cancel racing
+    // the timeout can't error.
+    const RUN_MAX: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+    let pid = child.id();
+    let status = match tokio::time::timeout(RUN_MAX, child.wait()).await {
+        Ok(s) => s,
+        Err(_elapsed) => {
+            if let Some(p) = pid {
+                let _ = kill_tree(p);
+            }
+            child.wait().await
+        }
+    };
     // Await the pumps so their final coalesced flush lands BEFORE run-done — no lost tail lines.
     for h in handles {
         let _ = h.await;
@@ -1055,7 +1092,7 @@ async fn run_forks(
     if !runs.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
         return Err(tr("err.fork_busy", cur_lang()).to_string());
     }
-    spawn_streamed(app, state, "forks".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::FORKS.to_string(), script, args).await
 }
 
 /// Run a Forks action scoped to ONE repo, concurrently and independently of other repos and of
@@ -1432,7 +1469,7 @@ async fn run_backup(
         keep_snapshots,
     )?;
     let script = abs(script_rel);
-    spawn_streamed(app, state, "backup".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::BACKUP.to_string(), script, args).await
 }
 
 const PROFILES_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Get-ProfilesStatus.ps1";
@@ -1527,7 +1564,7 @@ async fn run_profiles(
         }
     };
     let script = abs(script_rel);
-    spawn_streamed(app, state, "profiles".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::PROFILES.to_string(), script, args).await
 }
 
 /// F23: repair the shared-folder links of the given profiles in one run (Home "Repair All"). Loops
@@ -1619,7 +1656,7 @@ async fn run_config_drift(
         }
     };
     let script = abs(script_rel);
-    spawn_streamed(app, state, "sync".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::SYNC.to_string(), script, args).await
 }
 
 // --- Config-drift diff (Phase 3.2) ---
@@ -1814,7 +1851,7 @@ async fn run_profile_mgmt(
         }
     }
     let script = abs(PROFILE_MGMT_SCRIPT_REL);
-    spawn_streamed(app, state, "profiles".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::PROFILES.to_string(), script, args).await
 }
 
 /// Repair ONE profile's shared-folder links with admin rights (folder symlinks need UAC).
@@ -2701,7 +2738,7 @@ async fn run_stack(
             ))
         }
     };
-    spawn_streamed(app, state, "engine".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::ENGINE.to_string(), script, args).await
 }
 
 const STACK_PROCS_SCRIPT_REL: &str = "Castellyn\\tools\\stack\\Stack-Procs.ps1";
@@ -3482,7 +3519,7 @@ async fn run_router(
     let name = name
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "lmstudio".to_string());
-    run_native_streamed(app, state, "engine".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::ENGINE.to_string(), move |out, err| {
         setup_router_native(&action, &backend, &model, &name, out, err)
     })
     .await
@@ -3512,7 +3549,7 @@ async fn run_connect_router(
     let name = name
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "lmstudio".to_string());
-    run_native_streamed(app, state, "provider".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::PROVIDER.to_string(), move |out, err| {
         connect_router_native(&backend, &model, &profile, &name, out, err)
     })
     .await
@@ -4123,7 +4160,16 @@ fn classify_link(path: &std::path::Path) -> &'static str {
 /// The per-profile matrix: provider + proxy + shared-folder link state. Never panics; an unreadable
 /// settings.json yields an empty provider/proxy. Empty vec when profiles.json is absent.
 #[tauri::command]
-fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
+async fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
+    // Off the main/UI thread: this walks every profile × shared folder (a symlink stat each) plus
+    // per-profile settings/plugins/MCP reads — tens-to-hundreds of syscalls on a tab open. Mirrors
+    // read_stack's spawn_blocking house style.
+    tokio::task::spawn_blocking(read_profile_matrix_blocking)
+        .await
+        .map_err(|e| format!("read_profile_matrix task failed: {e}"))?
+}
+
+fn read_profile_matrix_blocking() -> Result<Vec<MatrixRow>, String> {
     let home = std::env::var("USERPROFILE").map_err(|_| "no USERPROFILE".to_string())?;
     let Some(cfg) = read_profiles_config()? else {
         return Ok(Vec::new());
@@ -4492,7 +4538,7 @@ async fn run_provider(
     let model = model.unwrap_or_default();
     let small_model = small_model.unwrap_or_default();
     let token = token.unwrap_or_default();
-    run_native_streamed(app, state, "provider".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::PROVIDER.to_string(), move |out, err| {
         let (model_arg, small_arg) = if action == "set" {
             (Some(model.as_str()), Some(small_model.as_str()))
         } else {
@@ -5157,6 +5203,10 @@ fn connect_custom_native(
     // Generous timeout: a cold gateway login/registration can take a few seconds.
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(30)))
+        // No cross-host redirects: this is a single-shot API call carrying credentials; the SSRF
+        // guard validates only the initial URL, so following a 3xx to an unvalidated host (e.g.
+        // link-local metadata) is exactly what we must not do (V-12).
+        .max_redirects(0)
         .build()
         .into();
 
@@ -5323,7 +5373,7 @@ async fn connect_my_provider(
             }
             let model = s("model");
             let small = s("smallModel");
-            run_native_streamed(app, state, "provider".into(), move |out, err| {
+            run_native_streamed(app, state, stream_id::PROVIDER.to_string(), move |out, err| {
                 manage_provider_native(
                     &name,
                     "set",
@@ -5355,7 +5405,7 @@ async fn connect_my_provider(
             let gateway = gateway_base_url().ok_or(tr("err.no_gateway", cur_lang()))?;
             let (model, display_name, label) =
                 (s("model"), s("name"), format!("agenthub:{}", s("name")));
-            run_native_streamed(app, state, "provider".into(), move |out, err| {
+            run_native_streamed(app, state, stream_id::PROVIDER.to_string(), move |out, err| {
                 connect_custom_native(
                     &gateway,
                     &base_url,
@@ -5486,6 +5536,7 @@ fn probe_provider(base_url: &str, protocol: &str, api_key: &str) -> serde_json::
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(12)))
+        .max_redirects(0) // single-shot API GET carrying a key — no cross-host redirects (V-12)
         .build()
         .into();
     let mut req = agent.get(&url);
@@ -5543,6 +5594,7 @@ fn fetch_engine_models(base_url: &str) -> Vec<String> {
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(6)))
+        .max_redirects(0) // single-shot API GET carrying a key — no cross-host redirects (V-12)
         .build()
         .into();
     // Some servers want an Authorization header even when no real key is needed.
@@ -5697,13 +5749,16 @@ fn fetch_provider_balance(id: &str) -> serde_json::Value {
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .max_redirects(0) // single-shot API GET carrying a key — no cross-host redirects (V-12)
         .build()
         .into();
 
-    // 1) User-configured balance URL — most reliable. SSRF-guard it like baseUrl (R2-01): it is
-    // queried WITH the provider's key, so a link-local / cloud-metadata host must be rejected.
+    // 1) User-configured balance URL — most reliable. Guard with `probe_url_allowed` (not just
+    // `valid_base_url`): this request carries the provider's key, so besides the SSRF/metadata
+    // block it must also require https for non-loopback hosts — otherwise a plaintext http://
+    // balanceUrl would leak the key on the wire, exactly what the liveness probe guards against.
     if !balance_url.is_empty() {
-        if let Err(detail) = valid_base_url(balance_url) {
+        if let Err(detail) = probe_url_allowed(balance_url) {
             return serde_json::json!({ "ok": false, "detail": detail });
         }
         return match balance_get(&agent, balance_url, protocol, &key) {
@@ -5719,6 +5774,12 @@ fn fetch_provider_balance(id: &str) -> serde_json::Value {
                 serde_json::json!({ "ok": false, "detail": tr("det.balance_no_response", cur_lang()) })
             }
         };
+    }
+    // Fallbacks 2/3 derive their URL from `root` (= baseUrl) and also send the key, so the same
+    // https-or-loopback guard applies. If baseUrl is a plaintext http:// non-loopback host, skip
+    // the fallbacks rather than leak the key.
+    if probe_url_allowed(root).is_err() {
+        return serde_json::json!({ "ok": false, "detail": tr("det.balance_unavailable", cur_lang()) });
     }
     // 2) DeepSeek-style.
     if base.contains("deepseek") {
@@ -5813,6 +5874,7 @@ fn fetch_profile_usage(profile: &str) -> Option<ProfileUsage> {
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .max_redirects(0) // single-shot API GET carrying a token — no cross-host redirects (V-12)
         .build()
         .into();
     let body = agent
@@ -6205,7 +6267,7 @@ async fn run_opencode_provider(
     }
     let keep_key = keep_key.unwrap_or(false);
     let cfg_path = opencode_config_path();
-    run_native_streamed(app, state, "provider".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::PROVIDER.to_string(), move |out, err| {
         opencode_provider_native(
             &cfg_path,
             &action,
@@ -6469,7 +6531,7 @@ async fn run_schedule(
         args.push(t);
     }
     let script = abs(SCHEDULE_SCRIPT_REL);
-    spawn_streamed(app, state, "schedule".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::SCHEDULE.to_string(), script, args).await
 }
 
 /// Run an MCP-tab action: deploy shared MCP servers into all profiles (Deploy-Mcp.ps1).
@@ -6502,7 +6564,7 @@ async fn run_mcp(
         Some(p) if !p.is_empty() => vec!["-Only".to_string(), p.join(",")],
         _ => Vec::new(),
     };
-    spawn_streamed(app, state, "mcp".to_string(), script, args).await
+    spawn_streamed(app, state, stream_id::MCP.to_string(), script, args).await
 }
 
 /// Resolve the Claude plugins dir + parsed installed_plugins.json + known_marketplaces.json.
@@ -6857,7 +6919,14 @@ fn skill_rank(s: &SkillInfo) -> u8 {
 /// dir) PLUS skills bundled in installed plugins. `is_dir()` follows symlinks so your symlinked
 /// "own" skills are no longer dropped. Sorted by source (own → default → plugin) then name.
 #[tauri::command]
-fn list_skills() -> Vec<SkillInfo> {
+async fn list_skills() -> Vec<SkillInfo> {
+    // Off the main/UI thread: walks the skills tree and reads a SKILL.md front-matter per skill.
+    tokio::task::spawn_blocking(list_skills_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn list_skills_blocking() -> Vec<SkillInfo> {
     let home = match std::env::var("USERPROFILE") {
         Ok(h) => h,
         Err(_) => return Vec::new(),
@@ -7158,7 +7227,14 @@ struct EnvInfo {
 /// Read-only coverage of every supported coding harness. Composes the existing native readers;
 /// no script spawn. zcode is reported as a not-installed placeholder (no Windows config dir yet).
 #[tauri::command]
-fn read_environments() -> Vec<EnvInfo> {
+async fn read_environments() -> Vec<EnvInfo> {
+    // Off the main/UI thread: unions skill sets across three harness roots (read_dir + SKILL.md probe per dir).
+    tokio::task::spawn_blocking(read_environments_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn read_environments_blocking() -> Vec<EnvInfo> {
     let home = match std::env::var("USERPROFILE") {
         Ok(h) => h,
         Err(_) => return Vec::new(),
@@ -7348,7 +7424,14 @@ struct SkillRow {
 /// Per-skill visibility matrix across harnesses (#20) — turns the n/total gauge into a diff.
 /// Reuses the same sets as read_environments via `skill_sets`; pure reads.
 #[tauri::command]
-fn read_skill_matrix() -> Vec<SkillRow> {
+async fn read_skill_matrix() -> Vec<SkillRow> {
+    // Off the main/UI thread: unions skill sets across harness roots with per-dir SKILL.md probes.
+    tokio::task::spawn_blocking(read_skill_matrix_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn read_skill_matrix_blocking() -> Vec<SkillRow> {
     let home = match std::env::var("USERPROFILE") {
         Ok(h) => h,
         Err(_) => return Vec::new(),
@@ -7818,6 +7901,11 @@ fn codex_mcp_add_args(name: &str, def: &serde_json::Value) -> Option<Vec<String>
     if let Some(env) = def.get("env").and_then(|e| e.as_object()) {
         for (k, v) in env {
             if let Some(val) = v.as_str() {
+                // NOTE: MCP env values may hold secrets (tokens/keys) and land on the `codex mcp add`
+                // argv, briefly WMI-readable (Win32_Process) — unlike the streaming path which routes
+                // secrets via STDIN (see the note at spawn_streamed_io). This is forced by the Codex
+                // CLI, which only accepts `--env KEY=VALUE` on the command line; single-user local
+                // machine + brief process lifetime make the exposure acceptable (accepted V-9).
                 argv.push("--env".into());
                 argv.push(format!("{k}={val}"));
             }
@@ -7840,7 +7928,10 @@ fn codex_mcp_add_args(name: &str, def: &serde_json::Value) -> Option<Vec<String>
 /// let a field inject a second command. Reject the whole server if any element carries one. The name
 /// sits at argv[2], so checking the built argv covers it too.
 fn cmd_argv_safe(argv: &[String]) -> bool {
-    const UNSAFE: &[char] = &['&', '|', '<', '>', '^', '%', '"'];
+    // Include '(' ')' and newline/CR: parentheses group commands under cmd, and a raw newline
+    // terminates the current command and starts a new one — both let a field inject a second
+    // command through the `cmd /C` re-parse even when the shell-op chars are blocked.
+    const UNSAFE: &[char] = &['&', '|', '<', '>', '^', '%', '"', '(', ')', '\n', '\r'];
     !argv
         .iter()
         .any(|a| a.chars().any(|c| UNSAFE.contains(&c)))
@@ -8021,6 +8112,12 @@ fn run_codex_providers() -> Result<bool, String> {
         if key.is_empty() {
             return None;
         }
+        // NOTE: `setx` persists the key as plaintext in HKCU\Environment (readable by every process
+        // running as the user) and puts it on argv transiently. This is a deliberate, accepted
+        // trade-off (V-10): the user needs `FREELLMAPI_API_KEY` present in terminals they open by
+        // HAND to run `codex`, and Windows offers no non-persistent way to inject an env var into
+        // future externally-launched shells (a shell-profile hook is equally plaintext). The
+        // Credential Manager remains the source of truth; this is a convenience mirror, not storage.
         let st = std::process::Command::new("setx")
             .args(["FREELLMAPI_API_KEY", &key])
             .creation_flags(CREATE_NO_WINDOW)
@@ -8593,7 +8690,14 @@ fn collect_skill_items(skills_root: &std::path::Path) -> Vec<PluginItem> {
 /// Itemize the skills / commands / agents bundled inside each installed plugin.
 /// Read-only filesystem scan; no network, no claude CLI spawn.
 #[tauri::command]
-fn list_plugin_contents() -> Vec<PluginContents> {
+async fn list_plugin_contents() -> Vec<PluginContents> {
+    // Off the main/UI thread: walks each plugin's dir tree (commands/agents/skills) per open.
+    tokio::task::spawn_blocking(list_plugin_contents_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn list_plugin_contents_blocking() -> Vec<PluginContents> {
     let Some((_dir, installed, markets)) = load_installed_plugins() else {
         return Vec::new();
     };
@@ -8863,7 +8967,7 @@ async fn run_plugin(
     {
         return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
     }
-    run_native_streamed(app, state, "plugin-mgr".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::PLUGIN_MGR.to_string(), move |out, err| {
         manage_plugin_native(&action, &id, out, err)
     })
     .await
@@ -8917,7 +9021,7 @@ async fn run_marketplace_bump(
     if !std::path::Path::new(&script).is_file() {
         return Err(format!("bump script not found: {script}"));
     }
-    run_native_streamed(app, state, "plugin-mgr".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::PLUGIN_MGR.to_string(), move |out, err| {
         out(&trv(
             "log.bump_header",
             cur_lang(),
@@ -9611,7 +9715,7 @@ fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
 async fn run_plugin_sync(app: AppHandle, state: State<'_, RunState>) -> Result<i32, String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
     let script = ensure_plugin_sync_script(&home)?;
-    run_native_streamed(app, state, "pluginsync".to_string(), move |out, err| {
+    run_native_streamed(app, state, stream_id::PLUGIN_SYNC.to_string(), move |out, err| {
         out(&format!("py -X utf8 {script} --verbose"));
         match std::process::Command::new("py")
             .args(["-X", "utf8", &script, "--verbose"])
@@ -10211,7 +10315,7 @@ async fn run_onboarding_step(
             return Err(trv("err.unknown_onb_action", cur_lang(), &[("action", &action)]));
         }
     };
-    spawn_streamed(app, state, "onboarding".to_string(), abs(rel), Vec::new()).await
+    spawn_streamed(app, state, stream_id::ONBOARDING.to_string(), abs(rel), Vec::new()).await
 }
 
 /// Create the ASCII junction <scripts_root>\SettingsMCP → the Cyrillic settings dir.
@@ -12668,9 +12772,15 @@ fn expand_ssh_config(path: &std::path::Path, home: &str, depth: u8, out: &mut St
     for line in text.lines() {
         let t = line.trim();
         // Match the `Include` keyword followed by whitespace/'=' (not e.g. "IncludeFoo").
-        let is_include = t.len() > 7
-            && t[..7].eq_ignore_ascii_case("include")
-            && t[7..].starts_with(|c: char| c.is_whitespace() || c == '=');
+        // Slice via `str::get` (not `t[..7]`): a non-ASCII line (e.g. a Cyrillic comment
+        // `# рабочий сервер`) whose byte 7 lands inside a multi-byte char would panic on a raw
+        // byte-index slice — `get` returns None instead, so the line is just passed through.
+        let is_include = t
+            .get(..7)
+            .is_some_and(|h| h.eq_ignore_ascii_case("include"))
+            && t
+                .get(7..)
+                .is_some_and(|r| r.starts_with(|c: char| c.is_whitespace() || c == '='));
         if is_include {
             let patterns = t[7..].trim_start_matches(|c: char| c.is_whitespace() || c == '=');
             for pat in patterns.split_whitespace() {
@@ -12863,6 +12973,35 @@ Host *\n\
         // [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(x)) reference values.
         assert_eq!(ps_encoded_command("A"), "QQA=");
         assert_eq!(ps_encoded_command("Hi"), "SABpAA==");
+    }
+
+    #[test]
+    fn expand_ssh_config_survives_cyrillic_line_and_still_detects_include() {
+        // Regression: a Cyrillic comment/value whose 7th byte splits a multi-byte char must not
+        // panic the byte-index Include check (str::get, not t[..7]). And a real `Include` on a
+        // line that also carries Cyrillic elsewhere must still be recognized.
+        let dir = std::env::temp_dir().join(format!("castellyn_ssh_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let inc = dir.join("extra.conf");
+        std::fs::write(&inc, "Host included\n  HostName 10.9.9.9\n").unwrap();
+        let main = dir.join("config");
+        // `# рабочий сервер`: byte 7 lands inside a Cyrillic char — the panic repro.
+        std::fs::write(
+            &main,
+            format!(
+                "# рабочий сервер\nHost родной\n  HostName 10.0.0.1\nInclude {}\n",
+                inc.display()
+            ),
+        )
+        .unwrap();
+        let mut out = String::new();
+        expand_ssh_config(&main, &dir.to_string_lossy(), 0, &mut out); // must not panic
+        assert!(
+            out.contains("Host included"),
+            "Include directive was resolved and its file spliced in"
+        );
+        assert!(out.contains("# рабочий сервер"), "Cyrillic line passed through");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

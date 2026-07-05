@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { sshTarget, type SshHost } from './ipc';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { sshTarget, STREAM_IDS, type SshHost } from './ipc';
+
+// Cross-language parity: the TS STREAM_IDS mirror must match Rust `mod stream_id` exactly. We parse
+// the const values straight out of lib.rs so a rename on either side breaks this test (no codegen).
+describe('STREAM_IDS ↔ Rust stream_id parity', () => {
+  it('matches the const set in lib.rs', () => {
+    const libRs = fileURLToPath(new URL('../../src-tauri/src/lib.rs', import.meta.url));
+    const src = readFileSync(libRs, 'utf8');
+    const mod = src.match(/mod stream_id \{([\s\S]*?)\n\}/);
+    expect(mod, 'mod stream_id block found in lib.rs').toBeTruthy();
+    const rustValues = [...mod![1].matchAll(/pub const \w+: &str = "([^"]+)";/g)].map((m) => m[1]);
+    expect(new Set(rustValues)).toEqual(new Set(Object.values(STREAM_IDS)));
+  });
+});
 
 // Pins the SSH arg-injection hardening (a host re-tokenised by ssh.exe must be a single safe token,
 // not just free of a leading '-'). Pure function — no tauri runtime touched.

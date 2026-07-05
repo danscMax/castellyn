@@ -126,6 +126,7 @@
     readOnboarding,
     runOnboardingStep,
     createSettingsJunction,
+    STREAM_IDS,
     type OnbStep
   } from '$lib/ipc';
   import { fmtBytes } from '$lib/bytes';
@@ -2173,7 +2174,7 @@
         appendLog(t('page.log_done', { code: e.payload.code }));
         // During a bulk plugin op, runBulkPlugins awaits the single backend call and does the reload
         // itself afterward — skip this handler's per-item lifecycle for the bulk's run-done.
-        if (e.payload.component === 'plugin-mgr' && bulkActive) return;
+        if (e.payload.component === STREAM_IDS.PLUGIN_MGR && bulkActive) return;
         // Only release the lock if THIS event owns it. F17: a bulk run (own domain, never sets
         // `running`) can emit run-done while an unrelated op holds the lock — don't unlock that op.
         const id = e.payload.component;
@@ -2193,19 +2194,19 @@
           }
         }
         // Component-specific data reloads (keep fresh before surfacing the outcome).
-        if (id === 'backup') await reloadBackup();
-        if (id === 'profiles') await reloadProfiles();
-        if (id === 'mcp') await reloadMcp();
-        if (id === 'sync') {
+        if (id === STREAM_IDS.BACKUP) await reloadBackup();
+        if (id === STREAM_IDS.PROFILES) await reloadProfiles();
+        if (id === STREAM_IDS.MCP) await reloadMcp();
+        if (id === STREAM_IDS.SYNC) {
           await reloadSync();
           await reloadConfigDrift();
           await reloadProfiles();
         }
-        if (id === 'engine' || id === 'provider') await reloadProviders();
-        if (id === 'engine') await reloadStack();
-        if (id === 'provider') await reloadOpencode();
-        if (id === 'schedule') await reloadSchedules();
-        if (id === 'plugin-mgr') await reloadExtensions();
+        if (id === STREAM_IDS.ENGINE || id === STREAM_IDS.PROVIDER) await reloadProviders();
+        if (id === STREAM_IDS.ENGINE) await reloadStack();
+        if (id === STREAM_IDS.PROVIDER) await reloadOpencode();
+        if (id === STREAM_IDS.SCHEDULE) await reloadSchedules();
+        if (id === STREAM_IDS.PLUGIN_MGR) await reloadExtensions();
 
         // Auto-recheck after a successful single-component apply (apply scripts write the applied
         // count, not availability) — toast appears after the follow-up check, not the apply.
@@ -2222,7 +2223,7 @@
         }
         if (id === 'all') allProgress = null;
         // Auto-recheck after a mutating fork action so the cards reflect the new state.
-        if (id === 'forks' && code === 0 && forkAct && forkAct !== 'check' && forkAct !== 'plan') {
+        if (id === STREAM_IDS.FORKS && code === 0 && forkAct && forkAct !== 'check' && forkAct !== 'plan') {
           appendLog(t('page.forks_recheck'));
           startForks('check');
           return;

@@ -10,6 +10,24 @@ export type Component = {
 
 export type RunMode = 'check' | 'apply';
 
+// Canonical native/script stream-component ids emitted as `run-done`'s `component` (NOT the manifest
+// component ids, which flow through generically). Mirror of Rust `mod stream_id` in src-tauri/src/lib.rs;
+// the two sets are asserted equal by the parity test in ipc.test.ts. Add/rename in all three places.
+export const STREAM_IDS = {
+  FORKS: 'forks',
+  BACKUP: 'backup',
+  PROFILES: 'profiles',
+  SYNC: 'sync',
+  ENGINE: 'engine',
+  PROVIDER: 'provider',
+  SCHEDULE: 'schedule',
+  MCP: 'mcp',
+  PLUGIN_MGR: 'plugin-mgr',
+  PLUGIN_SYNC: 'pluginsync',
+  ONBOARDING: 'onboarding'
+} as const;
+export type StreamId = (typeof STREAM_IDS)[keyof typeof STREAM_IDS];
+
 export const listComponents = () => invoke<Component[]>('list_components');
 export const readStatus = (path: string) => invoke<any>('read_status', { path });
 export const runComponent = (id: string, mode: RunMode) =>
@@ -38,12 +56,19 @@ export type ForkBranch = {
   outcome: string | null;
   // PowerShell's `Select-Object -Unique` yields a scalar string for a single file (array for 2+).
   conflictFiles: string | string[] | null;
+  // (normalize this union with `confFiles()` below — never call `.length` on it directly)
   aheadOfUpstream: number | null;
   cherryPlus: number | null;
   divergedFromForkAhead: number | null;
   checks: string | null;
   action: string | null;
 };
+
+/** Normalize a `conflictFiles` union (scalar string for 1 file, array for 2+, null for none) into a
+ *  string[]. Shared so callers never do `.length` on the raw union — which on the single-file scalar
+ *  is the filename's character count, not the file count (V-17). */
+export const confFiles = (cf: string | string[] | null): string[] =>
+  Array.isArray(cf) ? cf : cf ? [cf] : [];
 
 export type ForkRepo = {
   Name: string;

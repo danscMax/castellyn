@@ -11,5 +11,7 @@ export default {
   copyHint: '将整个日志复制到剪贴板',
   copiedShort: '✓ 已复制',
   clearHint: '清除日志输出',
+  windowed: '显示最近 {shown} 行，共 {total} 行',
+  showAll: '显示全部',
   empty: '在组件上点击「检查」或「应用」——实时输出会显示在这里。'
 };

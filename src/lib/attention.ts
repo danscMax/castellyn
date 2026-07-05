@@ -2,6 +2,7 @@
 // Kept side-effect-free and import-light so they're unit-testable.
 
 import type { Component, ForkStatus, BackupList, ProfilesStatus, SyncStatus, StackDriftItem } from './ipc';
+import { countOf } from './envelope';
 
 export type Attention = { level: 'info' | 'warn' | 'danger' | 'done'; count?: number };
 
@@ -12,8 +13,9 @@ export function updatesAttention(
 ): Attention | null {
   let changed = 0;
   for (const c of components) {
-    const n = statuses?.[c.id]?.counts?.changed;
-    if (typeof n === 'number') changed += n;
+    // Read through countOf so the badge honours the same legacy-shape fallbacks as the toast/cards
+    // (counts.changed → changed[] length → plugins_changed) — otherwise the surfaces can disagree.
+    changed += countOf(statuses?.[c.id], 'changed');
   }
   return changed > 0 ? { level: 'info', count: changed } : null;
 }

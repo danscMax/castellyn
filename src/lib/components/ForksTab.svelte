@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ForkStatus, ForkAction, GithubRepo } from '$lib/ipc';
+  import { confFiles, type ForkStatus, type ForkAction, type GithubRepo } from '$lib/ipc';
   import { forkMode, t, plural, pRepo, pConflict } from '$lib/i18n';
   import { relTime, formatAbsTime } from '$lib/relativeTime';
   import { statusTextClass } from '$lib/statusColor';
@@ -62,7 +62,7 @@
     'conflict' | 'needHands' | 'merged' | 'open' | null
   >(null);
   const repoHasConflict = (r: import('$lib/ipc').ForkRepo) =>
-    (r.branches ?? []).some((b) => b.outcome === 'conflict' || (b.conflictFiles?.length ?? 0) > 0);
+    (r.branches ?? []).some((b) => b.outcome === 'conflict' || confFiles(b.conflictFiles).length > 0);
   const repoNeedsHands = (r: import('$lib/ipc').ForkRepo) =>
     r.dirty || r.untracked || r.midOp || r.detached || repoHasConflict(r) || (r.behindBy ?? 0) > 0;
   const repoHasMergedPr = (r: import('$lib/ipc').ForkRepo) =>

@@ -11,5 +11,7 @@ export default {
   copyHint: 'Copy the whole log to the clipboard',
   copiedShort: '✓ Copied',
   clearHint: 'Clear the log output',
+  windowed: 'Showing the last {shown} of {total} lines',
+  showAll: 'Show all',
   empty: 'Press “Check” or “Apply” on a component — live output shows up here.'
 };

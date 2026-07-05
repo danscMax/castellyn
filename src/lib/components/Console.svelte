@@ -30,6 +30,15 @@
   let resizing = $state(false);
   let copied = $state(false);
 
+  // Render only the tail by default (item V-5): the full buffer is capped at 5000 lines, but
+  // mounting all of them — and re-diffing a non-keyed each on every front-trim — janks a verbose
+  // run. The whole `log` is still kept for copy/search; only the DOM is windowed. "Show all"
+  // opts back into the full render on demand (a legitimate 5000-node log dump is a rare click).
+  const LOG_WINDOW = 500;
+  let showAll = $state(false);
+  const view = $derived(showAll || log.length <= LOG_WINDOW ? log : log.slice(-LOG_WINDOW));
+  const hiddenCount = $derived(showAll ? 0 : Math.max(0, log.length - LOG_WINDOW));
+
   async function copyLog() {
     if (await copyText(log.join('\n'))) {
       copied = true;
@@ -147,8 +156,14 @@
 
   {#if !collapsed}
     {#if log.length}
+      {#if hiddenCount > 0}
+        <div class="windowed-bar">
+          <span>{t('console.windowed', { shown: LOG_WINDOW, total: log.length })}</span>
+          <button class="link-btn" onclick={() => (showAll = true)}>{t('console.showAll')}</button>
+        </div>
+      {/if}
       <div bind:this={logEl} class="log" style="height:{height}px">
-        {#each log as line}
+        {#each view as line}
           <div
             class="log-line"
             class:log-warn={line.startsWith('⚠')}
@@ -177,6 +192,27 @@
     cursor: ns-resize;
     flex-shrink: 0;
     transition: background 0.15s ease;
+  }
+  .windowed-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sw-space-3);
+    padding: 2px var(--sw-space-4);
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    background: color-mix(in srgb, var(--sw-bg-secondary) 40%, transparent);
+  }
+  .link-btn {
+    border: none;
+    background: transparent;
+    color: var(--sw-accent-text);
+    cursor: pointer;
+    font-size: var(--sw-text-xs);
+    padding: 0;
+  }
+  .link-btn:hover {
+    text-decoration: underline;
   }
   .resizer:hover {
     background: var(--sw-accent);

@@ -361,9 +361,15 @@
           continue;
         }
       }
-      const resetStr = limitsByProfile[p.profile]?.h5Reset;
-      const reset = resetStr ? Date.parse(resetStr) : NaN;
-      if (!Number.isFinite(reset)) continue; // no known reset yet — wait for the next poll
+      // Wait for the LATER of the two windows (V-18): a pane limited on the 7-day window still has
+      // a near-future 5h reset, so keying on h5Reset alone would fire a "continue" into a session
+      // that's still 7-day-exhausted. The binding window is whichever resets last.
+      const lim = limitsByProfile[p.profile];
+      const h5 = lim?.h5Reset ? Date.parse(lim.h5Reset) : NaN;
+      const d7 = lim?.d7Reset ? Date.parse(lim.d7Reset) : NaN;
+      const candidates = [h5, d7].filter(Number.isFinite) as number[];
+      if (!candidates.length) continue; // no known reset yet — wait for the next poll
+      const reset = Math.max(...candidates);
       if (contJitterMs[p.key] == null) contJitterMs[p.key] = 30_000 + Math.floor(Math.random() * 60_000);
       if (Date.now() < reset + contJitterMs[p.key]) continue;
       autoContinued.add(p.key);
