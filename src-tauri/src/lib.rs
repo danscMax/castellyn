@@ -1744,6 +1744,11 @@ async fn run_profile_mgmt(
             &[("name", &name)],
         ));
     }
+    // cc3-class guard (same as provider/proxy/folders paths): removing or renaming a profile whose
+    // session is live deletes/moves the very dir that session is reading.
+    if matches!(action.as_str(), "remove" | "rename") && profile_session_active(&name) {
+        return Err(trv("log.profile_running_warn", cur_lang(), &[("name", &name)]));
+    }
     let mut args: Vec<String> = vec!["-Action".into(), action.clone(), "-Name".into(), name];
     match action.as_str() {
         "add" => {
