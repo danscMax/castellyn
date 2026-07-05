@@ -52,7 +52,10 @@
     myProviders = null,
     onRepairElevated,
     onRelaunchAdmin,
-    onApplyMatrix
+    onApplyMatrix,
+    onMcpDeployProfile,
+    onMcpRemoveExtra,
+    mcpTick = 0
   }: {
     data: ProfilesStatus | null;
     config: ProfilesConfig | null;
@@ -74,6 +77,9 @@
     onRepairElevated: (name: string) => void;
     onRelaunchAdmin: () => void;
     onApplyMatrix: (changes: MatrixApply) => Promise<{ skipped: string[] }>;
+    onMcpDeployProfile: (profile: string) => void;
+    onMcpRemoveExtra: (server: string, profile: string) => void;
+    mcpTick?: number;
   } = $props();
 
   const busy = $derived(!!running);
@@ -614,7 +620,7 @@
   {/if}
 
   {#if profiles.length}
-    <ProfilesMatrix engines={engines} myProviders={myProviders} {running} {onApplyMatrix} />
+    <ProfilesMatrix engines={engines} myProviders={myProviders} {running} {onApplyMatrix} {onMcpDeployProfile} {onMcpRemoveExtra} {mcpTick} />
   {/if}
 </div>
 

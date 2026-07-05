@@ -3918,6 +3918,24 @@ struct MatrixFolder {
     actual: String,
 }
 
+/// One plugin's state in a profile: "on" (explicit true), "off" (explicit false), "unset" (absent).
+#[derive(Serialize, Clone)]
+struct MatrixPlugin {
+    id: String,
+    state: String,
+}
+
+/// A profile's MCP picture vs the canonical config/.mcp.json server set.
+#[derive(Serialize, Clone)]
+struct MatrixMcp {
+    /// Canonical server names (config/.mcp.json). Same for every row.
+    canon: Vec<String>,
+    /// Deployed servers that ARE canonical (deployed ∩ canon).
+    deployed: Vec<String>,
+    /// Deployed servers NOT in canon (deployed − canon).
+    extras: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct MatrixRow {
     name: String,
@@ -3926,6 +3944,92 @@ struct MatrixRow {
     provider: MatrixProvider,
     proxy: String,
     folders: Vec<MatrixFolder>,
+    plugins: Vec<MatrixPlugin>,
+    mcp: MatrixMcp,
+}
+
+/// Classify one plugin's `enabledPlugins` value: explicit true → "on", explicit false → "off",
+/// absent (or non-bool) → "unset". Pure so it is unit-testable.
+fn plugin_state(v: Option<&serde_json::Value>) -> &'static str {
+    match v.and_then(|x| x.as_bool()) {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "unset",
+    }
+}
+
+/// Sort + dedup a bag of keys into the shared plugin universe (stable column order across rows,
+/// so the N/M chip denominator is identical for every profile). Pure.
+fn union_sorted(mut keys: Vec<String>) -> Vec<String> {
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// Split a profile's deployed MCP servers against the canonical set: (deployed ∩ canon, deployed − canon).
+/// Pure.
+fn mcp_split(canon: &[String], deployed_all: &[String]) -> (Vec<String>, Vec<String>) {
+    let deployed = deployed_all
+        .iter()
+        .filter(|s| canon.iter().any(|c| c == *s))
+        .cloned()
+        .collect();
+    let extras = deployed_all
+        .iter()
+        .filter(|s| !canon.iter().any(|c| c == *s))
+        .cloned()
+        .collect();
+    (deployed, extras)
+}
+
+/// Upsert a settings.json `enabledPlugins` map in place: `enable` → true, `disable` → false. Every
+/// other key (and every other top-level field) is preserved; a missing `enabledPlugins` object is
+/// created. Never deletes a key — an explicit `false` is a per-profile opt-out (matches plugin_sync's
+/// union semantics). Pure (Value in/out) → testable.
+fn upsert_enabled_plugins(settings: &mut serde_json::Value, enable: &[String], disable: &[String]) {
+    use serde_json::json;
+    if !settings.is_object() {
+        *settings = json!({});
+    }
+    let obj = settings.as_object_mut().unwrap();
+    let ep = obj.entry("enabledPlugins").or_insert_with(|| json!({}));
+    if !ep.is_object() {
+        *ep = json!({});
+    }
+    let m = ep.as_object_mut().unwrap();
+    for id in enable {
+        m.insert(id.clone(), json!(true));
+    }
+    for id in disable {
+        m.insert(id.clone(), json!(false));
+    }
+}
+
+/// A settings.json's `enabledPlugins` object (id → bool). Unreadable/absent → empty map.
+fn read_enabled_plugins_at(path: &str) -> serde_json::Map<String, serde_json::Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok())
+        .and_then(|v| {
+            v.get("enabledPlugins")
+                .and_then(|e| e.as_object())
+                .cloned()
+        })
+        .unwrap_or_default()
+}
+
+/// Canonical MCP server names from config/.mcp.json (mirrors `read_mcp`'s source read). Empty on
+/// any IO/parse failure.
+fn mcp_canon_servers() -> Vec<String> {
+    std::fs::read_to_string(abs(MCP_CONFIG_REL))
+        .ok()
+        .and_then(|c| parse_json_bom(&c).ok())
+        .and_then(|v| {
+            v.get("mcpServers")
+                .and_then(|m| m.as_object())
+                .map(|o| o.keys().cloned().collect())
+        })
+        .unwrap_or_default()
 }
 
 /// `sharedFoldersDefault` (canonical column order) from a parsed profiles.json.
@@ -3978,6 +4082,36 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
         .get("profiles")
         .and_then(|p| p.as_array())
         .unwrap_or(&empty);
+
+    // Plugin universe (one column set shared by every row so the N/M chip denominator is stable):
+    // installed_plugins.json keys ∪ enabledPlugins keys of base ~/.claude ∪ each profile's settings.
+    // Cache each profile's enabledPlugins map to avoid a second read in the row loop.
+    let mut universe_keys: Vec<String> = Vec::new();
+    if let Some((_, installed, _)) = load_installed_plugins() {
+        if let Some(po) = installed.get("plugins").and_then(|v| v.as_object()) {
+            universe_keys.extend(po.keys().cloned());
+        }
+    }
+    universe_keys.extend(
+        read_enabled_plugins_at(&format!("{home}\\.claude\\settings.json"))
+            .keys()
+            .cloned(),
+    );
+    let mut ep_by_profile: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> =
+        std::collections::HashMap::new();
+    for p in profiles {
+        if let Some(name) = p.get("name").and_then(|n| n.as_str()) {
+            if name.is_empty() {
+                continue;
+            }
+            let m = read_enabled_plugins_at(&format!("{home}\\.claude-{name}\\settings.json"));
+            universe_keys.extend(m.keys().cloned());
+            ep_by_profile.insert(name.to_string(), m);
+        }
+    }
+    let universe = union_sorted(universe_keys);
+    let mcp_canon = mcp_canon_servers();
+
     let mut rows = Vec::new();
     for p in profiles {
         let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -3995,6 +4129,16 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
                 actual: classify_link(&profile_dir.join(folder)).to_string(),
             })
             .collect();
+        let ep = ep_by_profile.get(name);
+        let plugins = universe
+            .iter()
+            .map(|id| MatrixPlugin {
+                id: id.clone(),
+                state: plugin_state(ep.and_then(|m| m.get(id))).to_string(),
+            })
+            .collect();
+        let deployed_all = profile_mcp_servers(name).unwrap_or_default();
+        let (deployed, extras) = mcp_split(&mcp_canon, &deployed_all);
         rows.push(MatrixRow {
             name: name.to_string(),
             color: p.get("color").and_then(|c| c.as_str()).unwrap_or("").to_string(),
@@ -4011,6 +4155,12 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
             },
             proxy: e.proxy,
             folders,
+            plugins,
+            mcp: MatrixMcp {
+                canon: mcp_canon.clone(),
+                deployed,
+                extras,
+            },
         });
     }
     Ok(rows)
@@ -4194,6 +4344,52 @@ fn set_profile_folders(name: String, folders: Vec<String>) -> Result<Vec<String>
         }
     }
     Ok(kept)
+}
+
+/// Set a profile's per-profile plugin enablement: `enable` → explicit true, `disable` → explicit
+/// false, in its `~/.claude-<name>/settings.json` `enabledPlugins`. Surgical — every other key and
+/// the rest of the file are preserved; keys are NEVER removed (an explicit false is a per-profile
+/// opt-out plugin_sync respects). Same live-session guard as provider/proxy/folders.
+#[tauri::command]
+fn set_profile_plugins(name: String, enable: Vec<String>, disable: Vec<String>) -> Result<(), String> {
+    if !valid_profile_name(&name) {
+        return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &name)]));
+    }
+    let known = profile_names();
+    if !known.iter().any(|n| n == &name) {
+        return Err(trv(
+            "log.profile_not_found",
+            cur_lang(),
+            &[("name", &name), ("known", &known.join(", "))],
+        ));
+    }
+    if profile_session_active(&name) {
+        return Err(trv("log.profile_running_warn", cur_lang(), &[("name", &name)]));
+    }
+    // Charset guard on plugin ids (name@marketplace) — mirrors run_plugin's.
+    let id_ok = |id: &String| {
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-' | '/'))
+    };
+    for id in enable.iter().chain(disable.iter()) {
+        if !id_ok(id) {
+            return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", id)]));
+        }
+    }
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let settings_path = format!("{home}\\.claude-{name}\\settings.json");
+    let mut settings: serde_json::Value = match std::fs::read_to_string(&settings_path) {
+        Ok(ref c) if !c.trim().is_empty() => {
+            parse_json_bom(c).map_err(|e| format!("parse settings: {e}"))?
+        }
+        _ => serde_json::json!({}),
+    };
+    upsert_enabled_plugins(&mut settings, &enable, &disable);
+    let serialized =
+        serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {e}"))?;
+    write_json_atomic(&settings_path, &serialized).map_err(|e| format!("write settings: {e}"))
 }
 
 /// Recreate ONE profile's shared-folder links (Repair-ProfileLinks.ps1 -Name). The matrix-apply
@@ -12407,6 +12603,7 @@ pub fn run() {
             read_profile_matrix,
             set_profile_proxy,
             set_profile_folders,
+            set_profile_plugins,
             run_profile_relink,
             run_provider,
             list_my_providers,
@@ -13159,6 +13356,69 @@ mod tests {
         assert_eq!(classify_link(&real_dir), "real"); // exists, not a reparse point
         assert_eq!(classify_link(&base.join("nope")), "missing");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn matrix_plugin_state_classifies() {
+        use serde_json::json;
+        assert_eq!(plugin_state(Some(&json!(true))), "on");
+        assert_eq!(plugin_state(Some(&json!(false))), "off");
+        assert_eq!(plugin_state(None), "unset"); // key absent
+        assert_eq!(plugin_state(Some(&json!("yes"))), "unset"); // non-bool → unset
+    }
+
+    #[test]
+    fn matrix_plugin_universe_union_sorted() {
+        // Union of keys from several sources, deduped and sorted (stable column order).
+        let keys = vec![
+            "b@m".to_string(),
+            "a@m".to_string(),
+            "b@m".to_string(), // dup
+            "c@m".to_string(),
+        ];
+        assert_eq!(
+            union_sorted(keys),
+            vec!["a@m".to_string(), "b@m".to_string(), "c@m".to_string()]
+        );
+        assert!(union_sorted(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn matrix_upsert_enabled_plugins_surgical() {
+        use serde_json::json;
+        // Existing file: unrelated top key + an enabledPlugins with a foreign entry.
+        let mut settings = json!({
+            "theme": "dark",
+            "enabledPlugins": { "keep@m": true }
+        });
+        upsert_enabled_plugins(
+            &mut settings,
+            &["on@m".to_string()],
+            &["off@m".to_string()],
+        );
+        assert_eq!(settings["theme"], "dark"); // other field preserved
+        let ep = &settings["enabledPlugins"];
+        assert_eq!(ep["keep@m"], json!(true)); // foreign key untouched
+        assert_eq!(ep["on@m"], json!(true)); // enable → true
+        assert_eq!(ep["off@m"], json!(false)); // disable → explicit false (never deleted)
+
+        // Missing enabledPlugins object is created.
+        let mut bare = json!({ "x": 1 });
+        upsert_enabled_plugins(&mut bare, &["p@m".to_string()], &[]);
+        assert_eq!(bare["x"], 1);
+        assert_eq!(bare["enabledPlugins"]["p@m"], json!(true));
+    }
+
+    #[test]
+    fn matrix_mcp_split_intersect_and_extras() {
+        let canon = vec!["context7".to_string(), "playwright".to_string()];
+        let deployed_all = vec![
+            "context7".to_string(), // ∩ canon
+            "local-extra".to_string(), // extra
+        ];
+        let (deployed, extras) = mcp_split(&canon, &deployed_all);
+        assert_eq!(deployed, vec!["context7".to_string()]);
+        assert_eq!(extras, vec!["local-extra".to_string()]);
     }
 
     #[test]

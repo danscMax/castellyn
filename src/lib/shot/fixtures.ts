@@ -203,26 +203,40 @@ const handlers: Record<string, (args: any) => any> = {
   read_profile_matrix: () => {
     const F7 = ['agents', 'commands', 'hooks', 'plugins', 'skills', 'projects', 'history.jsonl'];
     const allLinked = F7.map((name) => ({ name, desired: true, actual: 'linked' as 'linked' | 'real' | 'missing' }));
+    type PState = 'on' | 'off' | 'unset';
+    const mkPlugins = (...states: PState[]) =>
+      ['superpowers@2.4.1', 'ponytail@1.1.0', 'speckit@0.9.3', 'drywall@0.3.0'].map((id, i) => ({ id, state: states[i] ?? 'on' }));
+    const CANON = ['context7', 'serena', 'playwright', 'chrome-devtools', 'claude-in-chrome'];
+    const fullMcp = { canon: CANON, deployed: CANON, extras: [] as string[] };
     const mk = (
       name: string,
       color: string,
       description: string,
       baseUrl = '',
       proxy = '',
-      folders = allLinked
+      folders = allLinked,
+      plugins = mkPlugins('on', 'on', 'on', 'on'),
+      mcp = fullMcp
     ) => ({
       name,
       color,
       description,
       provider: { baseUrl, model: baseUrl ? 'deepseek-chat' : '', smallModel: baseUrl ? 'deepseek-chat' : '', hasToken: !!baseUrl },
       proxy,
-      folders
+      folders,
+      plugins,
+      mcp
     });
     return [
       mk('ccmy', 'Cyan', 'Personal'),
-      mk('cc1', 'Green', 'Med1'),
+      mk('cc1', 'Green', 'Med1', '', '', allLinked, mkPlugins('on', 'on', 'unset', 'on')),
       mk('cc2', 'Green', 'Med2'),
-      mk('cc3', 'Yellow', '3', '', 'socks5://127.0.0.1:1080'),
+      // cc3: extra (non-canon) MCP server deployed + a socks5 proxy.
+      mk('cc3', 'Yellow', '3', '', 'socks5://127.0.0.1:1080', allLinked, mkPlugins('on', 'on', 'on', 'on'), {
+        canon: CANON,
+        deployed: CANON,
+        extras: ['filesystem']
+      }),
       mk('ccfree', 'Magenta', 'Free tier', 'https://api.deepseek.com', '', [
         { name: 'agents', desired: true, actual: 'linked' },
         { name: 'commands', desired: true, actual: 'linked' },
@@ -231,16 +245,22 @@ const handlers: Record<string, (args: any) => any> = {
         { name: 'skills', desired: true, actual: 'linked' },
         { name: 'projects', desired: false, actual: 'missing' },
         { name: 'history.jsonl', desired: false, actual: 'missing' }
-      ]),
+      ], mkPlugins('on', 'off', 'on', 'unset')),
       mk('cc4', 'Blue', 'Med4'),
       mk('cc5', 'DarkGreen', 'Med5'),
       mk('cc6', 'DarkCyan', 'Med6'),
-      mk('cctest', 'Gray', 'Throwaway'),
+      // cctest: two canon MCP servers not yet deployed (missing).
+      mk('cctest', 'Gray', 'Throwaway', '', '', allLinked, mkPlugins('on', 'on', 'on', 'on'), {
+        canon: CANON,
+        deployed: CANON.slice(0, 3),
+        extras: []
+      }),
       mk('research', 'DarkMagenta', 'Long-context', 'http://127.0.0.1:3456')
     ];
   },
   set_profile_proxy: () => null,
   set_profile_folders: () => [],
+  set_profile_plugins: () => null,
   // Orphan profile dirs (Adopt/Delete section) — none in the demo shot.
   read_orphan_profiles: () => [],
 

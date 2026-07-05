@@ -219,6 +219,11 @@ export type MatrixFolder = {
   desired: boolean; // configured to be linked (linkedFolders)
   actual: 'linked' | 'real' | 'missing'; // on-disk reality (real = holds data, not a link)
 };
+// A plugin's stored state in one profile. 'unset' = no key (inherited); 'off' = explicit false.
+export type MatrixPlugin = { id: string; state: 'on' | 'off' | 'unset' };
+// MCP reconcile facts for one profile: canonical set vs what's actually deployed, plus non-canon
+// tails. Read-only facts — MCP is fixed by deploy/remove actions, not the draft/apply desired-edit.
+export type MatrixMcp = { canon: string[]; deployed: string[]; extras: string[] };
 export type MatrixRow = {
   name: string;
   color: string; // PowerShell colour name (Cyan/Green/DarkGreen/…) — map via profileDotColor
@@ -226,6 +231,8 @@ export type MatrixRow = {
   provider: { baseUrl: string; model: string; smallModel: string; hasToken: boolean };
   proxy: string; // '' = none
   folders: MatrixFolder[];
+  plugins: MatrixPlugin[];
+  mcp: MatrixMcp;
 };
 // The accumulated change-set the matrix hands to +page for sequential apply. baseUrl null = clear
 // provider (back to OAuth/subscription). Profiles in `folders` are relinked after all writes.
@@ -233,6 +240,7 @@ export type MatrixApply = {
   providers: { name: string; baseUrl: string | null; model: string; smallModel: string }[];
   proxies: { name: string; url: string }[];
   folders: { name: string; folders: string[] }[];
+  plugins: { name: string; enable: string[]; disable: string[] }[];
 };
 export const readProfileMatrix = () => invoke<MatrixRow[]>('read_profile_matrix');
 // Empty url clears the proxy; a set url must start http(s):// or socks5:// (validated server-side).
@@ -244,6 +252,10 @@ export const setProfileFolders = (name: string, folders: string[]) =>
 // Re-creates the shared-folder links for one profile; streams via the global run-log (run-done).
 export const runProfileRelink = (name: string) =>
   invoke<number>('run_profile_relink', { name });
+// Writes explicit enabledPlugins overrides for one profile. `enable` → true keys, `disable` → false
+// keys (an explicit opt-out; plugin_sync's union re-adds a removed key, so a false must be written).
+export const setProfilePlugins = (name: string, enable: string[], disable: string[]) =>
+  invoke<void>('set_profile_plugins', { name, enable, disable });
 
 export const readProfilesConfig = () => invoke<ProfilesConfig | null>('read_profiles_config');
 export const runProfileMgmt = (a: ProfileMgmtArgs) =>

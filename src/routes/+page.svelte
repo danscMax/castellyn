@@ -18,6 +18,7 @@
     runProfileMgmt,
     setProfileProxy,
     setProfileFolders,
+    setProfilePlugins,
     runProfileRelink,
     readOrphanProfiles,
     deleteOrphanProfile,
@@ -203,6 +204,8 @@
   let profilesConfig = $state<ProfilesConfig | null>(null);
   let launchConfig = $state<LaunchConfigStatus | null>(null);
   let mcpData = $state<McpStatus | null>(null);
+  // Bumped on every MCP reload → tells the profile matrix to re-read its mcp facts (deploy/remove).
+  let mcpTick = $state(0);
   let envsData = $state<EnvInfo[] | null>(null);
   let envsMatrix = $state<SkillRow[] | null>(null);
   let envsLoaded = $state(false);
@@ -745,6 +748,7 @@
         if (code !== 0) throw new Error(t('page.matrix_fail', { name: p.name, step: t('page.matrix_step_provider') }));
       }
       for (const p of changes.proxies) await setProfileProxy(p.name, p.url);
+      for (const p of changes.plugins) await setProfilePlugins(p.name, p.enable, p.disable);
       for (const f of changes.folders) {
         const sk = await setProfileFolders(f.name, f.folders);
         skipped.push(...sk);
@@ -777,6 +781,7 @@
     } catch {
       mcpData = null;
     }
+    mcpTick++;
   }
 
   function startMcp(action: 'deploy', only?: string[]) {
@@ -2336,6 +2341,9 @@
               {onRepairElevated}
               {onRelaunchAdmin}
               {onApplyMatrix}
+              onMcpDeployProfile={onMcpDeploy}
+              {onMcpRemoveExtra}
+              {mcpTick}
             />
           </div>
         {/if}

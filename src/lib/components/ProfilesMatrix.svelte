@@ -16,18 +16,27 @@
     engines = [],
     myProviders = [],
     running,
-    onApplyMatrix
+    onApplyMatrix,
+    onMcpDeployProfile,
+    onMcpRemoveExtra,
+    mcpTick = 0
   }: {
     engines?: EngineStatus[] | null;
     myProviders?: MyProvider[] | null;
     running: string | null;
     onApplyMatrix: (changes: MatrixApply) => Promise<{ skipped: string[] }>;
+    // MCP reconcile actions (fire-and-forget: they stream / confirm, then reloadMcp bumps mcpTick).
+    onMcpDeployProfile: (profile: string) => void;
+    onMcpRemoveExtra: (server: string, profile: string) => void;
+    // Bumped by +page after any MCP reload → re-read matrix rows so mcp facts refresh (draft kept).
+    mcpTick?: number;
   } = $props();
 
   const busy = $derived(!!running);
 
   // --- Baseline (server truth) + local draft overlay -----------------------------------------
-  type Draft = { provider: string; proxy: string; folders: string[] };
+  // plugins = per-id explicit override (true/false); absent id = no draft edit (baseline stands).
+  type Draft = { provider: string; proxy: string; folders: string[]; plugins: Record<string, boolean> };
   let rows = $state<MatrixRow[]>([]);
   let loaded = $state(false);
   let loadErr = $state('');
@@ -41,16 +50,19 @@
       d[r.name] = {
         provider: r.provider.baseUrl ?? '',
         proxy: r.proxy ?? '',
-        folders: r.folders.filter((f) => f.desired).map((f) => f.name)
+        folders: r.folders.filter((f) => f.desired).map((f) => f.name),
+        plugins: {}
       };
     }
     draft = d;
   }
-  async function load() {
+  // reseed=false: refresh server truth but keep the current draft (used for the mcpTick re-read,
+  // where only mcp facts changed and the user may have unsaved provider/plugin edits to preserve).
+  async function load(reseed = true) {
     try {
       const list = await readProfileMatrix();
       rows = list;
-      seed(list);
+      if (reseed) seed(list);
       loadErr = '';
     } catch (e) {
       loadErr = String(e);
@@ -61,6 +73,20 @@
   $effect(() => {
     // Load once when the tab first renders this section.
     if (!loaded) load();
+  });
+  // An MCP deploy/remove elsewhere bumps mcpTick → re-read mcp facts without dropping the draft.
+  // Plain (non-reactive) let: null until the first post-load run seeds it, so no spurious re-read.
+  let lastTick: number | null = null;
+  $effect(() => {
+    const tick = mcpTick;
+    if (!loaded) return;
+    if (lastTick === null) {
+      lastTick = tick;
+      return;
+    }
+    if (tick === lastTick) return;
+    lastTick = tick;
+    load(false);
   });
 
   // --- Provider options (reused: anthropic engines + saved custom providers + OAuth) -----------
@@ -113,8 +139,46 @@
     const r = rowByName.get(name);
     return !!r && !eqSet(draft[name]?.folders ?? [], baseFolders(r));
   }
+  // --- Plugins (per-profile enabledPlugins override) -----------------------------------------
+  // Effective on = draft override if set, else the stored state is 'on'.
+  function pluginOn(name: string, p: { id: string; state: string }): boolean {
+    const ov = draft[name]?.plugins[p.id];
+    return ov === undefined ? p.state === 'on' : ov;
+  }
+  // Dirty = the override changes what's STORED. unset has no stored bool, so any explicit override
+  // (true OR false — the false being a deliberate opt-out) is a change; on/off only flip.
+  function pluginDirty(name: string, p: { id: string; state: string }): boolean {
+    const ov = draft[name]?.plugins[p.id];
+    if (ov === undefined) return false;
+    if (p.state === 'on') return ov === false;
+    if (p.state === 'off') return ov === true;
+    return true; // unset
+  }
+  function pluginsChanged(name: string): boolean {
+    const r = rowByName.get(name);
+    return !!r && r.plugins.some((p) => pluginDirty(name, p));
+  }
+  function togglePlugin(name: string, id: string, on: boolean) {
+    draft[name] = { ...draft[name], plugins: { ...draft[name].plugins, [id]: on } };
+  }
+  function pluginOnCount(name: string): number {
+    const r = rowByName.get(name);
+    return r ? r.plugins.filter((p) => pluginOn(name, p)).length : 0;
+  }
+  // short label: strip any @version tail.
+  const pluginShort = (id: string): string => id.split('@')[0];
+
+  // --- MCP facts (read-only reconcile status) ------------------------------------------------
+  function mcpMissing(r: MatrixRow): string[] {
+    const have = new Set(r.mcp.deployed);
+    return r.mcp.canon.filter((c) => !have.has(c));
+  }
+  function mcpWarn(r: MatrixRow): boolean {
+    return mcpMissing(r).length > 0 || r.mcp.extras.length > 0;
+  }
+
   function rowDirty(name: string): boolean {
-    return providerChanged(name) || proxyChanged(name) || foldersChanged(name);
+    return providerChanged(name) || proxyChanged(name) || foldersChanged(name) || pluginsChanged(name);
   }
   const dirtyNames = $derived(rows.map((r) => r.name).filter((n) => rowDirty(n)));
   // A proxy edit that isn't a clear must be a valid http(s)/socks5 URL, else Apply is blocked.
@@ -125,15 +189,18 @@
   const anyInvalid = $derived(dirtyNames.some((n) => !proxyValid(n)));
   const canApply = $derived(dirtyNames.length > 0 && !anyInvalid && !busy && !applying);
 
-  // --- Folder popover ------------------------------------------------------------------------
+  // --- Popover (folders / plugins / mcp — one at a time, anchored to the clicked chip) ---------
+  type PopKind = 'folders' | 'plugins' | 'mcp';
   let popFor = $state<string | null>(null);
+  let popKind = $state<PopKind>('folders');
   let popAnchor = $state<HTMLElement | null>(null);
-  function togglePop(name: string, el: HTMLElement) {
-    if (popFor === name) {
+  function togglePop(name: string, kind: PopKind, el: HTMLElement) {
+    if (popFor === name && popKind === kind) {
       popFor = null;
       return;
     }
     popAnchor = el;
+    popKind = kind;
     popFor = name;
   }
   function toggleFolder(name: string, folder: string, on: boolean) {
@@ -177,6 +244,12 @@
         const parts = [...removed.map((f) => `−${f}`), ...added.map((f) => `+${f}`)];
         out.push({ who: r.name, cat: t('profiles.matrixCatFolders'), text: parts.join(', ') });
       }
+      if (pluginsChanged(r.name)) {
+        const on = r.plugins.filter((p) => pluginDirty(r.name, p) && d.plugins[p.id] === true);
+        const off = r.plugins.filter((p) => pluginDirty(r.name, p) && d.plugins[p.id] === false);
+        const parts = [...off.map((p) => `−${pluginShort(p.id)}`), ...on.map((p) => `+${pluginShort(p.id)}`)];
+        out.push({ who: r.name, cat: t('profiles.matrixCatPlugins'), text: parts.join(', ') });
+      }
     }
     return out;
   });
@@ -185,6 +258,7 @@
     const providers: MatrixApply['providers'] = [];
     const proxies: MatrixApply['proxies'] = [];
     const folders: MatrixApply['folders'] = [];
+    const plugins: MatrixApply['plugins'] = [];
     for (const r of rows) {
       const d = draft[r.name];
       if (!d) continue;
@@ -195,8 +269,13 @@
       }
       if (proxyChanged(r.name)) proxies.push({ name: r.name, url: d.proxy.trim() });
       if (foldersChanged(r.name)) folders.push({ name: r.name, folders: d.folders });
+      if (pluginsChanged(r.name)) {
+        const enable = r.plugins.filter((p) => pluginDirty(r.name, p) && d.plugins[p.id] === true).map((p) => p.id);
+        const disable = r.plugins.filter((p) => pluginDirty(r.name, p) && d.plugins[p.id] === false).map((p) => p.id);
+        plugins.push({ name: r.name, enable, disable });
+      }
     }
-    return { providers, proxies, folders };
+    return { providers, proxies, folders, plugins };
   }
 
   let previewOpen = $state(false);
@@ -242,10 +321,12 @@
       <table class="mx">
         <thead>
           <tr>
-            <th style="width:26%">{t('profiles.colName')}</th>
-            <th style="width:28%">{t('profiles.colProvider')}</th>
-            <th style="width:24%">{t('profiles.matrixColProxy')}</th>
-            <th style="width:22%">{t('profiles.matrixColFolders')}</th>
+            <th style="width:18%">{t('profiles.colName')}</th>
+            <th style="width:22%">{t('profiles.colProvider')}</th>
+            <th style="width:18%">{t('profiles.matrixColProxy')}</th>
+            <th style="width:14%">{t('profiles.matrixColFolders')}</th>
+            <th style="width:14%">{t('profiles.matrixColPlugins')}</th>
+            <th style="width:14%">{t('profiles.matrixColMcp')}</th>
           </tr>
         </thead>
         <tbody>
@@ -290,10 +371,34 @@
                   class="chip"
                   class:warn={folderWarn(r, r.name)}
                   disabled={busy || applying}
-                  onclick={(e) => togglePop(r.name, e.currentTarget)}
+                  onclick={(e) => togglePop(r.name, 'folders', e.currentTarget)}
                   title={t('profiles.matrixFoldersTip')}
                 >
                   {d.folders.length}/{r.folders.length}
+                </button>
+              </td>
+              <td>
+                <button
+                  type="button"
+                  class="chip"
+                  class:dirtychip={pluginsChanged(r.name)}
+                  disabled={busy || applying}
+                  onclick={(e) => togglePop(r.name, 'plugins', e.currentTarget)}
+                  title={t('profiles.matrixPluginsTip')}
+                >
+                  {pluginOnCount(r.name)}/{r.plugins.length}
+                </button>
+              </td>
+              <td>
+                <button
+                  type="button"
+                  class="chip"
+                  class:warn={mcpWarn(r)}
+                  disabled={busy}
+                  onclick={(e) => togglePop(r.name, 'mcp', e.currentTarget)}
+                  title={t('profiles.matrixMcpTip')}
+                >
+                  {r.mcp.deployed.length}/{r.mcp.canon.length}{#if r.mcp.extras.length}&nbsp;+{r.mcp.extras.length}{/if}
                 </button>
               </td>
             </tr>
@@ -306,21 +411,72 @@
       {@const r = rowByName.get(popFor)}
       {#if r}
         <div class="popover" use:anchored={{ anchor: popAnchor, onOutside: () => (popFor = null) }}>
-          {#each r.folders as f (f.name)}
-            <label class="poprow">
-              <Toggle
-                checked={draft[popFor].folders.includes(f.name)}
-                disabled={busy || applying}
-                onCheckedChange={(v) => toggleFolder(popFor!, f.name, v)}
-                title={f.name}
-              />
-              <span class="font-mono text-sw-xs">{f.name}</span>
-              {#if f.desired && f.actual !== 'linked'}
-                <span class="status-warn text-sw-xs" title={t('profiles.matrixFolderRealTip')}>{f.actual === 'real' ? t('profiles.matrixFolderReal') : t('profiles.matrixFolderMissing')}</span>
-              {/if}
-            </label>
-          {/each}
-          <div class="warnnote">{t('profiles.matrixRelinkNote')}</div>
+          {#if popKind === 'folders'}
+            {#each r.folders as f (f.name)}
+              <label class="poprow">
+                <Toggle
+                  checked={draft[popFor].folders.includes(f.name)}
+                  disabled={busy || applying}
+                  onCheckedChange={(v) => toggleFolder(popFor!, f.name, v)}
+                  title={f.name}
+                />
+                <span class="font-mono text-sw-xs">{f.name}</span>
+                {#if f.desired && f.actual !== 'linked'}
+                  <span class="status-warn text-sw-xs" title={t('profiles.matrixFolderRealTip')}>{f.actual === 'real' ? t('profiles.matrixFolderReal') : t('profiles.matrixFolderMissing')}</span>
+                {/if}
+              </label>
+            {/each}
+            <div class="warnnote">{t('profiles.matrixRelinkNote')}</div>
+          {:else if popKind === 'plugins'}
+            {#each r.plugins as p (p.id)}
+              <label class="poprow">
+                <Toggle
+                  checked={pluginOn(popFor, p)}
+                  disabled={busy || applying}
+                  onCheckedChange={(v) => togglePlugin(popFor!, p.id, v)}
+                  title={p.id}
+                />
+                <span class="min-w-0 flex-1 truncate text-sw-xs" title={p.id}>{pluginShort(p.id)}</span>
+                {#if p.state === 'unset' && draft[popFor].plugins[p.id] === undefined}
+                  <span class="text-sw-xs text-sw-text-muted">{t('profiles.matrixPluginInherited')}</span>
+                {:else if p.state === 'off'}
+                  <span class="text-sw-xs text-sw-text-muted">{t('profiles.matrixPluginOff')}</span>
+                {/if}
+              </label>
+            {/each}
+          {:else}
+            {@const missing = mcpMissing(r)}
+            {#if missing.length}
+              <div class="popsec">{t('profiles.matrixMcpMissing')}</div>
+              <div class="mcprow">
+                <span class="min-w-0 flex-1 break-words font-mono text-sw-xs">{missing.join(', ')}</span>
+                <button
+                  type="button"
+                  class="mcpbtn"
+                  disabled={busy}
+                  onclick={() => onMcpDeployProfile(popFor!)}
+                >{t('profiles.matrixMcpDeployBtn')}</button>
+              </div>
+            {/if}
+            {#if r.mcp.extras.length}
+              <div class="popsec">{t('profiles.matrixMcpExtras')}</div>
+              {#each r.mcp.extras as ex (ex)}
+                <div class="mcprow">
+                  <span class="min-w-0 flex-1 truncate font-mono text-sw-xs" title={ex}>{ex}</span>
+                  <button
+                    type="button"
+                    class="xbtn"
+                    disabled={busy}
+                    onclick={() => onMcpRemoveExtra(ex, popFor!)}
+                    title={t('profiles.matrixMcpRemoveTip')}
+                  >✕</button>
+                </div>
+              {/each}
+            {/if}
+            {#if !missing.length && !r.mcp.extras.length}
+              <div class="text-sw-xs text-sw-text-muted">{t('profiles.matrixMcpInSync')}</div>
+            {/if}
+          {/if}
         </div>
       {/if}
     {/if}
@@ -405,6 +561,55 @@
   }
   .chip.warn {
     border-color: var(--sw-warn);
+  }
+  .chip.dirtychip {
+    border-color: var(--sw-accent);
+  }
+  .popsec {
+    margin: 6px 0 2px;
+    font-size: var(--sw-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--sw-text-muted);
+  }
+  .popsec:first-child {
+    margin-top: 0;
+  }
+  .mcprow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+  .xbtn {
+    flex-shrink: 0;
+    border: 1px solid var(--sw-border);
+    border-radius: 6px;
+    background: var(--sw-bg-secondary);
+    color: var(--sw-warn);
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 6px;
+    cursor: pointer;
+  }
+  .xbtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .mcpbtn {
+    flex-shrink: 0;
+    border: 1px solid var(--sw-accent);
+    border-radius: 6px;
+    background: var(--sw-bg-secondary);
+    color: var(--sw-accent);
+    font-size: var(--sw-text-xs);
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .mcpbtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .warn {
     display: block;
