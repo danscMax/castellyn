@@ -15,5 +15,5 @@ export default {
   bomfix:
     '配置 BOM 修复：修复意外带有 BOM 标记保存的 Claude JSON 文件——文件开头的不可见字节会导致 Claude Code 无法读取设置。它会移除该标记而不更改内容。',
   ccrrouter:
-    'Claude Code Router（ccr）——一座桥梁，Claude Code 通过它与纯 OpenAI 引擎（FreeLLMAPI、DeepSeek、Qwen）通信。LM Studio 不需要桥梁——它提供原生 Anthropic 端点并直接挂载到配置上。此步骤更新 ccr（npm）；安装/配置在「提供商」标签页。'
+    'Claude Code Router（ccr）——一座桥梁，Claude Code 通过它与纯 OpenAI 引擎（FreeLLMAPI、DeepSeek、Qwen）通信。LM Studio 不需要桥梁——它提供原生 Anthropic 端点并直接挂载到配置上。此步骤更新 ccr（npm）；安装/配置在「提供商」标签页。在同一会话中混用提供商：ccr 已将后台/子代理请求路由到「background」路由（默认 FreeLLMAPI），你还可以在子代理提示词开头加上标签「<CCR-SUBAGENT-MODEL>提供商,模型</CCR-SUBAGENT-MODEL>」把它引导到另一个提供商。'
 };

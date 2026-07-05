@@ -15,5 +15,5 @@ export default {
   bomfix:
     'Config BOM-fix: repairs Claude JSON files accidentally saved with a BOM mark — invisible bytes at the start of the file that can keep Claude Code from reading the settings. It removes the mark without changing the contents.',
   ccrrouter:
-    'Claude Code Router (ccr) — a bridge through which Claude Code talks to pure OpenAI engines (FreeLLMAPI, DeepSeek, Qwen). LM Studio needs no bridge — it serves a native Anthropic endpoint and attaches to the profile directly. The step updates ccr (npm); installation/setup is on the “Providers” tab.'
+    'Claude Code Router (ccr) — a bridge through which Claude Code talks to pure OpenAI engines (FreeLLMAPI, DeepSeek, Qwen). LM Studio needs no bridge — it serves a native Anthropic endpoint and attaches to the profile directly. The step updates ccr (npm); installation/setup is on the “Providers” tab. Mixing providers in one session: ccr already routes background/subagent traffic to the “background” route (FreeLLMAPI by default), and you can send a specific subagent to another provider by prefixing its prompt with the tag “<CCR-SUBAGENT-MODEL>provider,model</CCR-SUBAGENT-MODEL>”.'
 };
