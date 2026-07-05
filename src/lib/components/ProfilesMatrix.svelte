@@ -44,25 +44,29 @@
   let applying = $state(false);
 
   // '' base URL = OAuth/subscription (no custom provider). Draft mirrors that convention.
+  function seedRow(r: MatrixRow): Draft {
+    return {
+      provider: r.provider.baseUrl ?? '',
+      proxy: r.proxy ?? '',
+      folders: r.folders.filter((f) => f.desired).map((f) => f.name),
+      plugins: {}
+    };
+  }
   function seed(list: MatrixRow[]) {
     const d: Record<string, Draft> = {};
-    for (const r of list) {
-      d[r.name] = {
-        provider: r.provider.baseUrl ?? '',
-        proxy: r.proxy ?? '',
-        folders: r.folders.filter((f) => f.desired).map((f) => f.name),
-        plugins: {}
-      };
-    }
+    for (const r of list) d[r.name] = seedRow(r);
     draft = d;
   }
   // reseed=false: refresh server truth but keep the current draft (used for the mcpTick re-read,
   // where only mcp facts changed and the user may have unsaved provider/plugin edits to preserve).
+  // Rows new since the seed (profile created meanwhile) still get a fresh draft entry — the row
+  // markup dereferences draft[r.name] unguarded.
   async function load(reseed = true) {
     try {
       const list = await readProfileMatrix();
       rows = list;
       if (reseed) seed(list);
+      else for (const r of list) if (!draft[r.name]) draft[r.name] = seedRow(r);
       loadErr = '';
     } catch (e) {
       loadErr = String(e);
