@@ -996,10 +996,14 @@ export const openUrl = (url: string) => invoke('open_url', { url });
 // Export/import all settings (#117) — file dialogs from the dialog plugin; backend (de)serializes.
 export const pickSaveFile = (name: string) =>
   saveDialog({ defaultPath: name, filters: [{ name: 'JSON', extensions: ['json'] }] });
-export const pickOpenFile = async (): Promise<string | null> => {
-  const r = await openDialog({ directory: false, multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+export const pickOpenFile = async (name = 'JSON', extensions = ['json']): Promise<string | null> => {
+  const r = await openDialog({ directory: false, multiple: false, filters: [{ name, extensions }] });
   return typeof r === 'string' ? r : null;
 };
+// Import a backup zip from an arbitrary path (USB stick / another machine's export):
+// verify (tar -tf) then extract to dest. Returns the archive's entry count.
+export const importBackupZip = (path: string, dest: string) =>
+  invoke<number>('import_backup_zip', { path, dest });
 export const exportConfig = (dest: string) => invoke('export_config', { dest });
 export const importConfig = (src: string) => invoke<HubConfig>('import_config', { src });
 // Register/clear the OS-global show/hide hotkey at runtime (#123). Throws on a bad/taken combo.

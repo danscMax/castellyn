@@ -12,10 +12,36 @@ export type Toast = {
 
 export type ToastWithMeta = Toast & { timestamp: number };
 
+// History survives restarts (last 50 in localStorage). Actions hold live closures — they are
+// stripped on save and absent after reload (the panel never renders them anyway).
+const HIST_KEY = 'cmh-notif-history';
+function loadHistory(): ToastWithMeta[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(HIST_KEY) ?? '[]') as unknown;
+    return Array.isArray(arr)
+      ? (arr as ToastWithMeta[])
+          .filter((x) => x && typeof x.title === 'string' && typeof x.timestamp === 'number')
+          .slice(0, 50)
+      : [];
+  } catch {
+    return []; // no localStorage (tests) or corrupt payload — start empty
+  }
+}
+function saveHistory(): void {
+  try {
+    localStorage.setItem(
+      HIST_KEY,
+      JSON.stringify(toastStore.history.items.map(({ action: _a, ...rest }) => rest))
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 let seq = 0;
 export const toastStore = $state<{ items: Toast[]; history: { items: ToastWithMeta[]; unread: number } }>({
   items: [],
-  history: { items: [], unread: 0 }
+  history: { items: loadHistory(), unread: 0 }
 });
 
 // Live auto-dismiss timers, keyed by toast id, so the stack can pause while the user hovers/reads it
@@ -45,6 +71,7 @@ export function resumeToasts(): void {
 function pushToHistory(t: Toast): void {
   toastStore.history.items = [{ ...t, timestamp: Date.now() }, ...toastStore.history.items].slice(0, 50);
   toastStore.history.unread++;
+  saveHistory();
 }
 
 export function dismiss(id: number): void {
@@ -71,8 +98,10 @@ export function markNotifRead(): void {
 export function clearHistory(): void {
   toastStore.history.items = [];
   toastStore.history.unread = 0;
+  saveHistory();
 }
 
 export function dismissFromHistory(timestamp: number): void {
   toastStore.history.items = toastStore.history.items.filter((x) => x.timestamp !== timestamp);
+  saveHistory();
 }

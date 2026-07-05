@@ -34,6 +34,8 @@ const KEYS = [
   'cmh-sessions-scrollback',
   'cmh-projects-root',
   'cmh-sessions-favorites',
+  'cmh-sessions-recents',
+  'cmh-sessions-space-recipes',
   'cmh-recent-folders',
   'cmh-fav-folders'
 ] as const;

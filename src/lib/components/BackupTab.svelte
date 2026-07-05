@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { BackupList, BackupAction, RestoreOpts } from '$lib/ipc';
-  import { revealBackup, deleteBackup, verifyBackup, extractBackup, pickFolder } from '$lib/ipc';
+  import { revealBackup, deleteBackup, verifyBackup, extractBackup, pickFolder, pickOpenFile, importBackupZip } from '$lib/ipc';
   import RestoreDialog from './RestoreDialog.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import EmptyState from './EmptyState.svelte';
@@ -81,6 +81,23 @@
       wkBusy = false;
     }
   }
+  // Import a backup zip from an arbitrary path (another machine's export, USB stick): the backend
+  // verifies before extracting; the user picks an explicit destination — never the live ~/.claude.
+  async function importZip() {
+    const src = await pickOpenFile('ZIP', ['zip']).catch(() => null);
+    if (!src) return;
+    const dest = await pickFolder().catch(() => null);
+    if (!dest) return;
+    wkBusy = true;
+    try {
+      const n = await importBackupZip(src, dest);
+      pushToast({ kind: 'success', title: t('backup.importOk', { n }), detail: dest });
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('backup.importFail'), detail: String(e) });
+    } finally {
+      wkBusy = false;
+    }
+  }
 
   const busy = $derived(!!running);
   const snapshots = $derived(data?.snapshots ?? []);
@@ -154,6 +171,10 @@
         {t('backup.retention')}
         <input type="number" min="1" max="200" class="sw-input w-20 text-sw-sm" bind:value={keepSnapshots} />
       </label>
+      <button class="sw-btn sw-btn-ghost" disabled={wkBusy} onclick={importZip}
+        title={t('backup.importZipTip')}>
+        {t('backup.importZip')}
+      </button>
       <button class="sw-btn sw-btn-primary" disabled={busy} onclick={doBackup}
         title={t('backup.createTitle')}>
         {running === 'backup' ? t('common.busy') : t('backup.makeBackup')}

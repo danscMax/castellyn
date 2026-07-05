@@ -163,6 +163,8 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("onb.mcp_canon_unreadable", ["канон .mcp.json не читается — проверьте дерево настроек", ".mcp.json canon unreadable — check the settings tree", "无法读取 .mcp.json 规范 — 请检查设置目录树"]),
     ("onb.mcp_ok", ["{n} канонических серверов во всех профилях", "{n} canon servers in all profiles", "所有配置文件均含 {n} 个规范服务器"]),
     ("onb.mcp_missing", ["профилей без канона: {n}", "{n} profile(s) missing canon servers", "{n} 个配置文件缺少规范服务器"]),
+    ("onb.st_hardened", ["версионирование включено на {n} папках", "versioning enabled on {n} folders", "{n} 个文件夹已启用版本控制"]),
+    ("onb.st_partial", ["версионирование: {done}/{total} папок", "versioning: {done}/{total} folders", "版本控制：{done}/{total} 个文件夹"]),
     ("err.claude_launch", ["запуск claude: {e}", "launching claude: {e}", "启动 claude: {e}"]),
     ("err.invalid_plugin_id", ["недопустимый id плагина: {id}", "invalid plugin id: {id}", "插件 id 无效: {id}"]),
     ("err.unknown_plugin_action", ["неизвестное действие plugin: {action}", "unknown plugin action: {action}", "未知的 plugin 操作: {action}"]),

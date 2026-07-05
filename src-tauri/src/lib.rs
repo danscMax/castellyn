@@ -1288,13 +1288,11 @@ fn delete_backup(name: String) -> Result<(), String> {
         .map_err(|e| trv("err.open_path", cur_lang(), &[("path", &path), ("e", &e)]))
 }
 
-/// F9: verify a weekly archive by listing it (`tar -tf`). Returns the entry count on success, or the
-/// tar stderr if the zip is corrupt/truncated.
-#[tauri::command]
-fn verify_backup(name: String) -> Result<usize, String> {
-    let path = weekly_archive_path(&name)?;
+/// `tar -tf`: entry count on success, tar's stderr when the zip is corrupt/truncated. Shared by
+/// verify_backup and import_backup_zip.
+fn tar_list(path: &str) -> Result<usize, String> {
     let out = std::process::Command::new(system_tar())
-        .args(["-tf", &path])
+        .args(["-tf", path])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| trv("err.tar_failed", cur_lang(), &[("e", &e)]))?;
@@ -1305,16 +1303,9 @@ fn verify_backup(name: String) -> Result<usize, String> {
     }
 }
 
-/// F9: extract a weekly archive to a user-picked folder. NON-destructive — never writes over the live
-/// ~/.claude (the weekly archives skills/agents/commands, which are Syncthing-synced + junctioned).
-#[tauri::command]
-fn extract_backup(name: String, dest: String) -> Result<(), String> {
-    let path = weekly_archive_path(&name)?;
-    if !std::path::Path::new(&dest).is_dir() {
-        return Err(trv("err.dir_not_found", cur_lang(), &[("path", &dest)]));
-    }
+fn tar_extract(path: &str, dest: &str) -> Result<(), String> {
     let out = std::process::Command::new(system_tar())
-        .args(["-x", "-f", &path, "-C", &dest])
+        .args(["-x", "-f", path, "-C", dest])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| trv("err.tar_failed", cur_lang(), &[("e", &e)]))?;
@@ -1323,6 +1314,41 @@ fn extract_backup(name: String, dest: String) -> Result<(), String> {
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
+}
+
+/// F9: verify a weekly archive by listing it (`tar -tf`). Returns the entry count on success, or the
+/// tar stderr if the zip is corrupt/truncated.
+#[tauri::command]
+fn verify_backup(name: String) -> Result<usize, String> {
+    tar_list(&weekly_archive_path(&name)?)
+}
+
+/// F9: extract a weekly archive to a user-picked folder. NON-destructive — never writes over the live
+/// ~/.claude (the weekly archives skills/agents/commands, which are Syncthing-synced + junctioned).
+#[tauri::command]
+fn extract_backup(name: String, dest: String) -> Result<(), String> {
+    let path = weekly_archive_path(&name)?;
+    if !std::path::Path::new(&dest).is_dir() {
+        return Err(trv("err.dir_not_found", cur_lang(), &[("path", &dest)]));
+    }
+    tar_extract(&path, &dest)
+}
+
+/// Import a backup zip from an ARBITRARY path (USB stick, another machine's export): verify first
+/// so a corrupt zip fails before anything lands in `dest`, then extract. Non-destructive like
+/// extract_backup — the user picks an explicit destination, the live ~/.claude is never a target.
+#[tauri::command]
+fn import_backup_zip(path: String, dest: String) -> Result<usize, String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_file() || !path.to_lowercase().ends_with(".zip") {
+        return Err(tr("err.bad_path", cur_lang()).to_string());
+    }
+    if !std::path::Path::new(&dest).is_dir() {
+        return Err(trv("err.dir_not_found", cur_lang(), &[("path", &dest)]));
+    }
+    let n = tar_list(&path)?;
+    tar_extract(&path, &dest)?;
+    Ok(n)
 }
 
 /// Build the (script, args) for a Backup-tab action. Kept pure so the security-sensitive gating is
@@ -9997,7 +10023,41 @@ fn link_target_matches(target: &std::path::Path, expected: &str) -> bool {
         .eq_ignore_ascii_case(expected.trim_end_matches('\\'))
 }
 
-/// Machine scan for the onboarding checklist. Pure detection — no writes, no elevation, no spawns.
+/// Which managed folders carry the versioning Configure-Syncthing.ps1 sets: staggered on
+/// E:\Scripts and ~\.memory, trashcan on ~\.claude — matched BY PATH like the script (folder ids
+/// are per-machine). Returns (managed folders found, folders already hardened); None when the
+/// REST API is unreachable / has no key.
+fn syncthing_hardening_state() -> Option<(usize, usize)> {
+    let (key, base) = syncthing_conn()?;
+    let agent = st_agent();
+    let folders = st_get(&agent, &base, &key, "/rest/config/folders")?;
+    let folders = folders.as_array()?.clone();
+    let home = std::env::var("USERPROFILE").ok()?;
+    let want = [
+        (normalize_path(&scripts_root()), "staggered"),
+        (normalize_path(&format!("{home}\\.memory")), "staggered"),
+        (normalize_path(&format!("{home}\\.claude")), "trashcan"),
+    ];
+    let (mut found, mut hardened) = (0usize, 0usize);
+    for (path, vtype) in &want {
+        let Some(f) = folders.iter().find(|f| {
+            f.get("path")
+                .and_then(|p| p.as_str())
+                .map(|p| normalize_path(p) == *path)
+                .unwrap_or(false)
+        }) else {
+            continue;
+        };
+        found += 1;
+        if f.get("versioning").and_then(|v| v.get("type")).and_then(|t| t.as_str()) == Some(vtype) {
+            hardened += 1;
+        }
+    }
+    Some((found, hardened))
+}
+
+/// Machine scan for the onboarding checklist. Pure detection — no writes, no elevation, no
+/// process spawns (the one network touch is the local Syncthing REST read, 1.5s-capped).
 fn onboarding_scan() -> Vec<OnbStep> {
     let lang = cur_lang();
     let mut out: Vec<OnbStep> = Vec::new();
@@ -10102,11 +10162,24 @@ fn onboarding_scan() -> Vec<OnbStep> {
             _ => onb("managed", "todo", m.detail, Some("managed_deploy")),
         }
     });
-    // ponytail: Syncthing hardening state isn't detected natively (REST + API key); the script
-    // is idempotent and self-skipping — offer the run, report "unknown" until then.
+    // Syncthing hardening IS natively detectable: the script's effect is versioning on the managed
+    // folders (staggered on Scripts/.memory, trashcan on ~/.claude), readable over the same REST
+    // infra the limits watcher uses. REST down / no API key / no managed folders → "unknown"
+    // (the script is idempotent and self-skipping — offer the run).
     out.push(match (&st_cfg, tree_ok) {
         (None, _) | (_, false) => onb("syncthing", "blocked", String::new(), None),
-        _ => onb("syncthing", "unknown", String::new(), Some("syncthing")),
+        _ => match syncthing_hardening_state() {
+            Some((total, hardened)) if total > 0 && hardened == total => {
+                onb("syncthing", "ok", trv("onb.st_hardened", lang, &[("n", &total)]), None)
+            }
+            Some((total, hardened)) if total > 0 => onb(
+                "syncthing",
+                "todo",
+                trv("onb.st_partial", lang, &[("done", &hardened), ("total", &total)]),
+                Some("syncthing"),
+            ),
+            _ => onb("syncthing", "unknown", String::new(), Some("syncthing")),
+        },
     });
     // Final gate: Assert-Installation.ps1 (non-zero exit on any failure) — streamed to console.
     out.push(if tree_ok {
@@ -12971,6 +13044,7 @@ pub fn run() {
             delete_backup,
             verify_backup,
             extract_backup,
+            import_backup_zip,
             run_backup,
             read_profiles,
             run_profiles,
