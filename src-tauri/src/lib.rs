@@ -10030,8 +10030,8 @@ fn link_target_matches(target: &std::path::Path, expected: &str) -> bool {
 fn syncthing_hardening_state() -> Option<(usize, usize)> {
     let (key, base) = syncthing_conn()?;
     let agent = st_agent();
-    let folders = st_get(&agent, &base, &key, "/rest/config/folders")?;
-    let folders = folders.as_array()?.clone();
+    let folders_v = st_get(&agent, &base, &key, "/rest/config/folders")?;
+    let folders = folders_v.as_array()?;
     let home = std::env::var("USERPROFILE").ok()?;
     let want = [
         (normalize_path(&scripts_root()), "staggered"),

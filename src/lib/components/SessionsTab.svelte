@@ -912,6 +912,8 @@
   // Move a pane to another project tab — pure reassignment (deleteSpace's pattern), PTY untouched.
   function movePaneToSpace(key: string, spaceId: string) {
     panes = panes.map((p) => (p.key === key ? { ...p, space: spaceId } : p));
+    // A maximized pane that just left the active space would leave an empty full-screen view.
+    if (maximized === key) maximized = null;
   }
   // Close every pane of the active project at once (one confirm, no per-pane reopen toasts).
   function closeSpacePanes() {
@@ -1955,7 +1957,8 @@
     <div class="spaces" role="tablist" aria-label={t('sessions.agents')}>
       {#each spaces as sp (sp.id)}
         {@const worst = spaceWorst(sp.id)}
-        <span class="space-tab" class:active={activeSpace === sp.id} draggable={spaces.length > 1}
+        <span class="space-tab" class:active={activeSpace === sp.id}
+          draggable={spaces.length > 1 && spaceEditId !== sp.id}
           role="presentation"
           ondragstart={() => (dragSpaceId = sp.id)} ondragenter={() => onSpaceDragEnter(sp.id)}
           ondragover={(e) => e.preventDefault()} ondragend={onSpaceDragEnd}>

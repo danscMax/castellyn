@@ -122,12 +122,14 @@
   });
 
   const managedCount = $derived(pluginList.filter((p) => p.managedPolicy === false).length);
+  // A persisted-on filter whose toolbar chip is hidden (nothing matches anymore) must not apply:
+  // it would empty the table with no visible way to untoggle it.
   const pluginRows = $derived(
     pluginList.filter(
       (p) =>
-        (!onlyUpdates || updateMap.has(p.id)) &&
+        (!onlyUpdates || updates.length === 0 || updateMap.has(p.id)) &&
         (!onlyEnabled || p.enabled) &&
-        (!onlyManaged || p.managedPolicy === false)
+        (!onlyManaged || managedCount === 0 || p.managedPolicy === false)
     )
   );
   const disabledCount = $derived(pluginList.filter((p) => !p.enabled).length);
