@@ -771,11 +771,15 @@ export type PluginAction = 'enable' | 'disable' | 'update' | 'remove';
 
 export type PluginUpdate = { id: string; installed: string; available: string };
 
+// One bundled command/skill/agent: frontmatter description + on-disk file for the
+// master-detail expansion in PluginsTab.
+export type PluginItem = { name: string; description?: string; path: string };
+
 export type PluginContents = {
   id: string;
-  skills: string[];
-  commands: string[];
-  agents: string[];
+  skills: PluginItem[];
+  commands: PluginItem[];
+  agents: PluginItem[];
 };
 
 export const listPlugins = () => invoke<PluginInfo[]>('list_plugins');

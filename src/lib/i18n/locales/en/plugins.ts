@@ -55,6 +55,12 @@ export default {
   catSkills: 'Skills',
   catCommands: 'Commands',
   catAgents: 'Agents',
+  detTypeCommand: 'Command',
+  detTypeSkill: 'Skill',
+  detTypeAgent: 'Agent',
+  detNoDesc: 'No description (no frontmatter description)',
+  detOpenFile: 'Open file',
+  detListLabel: 'Plugin contents',
 
   // Plugin actions
   updateBtn: 'Update',

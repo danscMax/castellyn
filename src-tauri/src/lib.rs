@@ -8406,12 +8406,22 @@ fn list_plugin_updates() -> Vec<PluginUpdate> {
     out
 }
 
+/// One bundled item (command / skill / agent) with the frontmatter description and the
+/// on-disk file, so the master-detail expansion in PluginsTab can show more than a name.
+#[derive(Serialize)]
+struct PluginItem {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    path: String,
+}
+
 #[derive(Serialize)]
 struct PluginContents {
     id: String,
-    skills: Vec<String>,
-    commands: Vec<String>,
-    agents: Vec<String>,
+    skills: Vec<PluginItem>,
+    commands: Vec<PluginItem>,
+    agents: Vec<PluginItem>,
 }
 
 /// Resolve the on-disk content directory of an installed plugin.
@@ -8459,11 +8469,17 @@ fn plugin_id_path_safe(plugin_id: &str) -> bool {
         && !plugin_id.contains('\\')
 }
 
-/// Collect `*.md` stems under a directory recursively (used for commands/agents).
-/// Nested paths are joined with `:` to mirror Claude Code's namespaced naming.
-fn collect_md_names(root: &std::path::Path) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>, depth: u32) {
+/// Frontmatter `description:` of a markdown file, if the file reads and has one.
+fn md_description(p: &std::path::Path) -> Option<String> {
+    let c = std::fs::read_to_string(p).ok()?;
+    fm_value(&extract_frontmatter(&c), "description").filter(|d| !d.is_empty())
+}
+
+/// Collect `*.md` items under a directory recursively (used for commands/agents).
+/// Nested names are joined with `:` to mirror Claude Code's namespaced naming.
+fn collect_md_items(root: &std::path::Path) -> Vec<PluginItem> {
+    let mut out: Vec<PluginItem> = Vec::new();
+    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<PluginItem>, depth: u32) {
         if depth > 32 {
             return; // M5: belt-and-suspenders depth cap against any directory cycle
         }
@@ -8486,35 +8502,43 @@ fn collect_md_names(root: &std::path::Path) -> Vec<String> {
                         .to_string_lossy()
                         .replace(['\\', '/'], ":");
                     if !name.is_empty() {
-                        out.push(name);
+                        out.push(PluginItem {
+                            name,
+                            description: md_description(&p),
+                            path: p.to_string_lossy().to_string(),
+                        });
                     }
                 }
             }
         }
     }
     walk(root, root, &mut out, 0);
-    out.sort();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
-/// Skill names under `<dir>/skills` (one subdir per skill, name from SKILL.md frontmatter
-/// when present, else the directory name).
-fn collect_skill_names(skills_root: &std::path::Path) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+/// Skill items under `<dir>/skills` (one subdir per skill; name/description from SKILL.md
+/// frontmatter when present, name falls back to the directory name).
+fn collect_skill_items(skills_root: &std::path::Path) -> Vec<PluginItem> {
+    let mut out: Vec<PluginItem> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(skills_root) {
         for e in entries.flatten() {
             if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 continue;
             }
             let dir_name = e.file_name().to_string_lossy().to_string();
-            let name = std::fs::read_to_string(e.path().join("SKILL.md"))
-                .ok()
-                .and_then(|c| fm_value(&extract_frontmatter(&c), "name"))
-                .unwrap_or(dir_name);
-            out.push(name);
+            let md = e.path().join("SKILL.md");
+            let fm = std::fs::read_to_string(&md)
+                .map(|c| extract_frontmatter(&c))
+                .unwrap_or_default();
+            out.push(PluginItem {
+                name: fm_value(&fm, "name").unwrap_or(dir_name),
+                description: fm_value(&fm, "description").filter(|d| !d.is_empty()),
+                path: md.to_string_lossy().to_string(),
+            });
         }
     }
-    out.sort();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
@@ -8536,9 +8560,9 @@ fn list_plugin_contents() -> Vec<PluginContents> {
             continue;
         };
         let base = std::path::Path::new(&dir);
-        let skills = collect_skill_names(&base.join("skills"));
-        let commands = collect_md_names(&base.join("commands"));
-        let agents = collect_md_names(&base.join("agents"));
+        let skills = collect_skill_items(&base.join("skills"));
+        let commands = collect_md_items(&base.join("commands"));
+        let agents = collect_md_items(&base.join("agents"));
         if skills.is_empty() && commands.is_empty() && agents.is_empty() {
             continue;
         }
@@ -13899,23 +13923,35 @@ mod tests {
         };
         mk(
             &root.join("skills\\max-dedup\\SKILL.md"),
-            "---\nname: max-dedup\n---\nx",
+            "---\nname: max-dedup\ndescription: Find duplicate implementations\n---\nx",
         );
         mk(&root.join("skills\\plain\\SKILL.md"), "no frontmatter here");
-        mk(&root.join("commands\\check.md"), "c");
+        mk(
+            &root.join("commands\\check.md"),
+            "---\ndescription: Quick check\n---\nc",
+        );
         mk(&root.join("commands\\sub\\nested.md"), "c");
         mk(&root.join("agents\\dev-researcher.md"), "a");
 
-        let skills = collect_skill_names(&root.join("skills"));
-        assert!(skills.contains(&"max-dedup".to_string())); // from frontmatter
-        assert!(skills.contains(&"plain".to_string())); // fallback to dir name
+        let skills = collect_skill_items(&root.join("skills"));
+        let dedup = skills.iter().find(|s| s.name == "max-dedup").unwrap(); // from frontmatter
+        assert_eq!(
+            dedup.description.as_deref(),
+            Some("Find duplicate implementations")
+        );
+        assert!(dedup.path.ends_with("SKILL.md"));
+        let plain = skills.iter().find(|s| s.name == "plain").unwrap(); // fallback to dir name
+        assert_eq!(plain.description, None);
 
-        let commands = collect_md_names(&root.join("commands"));
-        assert!(commands.contains(&"check".to_string()));
-        assert!(commands.contains(&"sub:nested".to_string())); // nested -> ':'
+        let commands = collect_md_items(&root.join("commands"));
+        let check = commands.iter().find(|c| c.name == "check").unwrap();
+        assert_eq!(check.description.as_deref(), Some("Quick check"));
+        let nested = commands.iter().find(|c| c.name == "sub:nested").unwrap(); // nested -> ':'
+        assert_eq!(nested.description, None);
 
-        let agents = collect_md_names(&root.join("agents"));
-        assert_eq!(agents, vec!["dev-researcher".to_string()]);
+        let agents = collect_md_items(&root.join("agents"));
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "dev-researcher");
 
         // Directory-source fallback: empty installPath resolves via marketplace installLocation.
         let markets = serde_json::json!({

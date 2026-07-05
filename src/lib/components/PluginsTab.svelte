@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease, PluginSyncStatus, BumpLevel } from '$lib/ipc';
-  import { listPluginReleases } from '$lib/ipc';
+  import { listPluginReleases, openPath } from '$lib/ipc';
   import { t, pSkill, pCommand, pAgent, pPlugin } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
   import Spinner from './Spinner.svelte';
@@ -81,6 +81,15 @@
   function hasContents(id: string): boolean {
     const c = contentMap.get(id);
     return !!c && !!(c.skills.length || c.commands.length || c.agents.length);
+  }
+  // Master-detail expansion: selected item key ("cmd:dev" / "skill:name") per expanded plugin.
+  let detSel = $state<Record<string, string>>({});
+  /** File reference for the detail pane, relative to the plugin root (from the last
+   *  commands/skills/agents segment); full path stays in the tooltip. */
+  function relTail(p: string): string {
+    const seg = p.split(/[\\/]/).filter(Boolean);
+    const i = seg.findLastIndex((s) => s === 'commands' || s === 'skills' || s === 'agents');
+    return (i >= 0 ? seg.slice(i) : seg.slice(-2)).join('\\');
   }
   // Stable-ish accent colour for the name avatar.
   const AV = ['#60a5fa', '#a78bfa', '#34d399', '#f59e0b', '#f472b6', '#22d3ee', '#fb7185', '#4ade80'];
@@ -380,18 +389,38 @@
       {#snippet expand(p)}
         {@const c = contentMap.get(p.id)}
         {#if c}
-          <div class="detail">
-            {#each [{ label: t('plugins.catSkills'), items: c.skills, icon: Puzzle }, { label: t('plugins.catCommands'), items: c.commands, icon: SquareSlash }, { label: t('plugins.catAgents'), items: c.agents, icon: Bot }] as cat (cat.label)}
-              {#if cat.items.length}
-                {@const CatIcon = cat.icon}
-                <div class="detgroup">
-                  <p class="detlabel"><CatIcon size={12} aria-hidden="true" /> {cat.label} <span class="ph">{cat.items.length}</span></p>
-                  <div class="chips">
-                    {#each cat.items as item (item)}<span class="chip">{item}</span>{/each}
-                  </div>
-                </div>
-              {/if}
-            {/each}
+          <!-- Master-detail (owner-picked mockup #2): item list left, full description + file right. -->
+          {@const groups = [
+            { key: 'cmd', label: t('plugins.catCommands'), typeLabel: t('plugins.detTypeCommand'), items: c.commands, icon: SquareSlash },
+            { key: 'skill', label: t('plugins.catSkills'), typeLabel: t('plugins.detTypeSkill'), items: c.skills, icon: Puzzle },
+            { key: 'agent', label: t('plugins.catAgents'), typeLabel: t('plugins.detTypeAgent'), items: c.agents, icon: Bot }
+          ].filter((g) => g.items.length)}
+          {@const flat = groups.flatMap((g) => g.items.map((it) => ({ g, it, key: `${g.key}:${it.name}` })))}
+          {@const cur = flat.find((f) => f.key === detSel[p.id]) ?? flat[0]}
+          {@const pname = split(p.id).name}
+          <div class="detail md">
+            <div class="mdlist" role="listbox" aria-label={t('plugins.detListLabel')}>
+              {#each groups as g (g.key)}
+                {@const GIcon = g.icon}
+                <p class="detlabel"><GIcon size={12} aria-hidden="true" /> {g.label} <span class="ph">{g.items.length}</span></p>
+                {#each g.items as item (item.name)}
+                  {@const k = `${g.key}:${item.name}`}
+                  <button type="button" class="mditem" class:sel={cur?.key === k} role="option" aria-selected={cur?.key === k}
+                    onclick={() => (detSel[p.id] = k)}>
+                    {g.key === 'cmd' ? `/${pname}:${item.name}` : item.name}
+                  </button>
+                {/each}
+              {/each}
+            </div>
+            {#if cur}
+              <div class="mdpane">
+                <h3 class="mdname">{cur.g.key === 'cmd' ? `/${pname}:${cur.it.name}` : cur.it.name}</h3>
+                <p class="mdtype">{cur.g.typeLabel} · <span title={cur.it.path}>{relTail(cur.it.path)}</span></p>
+                <p class="mddesc" class:ph={!cur.it.description}>{cur.it.description ?? t('plugins.detNoDesc')}</p>
+                <button class="sw-btn sw-btn-ghost text-sw-xs mdopen" onclick={() => openPath(cur.it.path)}
+                  title={cur.it.path}>{t('plugins.detOpenFile')}</button>
+              </div>
+            {/if}
           </div>
         {/if}
       {/snippet}
@@ -690,34 +719,88 @@
   .grow {
     flex: 1;
   }
-  /* expanded contents */
-  .detail {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+  /* expanded contents — master-detail: grouped item list left, description pane right */
+  .detail.md {
+    display: grid;
+    grid-template-columns: 280px 1fr;
     max-width: 1100px;
+    border: 1px solid var(--sw-border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--sw-bg-card);
+  }
+  .mdlist {
+    border-right: 1px solid var(--sw-border);
+    padding: 8px 0;
+    max-height: 340px;
+    overflow-y: auto;
   }
   .detlabel {
-    margin-bottom: 5px;
+    margin: 8px 14px 3px;
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--sw-text-muted);
-  }
-  .chips {
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     gap: 5px;
   }
-  .chip {
-    padding: 2px 8px;
-    border-radius: 9999px;
-    background: var(--sw-bg-secondary);
-    border: 1px solid var(--sw-border);
+  .detlabel:first-child {
+    margin-top: 0;
+  }
+  .mditem {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 4px 14px;
+    border: none;
+    border-right: 2px solid transparent;
+    background: transparent;
     font-family: 'Cascadia Code', 'Consolas', monospace;
     font-size: var(--sw-text-xs);
     color: var(--sw-text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mditem:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .mditem.sel {
+    background: var(--sw-accent-glow);
+    color: var(--sw-accent-text);
+    border-right-color: var(--sw-accent);
+  }
+  .mdpane {
+    padding: 14px 20px;
+    min-width: 0;
+  }
+  .mdname {
+    margin: 0;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: var(--sw-text-sm);
+    font-weight: 600;
+    color: var(--sw-text-primary);
+  }
+  .mdtype {
+    margin: 2px 0 10px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+  }
+  .mddesc {
+    margin: 0;
+    font-size: var(--sw-text-sm);
+    color: var(--sw-text-secondary);
+    max-width: 640px;
+    max-height: 220px;
+    overflow-y: auto;
+    white-space: pre-line;
+  }
+  .mdopen {
+    margin-top: 12px;
   }
   /* Changelog modal */
   .cl-overlay {

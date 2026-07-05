@@ -55,6 +55,12 @@ export default {
   catSkills: '技能',
   catCommands: '命令',
   catAgents: '代理',
+  detTypeCommand: '命令',
+  detTypeSkill: '技能',
+  detTypeAgent: '代理',
+  detNoDesc: '无描述（frontmatter 中没有 description）',
+  detOpenFile: '打开文件',
+  detListLabel: '插件内容',
 
   // Plugin actions
   updateBtn: '更新',

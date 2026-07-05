@@ -55,6 +55,12 @@ export default {
   catSkills: 'Скиллы',
   catCommands: 'Команды',
   catAgents: 'Агенты',
+  detTypeCommand: 'Команда',
+  detTypeSkill: 'Скилл',
+  detTypeAgent: 'Агент',
+  detNoDesc: 'Без описания (нет description во frontmatter)',
+  detOpenFile: 'Открыть файл',
+  detListLabel: 'Состав плагина',
 
   // Plugin actions
   updateBtn: 'Обновить',

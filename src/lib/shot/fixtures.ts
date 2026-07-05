@@ -364,8 +364,31 @@ const handlers: Record<string, (args: any) => any> = {
   ]),
   run_gc_delete: (args) => ({ deleted: args?.ids ?? [], skipped: [], freed_bytes: 536_200_000 }),
   list_plugin_contents: () => ([
-    { id: 'superpowers', skills: ['brainstorming', 'systematic-debugging', 'test-driven-development'], commands: ['/spec'], agents: ['Plan', 'Explore'] },
-    { id: 'max', skills: ['max-dedup', 'max-modernize'], commands: ['/max:audit', '/max:review'], agents: ['max:review-critic'] }
+    {
+      id: 'superpowers',
+      skills: [
+        { name: 'brainstorming', description: 'Explore user intent, requirements and design before implementation.', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\obra\\superpowers\\2.4.1\\skills\\brainstorming\\SKILL.md' },
+        { name: 'systematic-debugging', description: 'Root-cause investigation before proposing fixes.', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\obra\\superpowers\\2.4.1\\skills\\systematic-debugging\\SKILL.md' },
+        { name: 'test-driven-development', description: undefined, path: 'C:\\Users\\User\\.claude\\plugins\\cache\\obra\\superpowers\\2.4.1\\skills\\test-driven-development\\SKILL.md' }
+      ],
+      commands: [{ name: 'spec', description: 'Turn vague intent into a precise, executable spec in five phases.', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\obra\\superpowers\\2.4.1\\commands\\spec.md' }],
+      agents: [
+        { name: 'Plan', description: 'Software architect agent for designing implementation plans.', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\obra\\superpowers\\2.4.1\\agents\\plan.md' },
+        { name: 'Explore', description: 'Read-only search agent for broad fan-out searches.', path: 'C:\\Users\\User\\.claude\\plugins\\cache\\obra\\superpowers\\2.4.1\\agents\\explore.md' }
+      ]
+    },
+    {
+      id: 'max',
+      skills: [
+        { name: 'max-dedup', description: 'Universal duplicate-implementation audit: finds functionally-equivalent implementations with drift and produces a severity-ranked consolidation report.', path: 'E:\\Scripts\\SettingsMCP\\ClaudeMarketplace\\plugins\\max\\skills\\max-dedup\\SKILL.md' },
+        { name: 'max-modernize', description: 'Multi-agent codebase audit against current best practices with web-sourced conventions.', path: 'E:\\Scripts\\SettingsMCP\\ClaudeMarketplace\\plugins\\max\\skills\\max-modernize\\SKILL.md' }
+      ],
+      commands: [
+        { name: 'audit', description: 'Гибридный мультиагентный аудит сервиса — static-анализ + runtime-тестирование в браузере + DA-валидация, отчёт с evidence.', path: 'E:\\Scripts\\SettingsMCP\\ClaudeMarketplace\\plugins\\max\\commands\\audit.md' },
+        { name: 'review', description: 'Комплексное ревью кода — параллельные волны критиков и оптимизаторов.', path: 'E:\\Scripts\\SettingsMCP\\ClaudeMarketplace\\plugins\\max\\commands\\review.md' }
+      ],
+      agents: [{ name: 'review-critic', description: 'Comprehensive Code Critic: bugs, security issues, SOLID violations, error handling gaps.', path: 'E:\\Scripts\\SettingsMCP\\ClaudeMarketplace\\plugins\\max\\agents\\review-critic.md' }]
+    }
   ]),
 
   // --- Sessions launcher ---
