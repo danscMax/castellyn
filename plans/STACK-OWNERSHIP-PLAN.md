@@ -108,12 +108,12 @@ MCP→`Deploy-Mcp.ps1`); нативно делает только дешёвое
 |---|---|---|
 | **Ф0** ✅ | Рекон + карта владельцев (эта секция) | сделано |
 | **Ф0.5** ✅ | **Инвентарь = верификация аудита.** Выполнено 2026-07-04: 10 находок сверены по сырым файлам (~половина ложняк/переоценка), реестр записан → `plans\stack-registry.json` (19 строк). Детали: план-файл `shiny-baking-heron.md` + память `stack-ownership-f05`. | сделано |
-| **Ф1** | **Reconcile-ядро + single-owner.** Обобщить MCP-примитив (desired→deploy→verify→drift). Закрыть живую коллизию `plugin_sync` (Castellyn — владелец; installer перестаёт деплоить) + одна точка SessionStart. managed-settings: Castellyn правит источник + кнопка Deploy поверх `Deploy-ManagedSettings.ps1`, без прямой записи в `%ProgramFiles%`. | **M** |
-| **Ф2** | **Консолидация дублей + Health/GC.** По каждому дублю — blessed по решениям §7 (реестр Ф0.5 даёт проверенную базу; «пустые описания» оказались ложняком — чинить нечего). Health-детект (broken/dead-on-windows) + GC-детект (устаревшие версии типа claude-mem 13.8.0 = 497 МБ, `temp_git_*`, darwin/linux-бинарники) как ФИЧА Castellyn. Удаление — только confirm+preview. | **M–L** |
-| **Ф2.5** | **Матрица per-profile (НОВАЯ).** UI-таблица `профиль × {провайдер/gateway, прокси, shared-папки, плагины, MCP, движки}`: desired state → `profiles.json`/конфиг, reconcile Ф1 раскатывает (symlinks, enabledPlugins, provider-конфиги) и показывает drift. Снимает хардкод `sharedFoldersDefault`. | **M–L** |
-| **Ф3** | **Marketplace/плагины/навыки/команды lifecycle.** Обернуть `Check-MarketplaceVersions.ps1 -Bump` (двойной bump) + рефреш; включение/деплой по профилям; неймспейсы; provenance-тег universal vs project (slide-parity, max-download-prod-to-local → project:SellCoach); MCP-dedup (context7 ×3, playwright ×2 → по одному). | **M** |
-| **Ф5** | **Профили lifecycle из GUI** — полный CRUD+rollback поверх `Install-ClaudeProfiles.ps1` (create/delete/symlink/wrapper/launcher/creds), UAC один раз. Поднята выше Ф4: критична для цели «единый пульт». | **L** |
-| **Ф4** | Обернуть `Configure-Syncthing.ps1` + `Backup-ClaudeSetup.ps1`; расписания уже обёрнуты; MCP уже готов. Понижена: syncthing работает автономно. | **S–M** |
+| **Ф1** ✅ | **Reconcile-ядро + single-owner.** Выполнено 2026-07-04 (eba04af): plugin_sync single-owner закрыт целиком (installer исключает файл, managed-разводка снята, файл = Castellyn v4), read_stack_drift + карточка на Главной, run_managed_deploy (один UAC, верификация пересравнением). | сделано |
+| **Ф2** ✅ | **Консолидация дублей + Health/GC.** Чистка исполнена 2026-07-04 (blessed-карантины, ENABLE_STOP_REVIEW=0, claude-reflect/dream/iOS снесены, ~0.5 ГБ мусора). GC-фича: карточка «Мусор стека» на Главной (adbe281) — живой скан stale-версий/temp_git/.bak (удаление в корзину с preview+confirm), darwin/linux — report-only. | сделано |
+| **Ф2.5** ✅ | **Матрица per-profile.** Выполнено 2026-07-04 (b9118ae): таб Профили → матрица провайдер/прокси/shared-папки, batch Apply с предпросмотром, верификация перечиткой. Плагины/MCP-колонки = V2. | сделано |
+| **Ф3** ✅ | **Marketplace lifecycle.** Выполнено 2026-07-05 (7f1d38e): bump patch/minor/major на «своих» строках таба плагинов (обёртка Check-MarketplaceVersions -Bump + авто plugin update), 4-й drift-пункт «Версии маркетплейса» на Главной (нативная сверка). MCP-dedup исполнен разово (context7/playwright/chrome-devtools; канон очищен от chrome-devtools). Provenance-перенос SellCoach — отложен решением владельца. | сделано |
+| **Ф5** ✅ | **Профили lifecycle из GUI.** Рекон 2026-07-05: CRUD уже существовал целиком (add/remove/rename/recolor/redescribe/set-links → Manage-Profiles.ps1; repair/сироты/запуск). Добавлен hardening: (1) remove в Manage-Profiles.ps1 снимает junction/symlink ПЕРЕД удалением (риск сноса общих ~/.claude-папок через рекурсию PS5.1) + каталог в корзину вместо hard-delete; (2) live-session guard на remove/rename в run_profile_mgmt (016e727). | сделано |
+| **Ф4** ✅ | Бэкапы обёрнуты (run_backup: backup/restore-preview/restore/delete), синк-папки нативно (run_sync/sync_set), расписания/MCP были готовы. Остаток — обёртка bootstrap `Configure-Syncthing.ps1` — отложен до онбординг-визарда новой машины (низкая ценность: syncthing автономен). | сделано |
 
 Guardrails на все фазы: dry-run/preview перед записью; JSON без BOM (читать UTF-8 явно из PS 5.1,
 писать `UTF8Encoding($false)`); machine-agnostic (корень из рантайма, ноль хардкода `E:\`);
@@ -148,6 +148,8 @@ Guardrails на все фазы: dry-run/preview перед записью; JSON
 
 ## Что дальше
 
-Утверждено «переписывать» → план перестроен. Следующий конкретный шаг (по запросу): **Ф0.5** —
-верификация топ-находок аудита по сырым файлам + первый срез реестра, без единого удаления.
-Параллельный UI-трек **V9/V3** лаунчера остаётся в очереди (не входит в этот control-plane, чистый UX).
+**ПЛАН ЗАВЕРШЁН 2026-07-05** (все фазы ✅, main = 016e727). Остаточная очередь вне этого плана:
+- UI-трек **V9/V3** лаунчера (Cockpit; владелец хочет, дизайн не утверждён — нужен гейт).
+- Матрица V2: колонки плагины/MCP.
+- Онбординг-визард новой машины (включая обёртку `Configure-Syncthing.ps1` и ASCII-переезд §6.4).
+- Provenance-перенос SellCoach-скиллов — при появлении второго потребителя маркетплейса.
