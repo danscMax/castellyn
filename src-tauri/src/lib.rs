@@ -9980,104 +9980,102 @@ fn onb(id: &str, state: &str, detail: String, fix: Option<&str>) -> OnbStep {
 
 /// Machine scan for the onboarding checklist. Pure detection — no writes, no elevation, no spawns.
 fn onboarding_scan() -> Vec<OnbStep> {
-    {
-        let mut out: Vec<OnbStep> = Vec::new();
-        // Prerequisites: PATH-resolvable CLIs (exe_on_path — no process spawns).
-        for (id, name) in [("prereq_git", "git"), ("prereq_node", "node"), ("prereq_claude", "claude")] {
-            out.push(match exe_on_path(name) {
-                Some(p) => onb(id, "ok", p.to_string_lossy().into_owned(), None),
-                None => onb(id, "todo", format!("`{name}` not found on PATH"), None),
-            });
-        }
-        // Syncthing is optional; presence = its config.xml exists.
-        let st_cfg = std::env::var("LOCALAPPDATA")
-            .map(|l| format!("{l}\\Syncthing\\config.xml"))
-            .ok()
-            .filter(|p| std::path::Path::new(p).is_file());
-        out.push(match &st_cfg {
-            Some(p) => onb("prereq_syncthing", "ok", p.clone(), None),
-            None => onb("prereq_syncthing", "todo", "Syncthing config.xml not found".into(), None),
+    let mut out: Vec<OnbStep> = Vec::new();
+    // Prerequisites: PATH-resolvable CLIs (exe_on_path — no process spawns).
+    for (id, name) in [("prereq_git", "git"), ("prereq_node", "node"), ("prereq_claude", "claude")] {
+        out.push(match exe_on_path(name) {
+            Some(p) => onb(id, "ok", p.to_string_lossy().into_owned(), None),
+            None => onb(id, "todo", format!("`{name}` not found on PATH"), None),
         });
-        // Settings tree = the ClaudeProfiles source of truth (arrives via Syncthing / copy / backup).
-        let tree = abs(&format!("{SETTINGS_TREE_REL}\\ClaudeProfiles"));
-        let tree_ok = std::path::Path::new(&tree).is_dir();
-        out.push(if tree_ok {
-            onb("tree", "ok", tree.clone(), None)
-        } else {
-            onb("tree", "todo", format!("{tree} missing — sync the settings tree or restore a backup"), Some("backup_tab"))
-        });
-        // ASCII junction <scripts_root>\SettingsMCP → the Cyrillic tree (shell-safe path).
-        let junction = format!("{}\\SettingsMCP", scripts_root());
-        out.push(if std::path::Path::new(&junction).is_dir() {
-            onb("junction", "ok", junction, None)
-        } else if tree_ok {
-            onb("junction", "todo", format!("{junction} missing"), Some("junction"))
-        } else {
-            onb("junction", "blocked", String::new(), None)
-        });
-        // Profiles: expected list from profiles.json vs `~\.claude-<name>` dirs on disk.
-        let home = std::env::var("USERPROFILE").unwrap_or_default();
-        let names = profile_names();
-        let present = names
-            .iter()
-            .filter(|n| std::path::Path::new(&format!("{home}\\.claude-{n}")).is_dir())
-            .count();
-        out.push(if !tree_ok {
-            onb("profiles", "blocked", String::new(), None)
-        } else if present == names.len() {
-            onb("profiles", "ok", format!("{present}/{}", names.len()), None)
-        } else {
-            onb("profiles", "todo", format!("{present}/{}", names.len()), Some("install_profiles"))
-        });
-        // Credentials: presence only — the file is never read.
-        let creds = format!("{home}\\.claude\\.credentials.json");
-        out.push(if std::path::Path::new(&creds).is_file() {
-            onb("creds", "ok", creds, None)
-        } else {
-            onb("creds", "todo", format!("{creds} missing — restore a backup or log in once"), Some("backup_tab"))
-        });
-        // MCP canon deployed: every profile carries every canon server (matrix V2 reconcile reuse).
-        out.push(if !tree_ok {
-            onb("mcp", "blocked", String::new(), None)
-        } else {
-            let canon = mcp_deployable_canon();
-            let missing = names
-                .iter()
-                .filter(|n| {
-                    let deployed = profile_mcp_servers(n).unwrap_or_default();
-                    mcp_split(&canon, &deployed).0.len() < canon.len()
-                })
-                .count();
-            if canon.is_empty() || missing == 0 {
-                onb("mcp", "ok", format!("{} canon servers in all profiles", canon.len()), None)
-            } else {
-                onb("mcp", "todo", format!("{missing} profile(s) missing canon servers"), Some("mcp_deploy"))
-            }
-        });
-        // Managed settings: source↔deployed comparison (stack-drift reuse).
-        out.push(if !tree_ok {
-            onb("managed", "blocked", String::new(), None)
-        } else {
-            let m = managed_settings_drift_item();
-            match m.state.as_str() {
-                "ok" => onb("managed", "ok", m.detail, None),
-                _ => onb("managed", "todo", m.detail, Some("managed_deploy")),
-            }
-        });
-        // ponytail: Syncthing hardening state isn't detected natively (REST + API key); the script
-        // is idempotent and self-skipping — offer the run, report "unknown" until then.
-        out.push(match (&st_cfg, tree_ok) {
-            (None, _) | (_, false) => onb("syncthing", "blocked", String::new(), None),
-            _ => onb("syncthing", "unknown", String::new(), Some("syncthing")),
-        });
-        // Final gate: Assert-Installation.ps1 (non-zero exit on any failure) — streamed to console.
-        out.push(if tree_ok {
-            onb("verify", "unknown", String::new(), Some("verify"))
-        } else {
-            onb("verify", "blocked", String::new(), None)
-        });
-        out
     }
+    // Syncthing is optional; presence = its config.xml exists.
+    let st_cfg = std::env::var("LOCALAPPDATA")
+        .map(|l| format!("{l}\\Syncthing\\config.xml"))
+        .ok()
+        .filter(|p| std::path::Path::new(p).is_file());
+    out.push(match &st_cfg {
+        Some(p) => onb("prereq_syncthing", "ok", p.clone(), None),
+        None => onb("prereq_syncthing", "todo", "Syncthing config.xml not found".into(), None),
+    });
+    // Settings tree = the ClaudeProfiles source of truth (arrives via Syncthing / copy / backup).
+    let tree = abs(&format!("{SETTINGS_TREE_REL}\\ClaudeProfiles"));
+    let tree_ok = std::path::Path::new(&tree).is_dir();
+    out.push(if tree_ok {
+        onb("tree", "ok", tree.clone(), None)
+    } else {
+        onb("tree", "todo", format!("{tree} missing — sync the settings tree or restore a backup"), Some("backup_tab"))
+    });
+    // ASCII junction <scripts_root>\SettingsMCP → the Cyrillic tree (shell-safe path).
+    let junction = format!("{}\\SettingsMCP", scripts_root());
+    out.push(if std::path::Path::new(&junction).is_dir() {
+        onb("junction", "ok", junction, None)
+    } else if tree_ok {
+        onb("junction", "todo", format!("{junction} missing"), Some("junction"))
+    } else {
+        onb("junction", "blocked", String::new(), None)
+    });
+    // Profiles: expected list from profiles.json vs `~\.claude-<name>` dirs on disk.
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let names = profile_names();
+    let present = names
+        .iter()
+        .filter(|n| std::path::Path::new(&format!("{home}\\.claude-{n}")).is_dir())
+        .count();
+    out.push(if !tree_ok {
+        onb("profiles", "blocked", String::new(), None)
+    } else if present == names.len() {
+        onb("profiles", "ok", format!("{present}/{}", names.len()), None)
+    } else {
+        onb("profiles", "todo", format!("{present}/{}", names.len()), Some("install_profiles"))
+    });
+    // Credentials: presence only — the file is never read.
+    let creds = format!("{home}\\.claude\\.credentials.json");
+    out.push(if std::path::Path::new(&creds).is_file() {
+        onb("creds", "ok", creds, None)
+    } else {
+        onb("creds", "todo", format!("{creds} missing — restore a backup or log in once"), Some("backup_tab"))
+    });
+    // MCP canon deployed: every profile carries every canon server (matrix V2 reconcile reuse).
+    out.push(if !tree_ok {
+        onb("mcp", "blocked", String::new(), None)
+    } else {
+        let canon = mcp_deployable_canon();
+        let missing = names
+            .iter()
+            .filter(|n| {
+                let deployed = profile_mcp_servers(n).unwrap_or_default();
+                mcp_split(&canon, &deployed).0.len() < canon.len()
+            })
+            .count();
+        if canon.is_empty() || missing == 0 {
+            onb("mcp", "ok", format!("{} canon servers in all profiles", canon.len()), None)
+        } else {
+            onb("mcp", "todo", format!("{missing} profile(s) missing canon servers"), Some("mcp_deploy"))
+        }
+    });
+    // Managed settings: source↔deployed comparison (stack-drift reuse).
+    out.push(if !tree_ok {
+        onb("managed", "blocked", String::new(), None)
+    } else {
+        let m = managed_settings_drift_item();
+        match m.state.as_str() {
+            "ok" => onb("managed", "ok", m.detail, None),
+            _ => onb("managed", "todo", m.detail, Some("managed_deploy")),
+        }
+    });
+    // ponytail: Syncthing hardening state isn't detected natively (REST + API key); the script
+    // is idempotent and self-skipping — offer the run, report "unknown" until then.
+    out.push(match (&st_cfg, tree_ok) {
+        (None, _) | (_, false) => onb("syncthing", "blocked", String::new(), None),
+        _ => onb("syncthing", "unknown", String::new(), Some("syncthing")),
+    });
+    // Final gate: Assert-Installation.ps1 (non-zero exit on any failure) — streamed to console.
+    out.push(if tree_ok {
+        onb("verify", "unknown", String::new(), Some("verify"))
+    } else {
+        onb("verify", "blocked", String::new(), None)
+    });
+    out
 }
 
 #[tauri::command]

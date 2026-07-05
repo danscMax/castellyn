@@ -20,8 +20,7 @@
   let working = $state<string | null>(null); // '*' = refresh/run-all, else the step id
 
   const rows = $derived(steps ?? []);
-  const todo = $derived(rows.filter((r) => r.state === 'todo').length);
-  const allOk = $derived(rows.length > 0 && rows.every((r) => r.state === 'ok' || r.state === 'blocked' || r.state === 'unknown') && todo === 0);
+  const allOk = $derived(rows.length > 0 && rows.every((r) => r.state !== 'todo'));
   const runnable = $derived(rows.some((r) => r.fix && (r.state === 'todo' || r.state === 'unknown')));
 
   const dot = { up: statusFillVar('up'), degraded: statusFillVar('degraded'), down: statusFillVar('down') } as const;

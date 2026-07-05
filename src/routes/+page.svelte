@@ -2338,7 +2338,9 @@
 <CommandPalette open={paletteOpen} commands={paletteCommands} placeholder={t('common.paletteSearch')} onClose={() => (paletteOpen = false)} />
 
 <div class="flex h-full overflow-hidden" class:dense={density === 'compact'}>
-  <Sidebar {active} onSelect={(id) => (active = id)} {attention} loading={tabLoading}
+  <!-- Selecting a tab dismisses the onboarding overlay — otherwise the hidden tab content makes
+       a sidebar click look like a dead button. -->
+  <Sidebar {active} onSelect={(id) => { active = id; showOnboarding = false; }} {attention} loading={tabLoading}
     notifOpen={notifOpen} onToggleNotif={() => (notifOpen = !notifOpen)} bind:notifAnchor />
 
   <NotificationPanel open={notifOpen} onClose={() => (notifOpen = false)} anchor={notifAnchor} />

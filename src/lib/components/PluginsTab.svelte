@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease, PluginSyncStatus, BumpLevel } from '$lib/ipc';
   import { listPluginReleases, openPath } from '$lib/ipc';
+  import { pushToast } from '$lib/toast.svelte';
   import { t, pSkill, pCommand, pAgent, pPlugin } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
   import Spinner from './Spinner.svelte';
@@ -417,7 +418,8 @@
                 <h3 class="mdname">{cur.g.key === 'cmd' ? `/${pname}:${cur.it.name}` : cur.it.name}</h3>
                 <p class="mdtype">{cur.g.typeLabel} · <span title={cur.it.path}>{relTail(cur.it.path)}</span></p>
                 <p class="mddesc" class:ph={!cur.it.description}>{cur.it.description ?? t('plugins.detNoDesc')}</p>
-                <button class="sw-btn sw-btn-ghost text-sw-xs mdopen" onclick={() => openPath(cur.it.path)}
+                <button class="sw-btn sw-btn-ghost text-sw-xs mdopen"
+                  onclick={() => openPath(cur.it.path).catch((e) => pushToast({ kind: 'error', title: String(e) }))}
                   title={cur.it.path}>{t('plugins.detOpenFile')}</button>
               </div>
             {/if}
