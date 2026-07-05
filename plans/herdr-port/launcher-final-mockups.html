@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Лаунчер «Сессий» — финал: 3 варианта главной кнопки «＋»</title>
+<style>
+  :root {
+    --bg: #0a0e14; --bg2: #121a24; --bg3: #1b2531; --bg-hover: #22303f;
+    --border: #2a3644; --text: #e6edf3; --muted: #8b98a8;
+    --accent: #3b82f6; --accent2: #2563eb; --accent-text: #7cb0ff;
+    --accent-glow: rgba(59,130,246,0.16);
+    --warn: #d9a441; --danger: #f85149; --done: #2dd4bf; --up: #3fb950;
+    --radius: 8px;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6fa; --bg2: #ffffff; --bg3: #eef1f6; --bg-hover: #e4e9f1;
+    --border: #d3dae4; --text: #1b2430; --muted: #5c6b7e;
+    --accent-text: #2563eb; --accent-glow: rgba(59,130,246,0.12);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 28px 20px 60px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .lede { color: var(--muted); max-width: 820px; }
+  .themebtn { flex: none; background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+  .locked { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px; margin: 18px 0 26px; color: var(--muted); font-size: 13px; }
+  .locked b { color: var(--text); }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px 22px; margin-bottom: 24px; }
+  .card h2 { font-size: 16px; margin: 0 0 2px; display: flex; align-items: baseline; gap: 10px; }
+  .card h2 .num { color: var(--accent-text); }
+  .card .desc { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  .mock { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  :root[data-theme="light"] .mock { background: var(--bg3); }
+  .kbd { font: 11px ui-monospace, monospace; background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+  .mono { font-family: ui-monospace, "Cascadia Code", monospace; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  .note b { color: var(--text); }
+
+  /* shared toolbar strip (what Sessions already looks like) */
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .stab { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; background: var(--bg2); }
+  :root[data-theme="light"] .stab { background: #fff; }
+  .stab.sel { border-color: var(--accent-text); background: var(--accent-glow); }
+  .stab .name { padding: 6px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  .stab .plus { border: none; border-left: 1px solid var(--border); background: transparent; color: var(--accent-text);
+    cursor: pointer; padding: 6px 10px; font-weight: 700; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); display: inline-block; }
+  .dot.work { background: var(--warn); }
+  .fav { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .spacer { flex: 1; }
+
+  .split { display: inline-flex; border-radius: var(--radius); overflow: hidden; box-shadow: 0 0 0 1px var(--accent2); }
+  .split .main { display: inline-flex; align-items: center; gap: 8px; border: none; cursor: pointer;
+    background: linear-gradient(180deg, var(--accent), var(--accent2)); color: #fff;
+    padding: 9px 16px; font-size: 13px; font-weight: 600; }
+  .split .main small { font-weight: 400; opacity: .85; }
+  .split .chev { border: none; border-left: 1px solid rgba(255,255,255,.25); cursor: pointer;
+    background: linear-gradient(180deg, var(--accent), var(--accent2)); color: #fff; padding: 9px 11px; }
+  .btn-primary { display: inline-flex; align-items: center; gap: 8px; border: none; cursor: pointer;
+    background: linear-gradient(180deg, var(--accent), var(--accent2)); color: #fff;
+    padding: 9px 16px; border-radius: var(--radius); font-size: 13px; font-weight: 600; }
+
+  .menu { border: 1px solid var(--accent-text); border-radius: var(--radius); background: var(--bg2);
+    max-width: 470px; overflow: hidden; margin-top: 10px; box-shadow: 0 14px 34px rgba(0,0,0,.45); }
+  :root[data-theme="light"] .menu { background: #fff; box-shadow: 0 14px 34px rgba(0,0,0,.18); }
+  .mi { padding: 9px 14px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .mi:last-child { border-bottom: none; }
+  .mi:hover { background: var(--bg-hover); }
+  .mi.hdr { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; background: var(--bg); }
+  .mi .path, .mi .when { color: var(--muted); margin-left: auto; font-size: 11px; }
+  .mi .env { color: var(--muted); font-size: 11px; border: 1px solid var(--border); border-radius: 99px; padding: 1px 8px; }
+  .mi.custom { color: var(--accent-text); font-weight: 600; }
+  .mi .star { color: var(--warn); }
+
+  .ghostform { border: 1px dashed var(--border); border-radius: var(--radius); padding: 12px 14px; color: var(--muted);
+    font-size: 12px; max-width: 470px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Финал лаунчера: что делает главная «＋» (3 варианта)</h1>
+      <p class="lede">V1 (клон на панели) и V2 («＋» на вкладке проекта) уже в проде. Остался последний слот —
+        главная кнопка бара. Сегодня она открывает полную форму-конструктор. Три кандидата ниже; форма в любом
+        случае остаётся доступной, вопрос — что происходит на первом клике.</p>
+    </div>
+    <button class="themebtn" id="theme">☀️ / 🌙 тема</button>
+  </header>
+
+  <div class="locked">
+    Общий контекст (как уже есть): вкладки-spaces с «＋» · избранное ★ в компакт-баре · клон ⧉ на каждой панели ·
+    полная форма (среда × папка × аргументы) — в поповере. Меняется ТОЛЬКО поведение главной кнопки.
+  </div>
+
+  <!-- A -->
+  <div class="card">
+    <h2><span class="num">A</span> Мгновенный «＋» (tmux-наследование, V9)</h2>
+    <p class="desc">Клик = сразу новый агент в папке АКТИВНОЙ панели, среда/профиль/аргументы = пресет её проекта.
+      Ноль вопросов. Шеврон ▾ — открыть полную форму. <span class="kbd">Alt</span>+клик — выбрать среду разово.</p>
+    <div class="mock">
+      <div class="bar">
+        <span class="stab sel"><span class="name"><span class="dot work"></span> Castellyn</span><button class="plus">＋</button></span>
+        <span class="stab"><span class="name"><span class="dot"></span> SweetWhisper</span><button class="plus">＋</button></span>
+        <span class="fav">★ ccmy·Castellyn &nbsp; ★ codex·SellCoach</span>
+        <span class="spacer"></span>
+        <span class="split">
+          <button class="main">＋ Ещё здесь <small>· ccmy · E:\Scripts\Castellyn</small></button>
+          <button class="chev">▾</button>
+        </span>
+      </div>
+      <div class="ghostform">▾ открывает сегодняшний поповер-конструктор (среда × папка × аргументы) — без изменений.</div>
+      <p class="note"><b>Пустое состояние</b> (ни одной панели): кнопка превращается в «＋ Новая сессия» и открывает форму.
+        <b>Плюс:</b> самый быстрый частый путь (0 решений). <b>Минус:</b> «повторить вчерашний особый запуск» — только через форму.</p>
+    </div>
+  </div>
+
+  <!-- B -->
+  <div class="card">
+    <h2><span class="num">B</span> Меню-память (V3)</h2>
+    <p class="desc">Клик открывает список: последние запуски (1 клик = повторить) + избранные ★ + «Свой запуск…» (форма).
+      Кнопка никогда не запускает сама — всегда показывает выбор.</p>
+    <div class="mock">
+      <div class="bar">
+        <span class="stab sel"><span class="name"><span class="dot work"></span> Castellyn</span><button class="plus">＋</button></span>
+        <span class="stab"><span class="name"><span class="dot"></span> SweetWhisper</span><button class="plus">＋</button></span>
+        <span class="spacer"></span>
+        <button class="btn-primary">＋ Новая ▾</button>
+      </div>
+      <div class="menu">
+        <div class="mi hdr">Недавние</div>
+        <div class="mi"><span class="dot work"></span> ccmy <span class="env">claude</span><span class="path mono">E:\Scripts\Castellyn</span><span class="when">2 мин</span></div>
+        <div class="mi"><span class="dot"></span> codex <span class="env">codex</span><span class="path mono">E:\Scripts\SellCoach</span><span class="when">вчера</span></div>
+        <div class="mi"><span class="dot"></span> cc3 --resume <span class="env">claude</span><span class="path mono">G:\…\Space Travel</span><span class="when">вчера</span></div>
+        <div class="mi hdr">Избранные</div>
+        <div class="mi"><span class="star">★</span> ccmy · Castellyn <span class="path mono">E:\Scripts\Castellyn</span></div>
+        <div class="mi"><span class="star">★</span> opencode · форки <span class="path mono">E:\Scripts\fork-updater</span></div>
+        <div class="mi custom">✎ Свой запуск… (полная форма)</div>
+      </div>
+      <p class="note"><b>Плюс:</b> вся память запусков в одном месте, избранное переезжает в меню (бар чище).
+        <b>Минус:</b> частый путь = 2 клика вместо 1.</p>
+    </div>
+  </div>
+
+  <!-- C -->
+  <div class="card">
+    <h2><span class="num">C</span> Сплит: мгновенно + память (V9 + V3, рекомендую)</h2>
+    <p class="desc">Главная зона = вариант A (мгновенно, в активном проекте, подпись показывает ЧТО запустится).
+      Шеврон ▾ = меню варианта B (недавние + избранные + «Свой запуск…»). 95% — один клик, 5% — два.</p>
+    <div class="mock">
+      <div class="bar">
+        <span class="stab sel"><span class="name"><span class="dot work"></span> Castellyn</span><button class="plus">＋</button></span>
+        <span class="stab"><span class="name"><span class="dot"></span> SweetWhisper</span><button class="plus">＋</button></span>
+        <span class="spacer"></span>
+        <span class="split">
+          <button class="main">＋ Ещё здесь <small>· ccmy · Castellyn</small></button>
+          <button class="chev">▾</button>
+        </span>
+      </div>
+      <div class="menu">
+        <div class="mi hdr">Недавние</div>
+        <div class="mi"><span class="dot work"></span> ccmy <span class="env">claude</span><span class="path mono">E:\Scripts\Castellyn</span><span class="when">2 мин</span></div>
+        <div class="mi"><span class="dot"></span> codex <span class="env">codex</span><span class="path mono">E:\Scripts\SellCoach</span><span class="when">вчера</span></div>
+        <div class="mi hdr">Избранные</div>
+        <div class="mi"><span class="star">★</span> opencode · форки <span class="path mono">E:\Scripts\fork-updater</span></div>
+        <div class="mi custom">✎ Свой запуск… (полная форма)</div>
+      </div>
+      <p class="note"><b>Пустое состояние:</b> главная зона = «＋ Новая сессия» → форма. <b>Плюс:</b> покрывает оба сценария,
+        избранное можно убрать из бара в меню. <b>Минус:</b> самый «широкий» контрол в баре.</p>
+    </div>
+  </div>
+
+  <p class="note" style="text-align:center">Файл: plans\herdr-port\launcher-final-mockups.html · база 10 черновых вариантов: launcher-mockups.html</p>
+</div>
+<script>
+  const btn = document.getElementById('theme');
+  btn.addEventListener('click', () => {
+    const r = document.documentElement;
+    r.dataset.theme = r.dataset.theme === 'light' ? '' : 'light';
+  });
+</script>
+</body>
+</html>

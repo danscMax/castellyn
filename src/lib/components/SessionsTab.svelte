@@ -147,6 +147,7 @@
       workspaces = JSON.parse(localStorage.getItem(WKEY) ?? '{}');
       defaultArgs = localStorage.getItem(DAKEY) ?? '';
       favorites = JSON.parse(localStorage.getItem(VKEY) ?? '[]');
+      recents = JSON.parse(localStorage.getItem(RECKEY) ?? '[]');
       projectsRoot = localStorage.getItem(ROOT) ?? '';
       remoteRecent = JSON.parse(localStorage.getItem(RRKEY) ?? '[]');
       const c = Number(localStorage.getItem(CKEY));
@@ -1168,6 +1169,7 @@
     const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs);
     if (v) {
       if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
+      recordRecent(lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs);
       addPane(v);
       newOpen = false; // close the launcher popover once a session starts
     }
@@ -1196,7 +1198,10 @@
   }
   function launchFav(f: Fav) {
     const v = paneFrom(f.env, f.profile, f.locId, f.folder, f.remoteDir, f.args);
-    if (v) addPane(v);
+    if (v) {
+      recordRecent(f.env, f.profile, f.locId, f.folder, f.remoteDir, f.args);
+      addPane(v);
+    }
   }
   function removeFav(id: string) {
     favorites = favorites.filter((f) => f.id !== id);
@@ -1215,6 +1220,55 @@
       /* ignore */
     }
   });
+  // ─── Launcher C (V9+V3): recents = last 5 unique launch recipes, shown in the ▾ menu ───
+  type Recent = { env: Env; profile: string; locId: string; folder: string; remoteDir: string; args: string; label: string; when: number };
+  const RECKEY = 'cmh-sessions-recents';
+  let recents = $state<Recent[]>([]);
+  const recipeKey = (r: { env: string; profile: string; locId: string; folder: string; remoteDir: string; args: string }) =>
+    [r.env, r.profile, r.locId, r.folder.trim(), r.remoteDir.trim(), r.args.trim()].join('\u0000');
+  function recordRecent(env: Env, profile: string, locId: string, folder: string, remoteDir: string, args: string) {
+    const rec: Recent = {
+      env, profile, locId, folder, remoteDir,
+      args: env === 'shell' ? '' : args,
+      label: favLabel(env, profile, locId, folder),
+      when: Date.now()
+    };
+    recents = [rec, ...recents.filter((r) => recipeKey(r) !== recipeKey(rec))].slice(0, 5);
+  }
+  // A pinned recipe lives in the favorites section only — no duplicate row under "recent".
+  const menuRecents = $derived(recents.filter((r) => !favorites.some((f) => recipeKey(f) === recipeKey(r))));
+  function launchRecent(r: Recent) {
+    const v = paneFrom(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args);
+    if (v) {
+      recordRecent(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args); // bump recency
+      addPane(v);
+      plusMenuOpen = false;
+    }
+  }
+  $effect(() => {
+    try {
+      localStorage.setItem(RECKEY, JSON.stringify(recents));
+    } catch {
+      /* ignore */
+    }
+  });
+  // Split "＋": main zone = instant agent per the ACTIVE project's recipe (its primary pane —
+  // exactly what the tab's own "＋" does); empty project → the full form. Chevron = memory menu.
+  let plusMenuOpen = $state(false);
+  let splitEl = $state<HTMLElement | undefined>(undefined);
+  const mainPreset = $derived(activePanes.find((p) => paneSpace(p) === activeSpace) ?? null);
+  function paneRecipeLabel(p: Pane): string {
+    const where = p.sshTarget
+      ? `🖥 ${p.sshTarget}`
+      : p.cwd
+        ? p.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p.cwd
+        : t('sessions.cwdShort');
+    return p.tool === 'claude' && p.profile ? `${p.profile} · ${where}` : `${p.tool} · ${where}`;
+  }
+  function mainPlus() {
+    plusMenuOpen = false;
+    spacePlus(activeSpace);
+  }
   // Deep-link (e.g. from a fork card's "Terminal" menu): prefill the phrase with that repo folder
   // (local). If the menu also picked a tool, open the session straight away (profile → claude only).
   $effect(() => {
@@ -1485,23 +1539,53 @@
     </div>
   </header>
 
-  <!-- herdr W1: compact launcher bar — "＋ New session" opens the phrase constructor in an anchored
-       popover (reclaiming the ~4 permanent rows the always-open launcher ate); favorites stay as
-       one-click chips right here so the common relaunch is still a single click. -->
+  <!-- Launcher C (V9+V3): split "＋" — the main zone instantly spawns one more agent per the ACTIVE
+       project's recipe (label shows what will run; empty project → the full form). The chevron opens
+       the memory menu: recent recipes + favorites (moved here from bar chips) + "custom launch…". -->
   <div class="newbar">
-    <button bind:this={newBtnEl} type="button" class="sw-btn sw-btn-primary text-sw-xs" class:active={newOpen}
-      onclick={() => (newOpen = !newOpen)} aria-expanded={newOpen} aria-haspopup="dialog" title={t('sessions.newSession')}>
-      ＋ {t('sessions.newSession')} ▾
-    </button>
-    {#if favorites.length}
-      {#each favorites as f (f.id)}
-        <span class="fav-chip">
-          <button type="button" class="fav-go" onclick={() => launchFav(f)} title={t('sessions.favLaunchTip')}>{f.label}</button>
-          <button type="button" class="fav-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
-        </span>
-      {/each}
-    {/if}
+    <span class="plus-split" bind:this={splitEl}>
+      <button bind:this={newBtnEl} type="button" class="split-main" disabled={atLimit}
+        onclick={mainPlus} title={mainPreset ? t('sessions.plusHereTip') : t('sessions.newSession')}>
+        ＋ {#if mainPreset}{t('sessions.plusHere')}<span class="split-sub">· {paneRecipeLabel(mainPreset)}</span>{:else}{t('sessions.newSession')}{/if}
+      </button>
+      <button type="button" class="split-chev" class:active={plusMenuOpen}
+        onclick={() => (plusMenuOpen = !plusMenuOpen)} aria-expanded={plusMenuOpen} aria-haspopup="menu"
+        title={t('sessions.plusMenuTip')} aria-label={t('sessions.plusMenuTip')}>▾</button>
+    </span>
   </div>
+
+  {#if plusMenuOpen && splitEl}
+    <!-- Launcher C memory menu: recent recipes (1 click = repeat) + favorites + custom launch (form) -->
+    <div class="plusmenu" role="menu" aria-label={t('sessions.plusMenuTip')} tabindex="-1"
+      use:anchored={{ anchor: splitEl, onOutside: () => (plusMenuOpen = false) }}
+      onkeydown={(e) => e.key === 'Escape' && (plusMenuOpen = false)}>
+      {#if menuRecents.length}
+        <div class="pm-hdr">{t('sessions.menuRecent')}</div>
+        {#each menuRecents as r (recipeKey(r))}
+          <button type="button" class="pm-item" role="menuitem" disabled={atLimit} onclick={() => launchRecent(r)}>
+            <span class="pm-label">{r.label}</span>
+            <span class="pm-path" title={r.locId ? r.remoteDir : r.folder}>{r.locId ? r.remoteDir : r.folder}</span>
+          </button>
+        {/each}
+      {/if}
+      {#if favorites.length}
+        <div class="pm-hdr">{t('sessions.menuFavs')}</div>
+        {#each favorites as f (f.id)}
+          <div class="pm-row">
+            <button type="button" class="pm-item" role="menuitem" disabled={atLimit}
+              onclick={() => { launchFav(f); plusMenuOpen = false; }} title={t('sessions.favLaunchTip')}>
+              <span class="pm-star">★</span>
+              <span class="pm-label">{f.label}</span>
+              <span class="pm-path" title={f.locId ? f.remoteDir : f.folder}>{f.locId ? f.remoteDir : f.folder}</span>
+            </button>
+            <button type="button" class="pm-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
+          </div>
+        {/each}
+      {/if}
+      <button type="button" class="pm-item pm-custom" role="menuitem"
+        onclick={() => { plusMenuOpen = false; newOpen = true; }}>✎ {t('sessions.customLaunch')}</button>
+    </div>
+  {/if}
 
   {#if newOpen && newBtnEl}
     <!-- Launcher popover: environment × location × folder × args, read as a phrase (№20 + №8) -->
@@ -2029,37 +2113,130 @@
     align-items: center;
     gap: var(--sw-space-2);
   }
-  .fav-chip {
+  /* Launcher C: split "＋" (main = instant per project recipe, chevron = memory menu) */
+  .plus-split {
+    display: inline-flex;
+    border-radius: var(--sw-radius-md);
+    overflow: hidden;
+    box-shadow: 0 0 0 1px var(--sw-accent);
+  }
+  .split-main,
+  .split-chev {
+    border: none;
+    cursor: pointer;
+    background: var(--sw-accent);
+    color: #fff;
+    font-size: var(--sw-text-xs);
+    padding: 6px 12px;
+  }
+  .split-main {
     display: inline-flex;
     align-items: center;
-    border: 1px solid var(--sw-accent-text);
-    background: var(--sw-accent-glow);
-    border-radius: 9999px;
-    overflow: hidden;
+    gap: 6px;
+    font-weight: 600;
   }
-  .fav-go {
+  .split-main:disabled,
+  .split-chev:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .split-main:hover:not(:disabled),
+  .split-chev:hover:not(:disabled),
+  .split-chev.active {
+    filter: brightness(1.12);
+  }
+  .split-sub {
+    font-weight: 400;
+    opacity: 0.85;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .split-chev {
+    border-left: 1px solid rgb(255 255 255 / 0.3);
+    padding: 6px 9px;
+  }
+  /* Memory menu (anchored popover) */
+  .plusmenu {
+    width: min(440px, 92vw);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-secondary);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+    z-index: 60;
+    overflow: hidden;
+    padding: var(--sw-space-1) 0;
+  }
+  .pm-hdr {
+    padding: 5px 12px 3px;
+    color: var(--sw-text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .pm-row {
+    display: flex;
+    align-items: stretch;
+  }
+  .pm-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
     border: none;
     background: transparent;
     color: var(--sw-text-primary);
     cursor: pointer;
-    padding: var(--sw-space-1) var(--sw-space-2);
+    text-align: left;
+    padding: 6px 12px;
     font-size: var(--sw-text-xs);
+  }
+  .pm-item:hover:not(:disabled) {
+    background: var(--sw-bg-hover);
+  }
+  .pm-item:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .pm-label {
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .fav-go:hover {
-    color: var(--sw-accent-text);
+  .pm-star {
+    color: var(--sw-warn);
+    flex-shrink: 0;
   }
-  .fav-x {
+  .pm-path {
+    margin-left: auto;
+    color: var(--sw-text-muted);
+    font-family: var(--sw-font-mono);
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 45%;
+    flex-shrink: 0;
+  }
+  .pm-x {
     border: none;
     background: transparent;
     color: var(--sw-text-muted);
     cursor: pointer;
-    padding: 3px 7px;
+    padding: 0 10px;
     font-size: 10px;
-    border-left: 1px solid var(--sw-border);
   }
-  .fav-x:hover {
+  .pm-x:hover {
     color: var(--sw-danger);
+  }
+  .pm-custom {
+    color: var(--sw-accent-text);
+    font-weight: 600;
+    border-top: 1px solid var(--sw-border);
+    margin-top: 3px;
+    padding-top: 8px;
   }
   .workspaces {
     display: flex;
