@@ -46,14 +46,15 @@
   {#if tasks.length}
     <div class="grid grid-cols-1 gap-sw-4 md:grid-cols-2 xl:grid-cols-3">
       {#each tasks as task (task.id)}
-        <div class="sw-card flex flex-col gap-sw-3">
+        <!-- Amber accent on tasks that need attention (never created OR disabled) so the culprits stand out. -->
+        <div class="sw-card flex flex-col gap-sw-3" class:needs-attn={!task.exists || !task.enabled}>
           <div class="flex items-start justify-between gap-sw-2">
             <div>
               <h3 class="font-medium">{task.label}</h3>
               <p class="font-mono text-sw-xs text-sw-text-muted">{task.tn}</p>
             </div>
             {#if !task.exists}
-              <span class="badge badge-muted" title={t('schedule.statusNotCreatedHint')}>{t('schedule.statusNotCreatedBadge')}</span>
+              <span class="badge badge-warn" title={t('schedule.statusNotCreatedHint')}>{t('schedule.statusNotCreatedBadge')}</span>
             {:else if task.enabled}
               <span class="badge badge-ok" title={t('schedule.statusEnabledHint')}>{t('schedule.statusEnabledBadge')}</span>
             {:else}
@@ -126,3 +127,10 @@
     <EmptyState icon={Clock} title={t('schedule.emptyTitle')} description={t('schedule.emptyHint')} />
   {/if}
 </div>
+
+<style>
+  /* Amber-tinted border marks a card as needing attention (reuses the warn token). */
+  .needs-attn {
+    border-color: color-mix(in srgb, var(--sw-warn) 45%, var(--sw-border));
+  }
+</style>

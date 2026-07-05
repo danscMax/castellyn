@@ -2,7 +2,9 @@
 // Keyed by tool; the values are exact CLI flags toggled into the args string.
 export const ARG_PRESETS: Record<string, string[]> = {
   claude: ['--dangerously-skip-permissions', '--effort max', '--effort high', '--continue', '--resume'],
-  opencode: ['--continue']
+  opencode: ['--continue'],
+  // --yolo = codex's skip-approvals mode (alias of --dangerously-bypass-approvals-and-sandbox).
+  codex: ['--yolo', '--full-auto', '--search']
 };
 
 // First-message snippet templates inserted into a pane (no auto-Enter). Common Claude slash

@@ -48,6 +48,8 @@ export default {
   skillDeleteTip: 'Delete the skill folder',
   enabledTip: 'Plugin enabled',
   disabledTip: 'Plugin disabled',
+  blockedBadge: 'policy',
+  blockedTip: 'Blocked by managed policy in every profile — click to unblock in the source and redeploy (UAC)',
 
   // Plugin contents (details)
   catSkills: 'Skills',

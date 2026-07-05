@@ -20,6 +20,7 @@
     sshTarget,
     parseSshTarget,
     pickFolder,
+    readCodexProfiles,
     globalSessionCount,
     agentStatusHookStatus,
     agentStatusHookSet,
@@ -150,6 +151,8 @@
       if (Array.isArray(favs)) favorites = favs;
       const recs = JSON.parse(localStorage.getItem(RECKEY) ?? '[]');
       if (Array.isArray(recs)) recents = recs;
+      const sr = JSON.parse(localStorage.getItem(SRKEY) ?? '{}');
+      if (sr && typeof sr === 'object' && !Array.isArray(sr)) spaceRecipe = sr;
       projectsRoot = localStorage.getItem(ROOT) ?? '';
       remoteRecent = JSON.parse(localStorage.getItem(RRKEY) ?? '[]');
       const c = Number(localStorage.getItem(CKEY));
@@ -165,6 +168,10 @@
     } catch {
       /* first run / private mode */
     }
+    // Codex config.toml profiles → `--profile` chips; best-effort, empty when none defined.
+    readCodexProfiles()
+      .then((v) => (codexProfiles = Array.isArray(v) ? v : []))
+      .catch(() => {});
     // Re-attach sessions that survived a webview reload (#5): the backend keeps them running, so
     // mirror the still-alive ones back here as owner instead of orphaning them against SESSION_LIMIT.
     if (savedLive.length) {
@@ -714,6 +721,16 @@
     panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space: v.space ?? activeSpace }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
     rememberRecent(v.cwd);
+    // EVERY real spawn becomes a "recent" recipe — clones, tab "＋", stack launches and deep-links
+    // used to bypass the menu memory. Re-attach isn't a new launch; an SSH pane whose host is no
+    // longer saved can't round-trip to a recipe (locId lost) — skip it rather than record a
+    // recipe that would silently launch locally.
+    if (!v.attachId) {
+      const loc = locIdFor(v.sshTarget);
+      if (!v.sshTarget || loc) {
+        recordRecent(v.tool as Env, v.profile, loc, v.cwd, v.remoteDir ?? '', v.args);
+      }
+    }
     // Auto-focus the new pane's terminal so the user can type immediately (the obvious next action
     // after launch) — one frame later, once the pane has mounted and grabbed its paneRef.
     requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
@@ -776,6 +793,20 @@
     if (maximized && maximized !== key) maximized = key; // switch which pane is full-screen
     requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
   }
+  // Right-click on a rail row → the pane's main actions (maximize / background / close) without
+  // hunting for its header. The global handler suppresses WebView2's native menu everywhere else.
+  let railMenuFor = $state<string | null>(null);
+  let railMenuAnchor = $state<HTMLElement | null>(null);
+  function openRailMenu(e: MouseEvent, key: string) {
+    e.preventDefault();
+    railMenuAnchor = e.currentTarget as HTMLElement;
+    railMenuFor = key;
+  }
+  function railMenuAct(fn: (key: string) => void) {
+    const k = railMenuFor;
+    railMenuFor = null;
+    if (k) fn(k);
+  }
   // ── herdr W3: spaces (project tabs). Each pane belongs to a space; the grid + rail show only the
   //    ACTIVE space's panes, but EVERY pane stays MOUNTED (filtered by CSS, not unmounted) so no PTY
   //    dies on a space switch. Spaces list + active id persist (synced via sessionPrefs). ──
@@ -806,9 +837,16 @@
     maximized = null; // the maximized pane may belong to another space
     persistSpaces();
   }
-  // V2: "＋ agent here" on a project tab — one more agent like the project's primary (first-launched)
-  // agent: same folder/env/args, same space, no form. Empty project → open the launcher for its first.
+  // V2: "＋ agent here" on a project tab — one more agent by the project's CURRENT recipe: the last
+  // explicit launch aimed at it (spaceRecipe), falling back to cloning its primary pane. Empty
+  // project with no recipe → open the launcher for its first.
   function spacePlus(id: string) {
+    const r = spaceRecipe[id];
+    if (r) {
+      const v = paneFrom(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args);
+      if (v) addPane({ ...v, space: id });
+      return; // v === null → paneFrom already toasted (e.g. the recipe's SSH host is gone)
+    }
     const src = activePanes.find((p) => paneSpace(p) === id);
     if (src) {
       addPane({ tool: src.tool, profile: src.profile, cwd: src.cwd, args: src.args, remoteDir: src.remoteDir, sshTarget: src.sshTarget, space: id });
@@ -839,6 +877,10 @@
     const fallback = rest[0].id;
     // Reassign that space's panes to the first remaining space — non-destructive, no PTY killed.
     panes = panes.map((p) => (paneSpace(p) === id ? { ...p, space: fallback } : p));
+    if (spaceRecipe[id]) {
+      const { [id]: _gone, ...rest2 } = spaceRecipe;
+      spaceRecipe = rest2;
+    }
     spaces = rest;
     if (activeSpace === id) activeSpace = fallback;
     persistSpaces();
@@ -1103,6 +1145,14 @@
     // with a Claude flag it rejects (error: unexpected argument '--dangerously-skip-permissions').
     if (!argsTouched) lArgs = lEnv === 'claude' ? defaultArgs : '';
   });
+  // Per-harness launch chips (claude seeds from ⚙ default-args instead — no chips there). Codex
+  // additionally offers its config.toml profiles as `--profile <name>`.
+  let codexProfiles = $state<string[]>([]);
+  const launchChips = $derived(
+    lEnv === 'claude'
+      ? []
+      : [...(ARG_PRESETS[lEnv] ?? []), ...(lEnv === 'codex' ? codexProfiles.map((p) => `--profile ${p}`) : [])]
+  );
   // Switching harness re-seeds the args field (unless the user already edited it) so a leftover Claude
   // flag doesn't leak into codex/opencode — and can't get pinned into a favorite mid-switch.
   function selectEnv(id: Env) {
@@ -1180,8 +1230,8 @@
     const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs);
     if (v) {
       if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
-      recordRecent(lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs);
-      addPane(v);
+      setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs); // explicit choice
+      addPane(v); // addPane records the recipe into "recents"
       newOpen = false; // close the launcher popover once a session starts
     }
   }
@@ -1210,7 +1260,7 @@
   function launchFav(f: Fav) {
     const v = paneFrom(f.env, f.profile, f.locId, f.folder, f.remoteDir, f.args);
     if (v) {
-      recordRecent(f.env, f.profile, f.locId, f.folder, f.remoteDir, f.args);
+      setSpaceRecipe(activeSpace, f.env, f.profile, f.locId, f.folder, f.remoteDir, f.args);
       addPane(v);
     }
   }
@@ -1237,8 +1287,8 @@
   let recents = $state<Recent[]>([]);
   const recipeKey = (r: { env: string; profile: string; locId: string; folder: string; remoteDir: string; args: string }) =>
     [r.env, r.profile, r.locId, r.folder.trim(), r.remoteDir.trim(), r.args.trim()].join('\u0000');
-  function recordRecent(env: Env, profile: string, locId: string, folder: string, remoteDir: string, args: string) {
-    const rec: Recent = {
+  function makeRecent(env: Env, profile: string, locId: string, folder: string, remoteDir: string, args: string): Recent {
+    return {
       // Normalize like paneFrom does: profile only matters for claude, args never for shell —
       // otherwise a stale lProfile forks visually identical rows with different recipe keys.
       env, profile: env === 'claude' ? profile : '', locId, folder, remoteDir,
@@ -1246,15 +1296,45 @@
       label: favLabel(env, profile, locId, folder),
       when: Date.now()
     };
+  }
+  function recordRecent(env: Env, profile: string, locId: string, folder: string, remoteDir: string, args: string) {
+    const rec = makeRecent(env, profile, locId, folder, remoteDir, args);
     recents = [rec, ...recents.filter((r) => recipeKey(r) !== recipeKey(rec))].slice(0, 5);
   }
+  // Reverse-map a live pane's sshTarget back to the saved host id (recipes store locId; panes
+  // store the rendered target). '' when local or when the host is gone.
+  function locIdFor(target?: string): string {
+    if (!target) return '';
+    const h = sshHostList.find((x) => {
+      try {
+        return sshTarget(x) === target;
+      } catch {
+        return false;
+      }
+    });
+    return h?.id ?? '';
+  }
+  // The project's "current recipe" = the last EXPLICIT launch aimed at it (form / menu). Clones
+  // and the instant "＋" deliberately don't overwrite it — repeating a recipe isn't choosing one.
+  const SRKEY = 'cmh-sessions-space-recipes';
+  let spaceRecipe = $state<Record<string, Recent>>({});
+  function setSpaceRecipe(space: string, env: Env, profile: string, locId: string, folder: string, remoteDir: string, args: string) {
+    spaceRecipe = { ...spaceRecipe, [space]: makeRecent(env, profile, locId, folder, remoteDir, args) };
+  }
+  $effect(() => {
+    try {
+      localStorage.setItem(SRKEY, JSON.stringify(spaceRecipe));
+    } catch {
+      /* ignore */
+    }
+  });
   // A pinned recipe lives in the favorites section only — no duplicate row under "recent".
   const menuRecents = $derived(recents.filter((r) => !favorites.some((f) => recipeKey(f) === recipeKey(r))));
   function launchRecent(r: Recent) {
     const v = paneFrom(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args);
     if (v) {
-      recordRecent(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args); // bump recency
-      addPane(v);
+      setSpaceRecipe(activeSpace, r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args);
+      addPane(v); // records + bumps recency
       plusMenuOpen = false;
     }
   }
@@ -1270,6 +1350,11 @@
   let plusMenuOpen = $state(false);
   let splitEl = $state<HTMLElement | undefined>(undefined);
   const mainPreset = $derived(activePanes.find((p) => paneSpace(p) === activeSpace) ?? null);
+  // What the split-main button will actually launch: the space's explicit recipe wins, then the
+  // primary pane's recipe. Keeps the label honest with spacePlus()'s priority order.
+  const mainLabel = $derived(
+    spaceRecipe[activeSpace]?.label ?? (mainPreset ? paneRecipeLabel(mainPreset) : null)
+  );
   function paneRecipeLabel(p: Pane): string {
     const where = p.sshTarget
       ? `🖥 ${p.sshTarget}`
@@ -1558,8 +1643,8 @@
   <div class="newbar">
     <span class="plus-split" bind:this={splitEl}>
       <button bind:this={newBtnEl} type="button" class="split-main" disabled={atLimit}
-        onclick={mainPlus} title={mainPreset ? t('sessions.plusHereTip') : t('sessions.newSession')}>
-        ＋ {#if mainPreset}{t('sessions.plusHere')}<span class="split-sub">· {paneRecipeLabel(mainPreset)}</span>{:else}{t('sessions.newSession')}{/if}
+        onclick={mainPlus} title={mainLabel ? t('sessions.plusHereTip') : t('sessions.newSession')}>
+        ＋ {#if mainLabel}{t('sessions.plusHere')}<span class="split-sub">· {mainLabel}</span>{:else}{t('sessions.newSession')}{/if}
       </button>
       <button type="button" class="split-chev" class:active={plusMenuOpen}
         onclick={() => (plusMenuOpen = !plusMenuOpen)} aria-expanded={plusMenuOpen} aria-haspopup="menu"
@@ -1641,6 +1726,12 @@
         <span class="pw">{t('sessions.phWith')}</span>
         <input class="sw-input grow font-mono text-sw-xs pargs" bind:value={lArgs} oninput={() => (argsTouched = true)}
           placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
+        <!-- Per-harness flag chips: claude gets its flags via the ⚙ default-args seeding, so chips
+             here cover the OTHER harnesses (codex --yolo etc. + its config.toml profiles). -->
+        {#each launchChips as flag (flag)}
+          <button type="button" class="argchip" class:on={lArgs.includes(flag)}
+            onclick={() => { lArgs = toggleFlag(lArgs, flag); argsTouched = true; }}>{flag}</button>
+        {/each}
       {/if}
       {#if lLoc && lEnv !== 'shell'}
         <span class="ssh-hint" title={t('sessions.sshToolHint', { tool: lEnv })}>{t('sessions.sshToolHint', { tool: lEnv })}</span>
@@ -1843,6 +1934,7 @@
             {@const st = agentStates[sessionIds[pane.key]] ?? null}
             <button type="button" class="rail-item" class:active={activeKey === pane.key}
               onclick={() => railFocus(pane.key)}
+              oncontextmenu={(e) => openRailMenu(e, pane.key)}
               title={st && st !== 'unknown' ? t(`sessions.state_${st}`) : paneLabel(pane)}>
               <span class="env-ic">{@html envIcon(pane.tool)}</span>
               <span class="dot" class:working={st === 'working'} class:blocked={st === 'blocked'}
@@ -1852,6 +1944,20 @@
             </button>
           {/each}
         </aside>
+      {/if}
+      {#if railMenuFor && railMenuAnchor}
+        <!-- Rail row context menu — reuses the launcher menu's look (.plusmenu/.pm-item). -->
+        <div class="plusmenu" role="menu" tabindex="-1"
+          use:anchored={{ anchor: railMenuAnchor, onOutside: () => (railMenuFor = null) }}
+          onkeydown={(e) => e.key === 'Escape' && (railMenuFor = null)}>
+          <button type="button" class="pm-item" role="menuitem"
+            onclick={() => railMenuAct((k) => (maximized = maximized === k ? null : k))}>
+            {maximized === railMenuFor ? t('sessions.restore') : t('sessions.maximize')}</button>
+          <button type="button" class="pm-item" role="menuitem"
+            onclick={() => railMenuAct(toggleBackground)}>{t('sessions.backgroundPane')}</button>
+          <button type="button" class="pm-item" role="menuitem"
+            onclick={() => railMenuAct(closePane)}>{t('sessions.closePane')}</button>
+        </div>
       {/if}
       <div
         class="grid"

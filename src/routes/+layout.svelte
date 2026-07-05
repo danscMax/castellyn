@@ -23,7 +23,17 @@
     initTheme();
     initLocale();
   });
+
+  // Suppress WebView2's native context menu (Refresh/Print/…) app-wide — it reads as a broken
+  // right-click. Keep it where copy/paste genuinely helps: editables and the terminal.
+  function onContextMenu(e: MouseEvent) {
+    const el = e.target as HTMLElement | null;
+    if (el?.closest('input, textarea, [contenteditable="true"], .xterm')) return;
+    e.preventDefault();
+  }
 </script>
+
+<svelte:window oncontextmenu={onContextMenu} />
 
 {#if isDetached}
   {#await import('$lib/components/DetachedView.svelte') then { default: DetachedView }}

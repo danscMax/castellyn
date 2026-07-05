@@ -117,20 +117,37 @@
 
     if (sync?.syncthing) {
       const st = sync.syncthing;
+      const s = st.state;
+      const bad = s === 'error' || s === 'outofsync';
+      // Map known Syncthing states to localized labels (raw 'idle' was misread as "off");
+      // reuse the sync.state* keys the Sync tab already owns. Unknown state → show as-is.
+      const label =
+        s === 'idle' ? t('sync.stateIdle')
+        : s === 'syncing' ? t('sync.stateSyncing')
+        : s === 'scanning' ? t('sync.stateScanning')
+        : bad ? t('sync.stateError')
+        : (s ?? t('common.dash'));
       out.push({
         key: 'sync', tab: 'sync', title: t('page.home_sync'),
-        value: st.available ? (st.state ?? t('common.dash')) : t('page.home_syncOffline'),
-        level: st.available ? (sync.stignoreMatches === false ? 'warn' : 'ok') : 'muted'
+        value: st.available ? label : t('page.home_syncOffline'),
+        level: !st.available ? 'muted' : bad ? 'bad' : sync.stignoreMatches === false ? 'warn' : 'ok'
       });
     }
 
     if (schedules?.tasks?.length) {
+      // Three distinct states, kept separate so the chip doesn't lump "disabled" with "never created":
+      //  · failing = created & last run errored   · missing = task never created   · off = created but disabled
       const failing = schedules.tasks.filter((x) => x.ok === false).length;
-      const off = schedules.tasks.filter((x) => !x.enabled).length;
+      const missing = schedules.tasks.filter((x) => !x.exists).length;
+      const off = schedules.tasks.filter((x) => x.exists && !x.enabled).length;
+      const parts = [
+        missing > 0 ? t('page.home_tasksMissing', { n: missing }) : '',
+        off > 0 ? t('page.home_tasksOff', { n: off }) : ''
+      ].filter(Boolean).join(' · ');
       out.push({
         key: 'schedule', tab: 'schedule', title: t('page.home_tasks'),
-        value: failing > 0 ? t('page.home_tasksFailing', { n: failing }) : off > 0 ? t('page.home_tasksOff', { n: off }) : t('page.home_ok'),
-        level: failing > 0 ? 'bad' : off > 0 ? 'warn' : 'ok'
+        value: failing > 0 ? t('page.home_tasksFailing', { n: failing }) : parts || t('page.home_ok'),
+        level: failing > 0 ? 'bad' : missing || off ? 'warn' : 'ok'
       });
     }
 

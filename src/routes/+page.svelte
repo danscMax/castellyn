@@ -19,6 +19,8 @@
     setProfileProxy,
     setProfileFolders,
     setProfilePlugins,
+    unblockManagedPlugin,
+    runManagedDeploy,
     runProfileRelink,
     readOrphanProfiles,
     deleteOrphanProfile,
@@ -196,6 +198,50 @@
     })()
   );
   let notifOpen = $state(false);
+  let notifAnchor = $state<HTMLElement>(); // bell button, bound from Sidebar → anchors NotificationPanel
+
+  // Tab navigation history: mouse Back/Forward (buttons 3/4) and Alt+←/→ walk it like a browser.
+  // Plain arrays — nothing renders them; lastActive keeps the tracking $effect from re-pushing
+  // when goBack/goForward themselves change `active`.
+  let navBack: string[] = [];
+  let navFwd: string[] = [];
+  let lastActive: string | undefined;
+  $effect(() => {
+    const a = active;
+    if (lastActive === undefined || a === lastActive) {
+      lastActive = a;
+      return;
+    }
+    navBack.push(lastActive);
+    if (navBack.length > 50) navBack.shift();
+    navFwd = [];
+    lastActive = a;
+  });
+  function navGo(dir: 'back' | 'fwd') {
+    const from = dir === 'back' ? navBack : navFwd;
+    const to = dir === 'back' ? navFwd : navBack;
+    const target = from.pop();
+    if (!target) return;
+    to.push(active);
+    lastActive = target;
+    active = target;
+  }
+  function onNavMouse(e: MouseEvent) {
+    if (e.button === 3) {
+      e.preventDefault();
+      navGo('back');
+    } else if (e.button === 4) {
+      e.preventDefault();
+      navGo('fwd');
+    }
+  }
+  function onNavKey(e: KeyboardEvent) {
+    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    const el = e.target as HTMLElement | null;
+    if (el?.closest('input, textarea, [contenteditable="true"], .xterm')) return;
+    e.preventDefault();
+    navGo(e.key === 'ArrowLeft' ? 'back' : 'fwd');
+  }
   let pendingUndo = $state<{ snapshot: string; profiles?: string[]; includeCredentials?: boolean } | null>(null);
   let theme = $state<Theme>('dark');
   let backupData = $state<BackupList | null>(null);
@@ -1571,6 +1617,30 @@
     runMarketplaceBump(id, level).catch(onSpawnErr);
   }
 
+  // A managed-policy-blocked plugin can't be enabled per-profile — the real fix is removing its
+  // explicit `false` from the SOURCE managed-settings.json and redeploying (one UAC prompt).
+  function onPluginUnblock(id: string) {
+    askConfirm(
+      t('page.confirm_unblock_title'),
+      t('page.confirm_unblock_msg', { id }),
+      t('page.confirm_unblock_btn'),
+      async () => {
+        try {
+          await unblockManagedPlugin(id);
+          const res = await runManagedDeploy();
+          if (res.state === 'ok') {
+            pushToast({ kind: 'success', title: t('page.unblock_done', { id }) });
+          } else {
+            pushToast({ kind: 'error', title: t('page.toast_generic_error'), detail: res.detail });
+          }
+          await Promise.all([reloadExtensions(), reloadStackDrift()]);
+        } catch (e) {
+          toastErr(e);
+        }
+      }
+    );
+  }
+
   function onPluginAction(action: PluginAction, id: string) {
     // 'disable' is reversible (re-enable any time) → no confirm, matching bulk-disable. Only the
     // irreversible 'remove' gates behind a danger confirm.
@@ -2209,14 +2279,14 @@
 
 </script>
 
-<svelte:window onkeydown={onGlobalKey} />
+<svelte:window onkeydown={onGlobalKey} onkeydowncapture={onNavKey} onmouseup={onNavMouse} />
 <CommandPalette open={paletteOpen} commands={paletteCommands} placeholder={t('common.paletteSearch')} onClose={() => (paletteOpen = false)} />
 
 <div class="flex h-full overflow-hidden" class:dense={density === 'compact'}>
   <Sidebar {active} onSelect={(id) => (active = id)} {attention} loading={tabLoading}
-    notifOpen={notifOpen} onToggleNotif={() => (notifOpen = !notifOpen)} />
+    notifOpen={notifOpen} onToggleNotif={() => (notifOpen = !notifOpen)} bind:notifAnchor />
 
-  <NotificationPanel open={notifOpen} onClose={() => (notifOpen = false)} />
+  <NotificationPanel open={notifOpen} onClose={() => (notifOpen = false)} anchor={notifAnchor} />
 
   <div class="flex min-w-0 flex-1 flex-col">
     <main class="relative min-h-0 flex-1 overflow-auto">
@@ -2368,6 +2438,7 @@
               {onDeleteSkill}
               onSyncNow={onPluginSyncNow}
               onSyncHookToggle={onPluginSyncHookToggle}
+              onUnblock={onPluginUnblock}
             />
           </div>
         {/if}

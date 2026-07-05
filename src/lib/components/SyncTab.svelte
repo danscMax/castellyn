@@ -78,7 +78,7 @@
     if (s === 'idle') return t('sync.stateIdle');
     if (s === 'syncing') return t('sync.stateSyncing');
     if (s === 'scanning') return t('sync.stateScanning');
-    if (s === 'error') return t('sync.stateError');
+    if (s === 'error' || s === 'outofsync') return t('sync.stateError');
     return s ?? t('common.dash');
   }
 

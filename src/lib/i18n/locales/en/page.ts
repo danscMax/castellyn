@@ -33,6 +33,7 @@ export default {
   home_tasks: 'Scheduled',
   home_tasksFailing: '{n} failing',
   home_tasksOff: '{n} disabled',
+  home_tasksMissing: '{n} not created',
   // F23: stack + sessions chips and quick actions
   home_stack: 'LLM stack',
   home_stackRunning: '{up}/{total} running',
@@ -206,6 +207,10 @@ export default {
   confirm_mcp_btn: 'Deploy',
   confirm_mcp_remove_title: 'Remove MCP server?',
   confirm_mcp_remove_msg: 'Server “{name}” will be removed from config/.mcp.json. Continue?',
+  confirm_unblock_title: 'Unblock plugin?',
+  confirm_unblock_msg: '{id}: removes the explicit block from the managed source and redeploys managed-settings (UAC prompt). Per-profile enable works afterwards.',
+  confirm_unblock_btn: 'Unblock',
+  unblock_done: 'Unblocked and redeployed: {id}',
   confirm_mcp_extra_title: 'Remove server from profile?',
   confirm_mcp_extra_msg: 'Server “{name}” will be removed from profile {profile}’s live config. Continue?',
 

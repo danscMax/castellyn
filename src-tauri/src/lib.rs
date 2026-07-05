@@ -6472,6 +6472,29 @@ fn load_installed_plugins() -> Option<(String, serde_json::Value, serde_json::Va
     Some((plugins_dir, installed, markets))
 }
 
+/// A plugin's installation scope ("user" | "managed" | "project" | "local") from its first
+/// installed_plugins.json entry. None = not installed / no scope recorded (old schema).
+fn plugin_scope(id: &str) -> Option<String> {
+    let (_, installed, _) = load_installed_plugins()?;
+    installed
+        .get("plugins")?
+        .get(id)?
+        .as_array()?
+        .first()?
+        .get("scope")?
+        .as_str()
+        .map(String::from)
+}
+
+/// The DEPLOYED managed-settings.json `enabledPlugins` verdict for a plugin:
+/// Some(false) = blocked by policy (CC refuses user-scope enable), Some(true) = policy-enabled,
+/// None = policy silent (or file unreadable — then CC has no policy either).
+fn managed_plugin_policy(id: &str) -> Option<bool> {
+    let path = deployed_managed_path()?;
+    let v = parse_json_bom(&std::fs::read_to_string(path).ok()?).ok()?;
+    v.get("enabledPlugins")?.get(id)?.as_bool()
+}
+
 /// First entry's `installPath` in an installed_plugins.json plugin array ("" if absent).
 fn first_install_path(arr: &serde_json::Value) -> &str {
     arr.as_array()
@@ -6546,6 +6569,28 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
     let mut v = parse_json_bom(stdout.trim()).map_err(|e| format!("parse plugins: {e}"))?;
     let desc = plugin_descriptions();
     let own = own_marketplaces();
+    // Scope per plugin (update must target it) + managed enabledPlugins policy (an explicit false
+    // means CC refuses user-scope enable — the UI shows a lock instead of a futile toggle).
+    let mut scopes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Some((_, installed, _)) = load_installed_plugins() {
+        if let Some(po) = installed.get("plugins").and_then(|x| x.as_object()) {
+            for (pid, arr) in po {
+                if let Some(s) = arr
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|e| e.get("scope"))
+                    .and_then(|x| x.as_str())
+                {
+                    scopes.insert(pid.clone(), s.to_string());
+                }
+            }
+        }
+    }
+    let policy = deployed_managed_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|c| parse_json_bom(&c).ok())
+        .and_then(|m| m.get("enabledPlugins").and_then(|e| e.as_object()).cloned())
+        .unwrap_or_default();
     if let Some(arr) = v.as_array_mut() {
         for item in arr.iter_mut() {
             let id = item.get("id").and_then(|x| x.as_str()).map(String::from);
@@ -6555,10 +6600,69 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
                 }
                 let mp = id.rsplit('@').next().unwrap_or("");
                 obj.insert("mine".into(), serde_json::json!(own.contains(mp)));
+                if let Some(s) = scopes.get(&id) {
+                    obj.insert("scope".into(), serde_json::json!(s));
+                }
+                if let Some(b) = policy.get(&id).and_then(|x| x.as_bool()) {
+                    obj.insert("managedPolicy".into(), serde_json::json!(b));
+                }
             }
         }
     }
     Ok(v)
+}
+
+/// Codex profile names from `~/.codex/config.toml` `[profiles.<name>]` tables (plain line scan —
+/// enough for table headers; codex profiles map to a `--profile <name>` launch flag).
+#[tauri::command]
+fn read_codex_profiles() -> Vec<String> {
+    let Ok(home) = std::env::var("USERPROFILE") else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(format!("{home}\\.codex\\config.toml")) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.trim().strip_prefix("[profiles.") {
+            if let Some(name) = rest.strip_suffix(']') {
+                let name = name.trim().trim_matches('"');
+                if !name.is_empty() {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Remove a plugin's explicit `enabledPlugins` entry from the SOURCE managed-settings.json, so the
+/// policy stops being opinionated about it and per-profile enable works again. Only the
+/// version-controlled source is edited — the UI must chain `run_managed_deploy` (one UAC prompt)
+/// to publish, mirroring how every managed change flows.
+#[tauri::command]
+fn unblock_managed_plugin(id: String) -> Result<(), String> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-' | '/'))
+    {
+        return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
+    }
+    let path = source_managed_path();
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("read managed source: {e}"))?;
+    let mut v = parse_json_bom(&text).map_err(|e| format!("parse managed source: {e}"))?;
+    let removed = v
+        .get_mut("enabledPlugins")
+        .and_then(|ep| ep.as_object_mut())
+        .map(|m| m.remove(&id).is_some())
+        .unwrap_or(false);
+    if !removed {
+        return Err(trv("err.plugin_not_blocked", cur_lang(), &[("id", &id)]));
+    }
+    let serialized = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    write_json_atomic(&path, &serialized).map_err(|e| format!("write managed source: {e}"))
 }
 
 #[derive(Serialize)]
@@ -8548,20 +8652,25 @@ async fn list_plugin_releases(id: String) -> Vec<PluginRelease> {
         .unwrap_or_default()
 }
 
-/// Run `claude plugin <action> <id>` once, optionally under a specific CLAUDE_CONFIG_DIR profile.
-/// Streams stdout/stderr to the UI log (indented). Simple args only (no JSON) — the `.cmd` shim
-/// launches cleanly under Rust's escaping (unlike the Deploy-Mcp add-json case).
+/// Run `claude plugin <action> <id>` once, optionally under a specific CLAUDE_CONFIG_DIR profile
+/// and at an explicit `-s <scope>` (the CLI defaults to user scope, which fails for plugins
+/// installed at managed scope). Streams stdout/stderr to the UI log (indented). Returns success —
+/// callers must aggregate it instead of reporting a blanket "done".
 fn run_claude_plugin(
     claude: &std::path::Path,
     cfg_dir: Option<&str>,
     action: &str,
     id: &str,
+    scope: Option<&str>,
     out: &dyn Fn(&str),
     err: &dyn Fn(&str),
-) {
+) -> bool {
     let mut cmd = std::process::Command::new(claude);
     cmd.args(["plugin", action, id])
         .creation_flags(CREATE_NO_WINDOW);
+    if let Some(s) = scope {
+        cmd.args(["-s", s]);
+    }
     if let Some(d) = cfg_dir {
         cmd.env("CLAUDE_CONFIG_DIR", d);
     }
@@ -8573,8 +8682,12 @@ fn run_claude_plugin(
             for line in String::from_utf8_lossy(&o.stderr).lines() {
                 err(&format!("    {line}"));
             }
+            o.status.success()
         }
-        Err(e) => err(&trv("log.claude_spawn", cur_lang(), &[("e", &e)])),
+        Err(e) => {
+            err(&trv("log.claude_spawn", cur_lang(), &[("e", &e)]));
+            false
+        }
     }
 }
 
@@ -8588,13 +8701,25 @@ fn manage_plugin_native(action: &str, id: &str, out: &dyn Fn(&str), err: &dyn Fn
         err(tr("log.claude_not_found", cur_lang()));
         return 1;
     };
+    // A managed-policy `false` makes CC refuse a user-scope enable in EVERY profile — fail fast
+    // with the real reason instead of nine identical CLI failures and a green "done".
+    if action == "enable" && managed_plugin_policy(id) == Some(false) {
+        err(&trv("log.plugin_managed_blocked", cur_lang(), &[("id", &id)]));
+        return 1;
+    }
     out(&trv(
         "log.plugin_header",
         cur_lang(),
         &[("action", &action), ("id", &id)],
     ));
+    let mut failed = 0u32;
     if action == "update" {
-        run_claude_plugin(&claude, None, action, id, out, err);
+        // The CLI updates at user scope by default; a plugin installed at managed scope needs an
+        // explicit `-s managed` or the update fails ("not installed at scope user").
+        let scope = plugin_scope(id);
+        if !run_claude_plugin(&claude, None, action, id, scope.as_deref(), out, err) {
+            failed += 1;
+        }
     } else {
         let home = std::env::var("USERPROFILE").unwrap_or_default();
         for p in profile_names() {
@@ -8604,8 +8729,14 @@ fn manage_plugin_native(action: &str, id: &str, out: &dyn Fn(&str), err: &dyn Fn
                 continue;
             }
             out(&format!("  [{p}] claude plugin {action} {id}"));
-            run_claude_plugin(&claude, Some(&dir), action, id, out, err);
+            if !run_claude_plugin(&claude, Some(&dir), action, id, None, out, err) {
+                failed += 1;
+            }
         }
+    }
+    if failed > 0 {
+        err(&trv("log.plugin_failed_n", cur_lang(), &[("n", &failed)]));
+        return 1;
     }
     out(tr("log.done", cur_lang()));
     0
@@ -8758,8 +8889,12 @@ async fn run_marketplace_bump(
             err(tr("log.claude_not_found", cur_lang()));
             return 1;
         };
+        let scope = plugin_scope(&id);
         out(&format!("  claude plugin update {id}"));
-        run_claude_plugin(&claude, None, "update", &id, out, err);
+        if !run_claude_plugin(&claude, None, "update", &id, scope.as_deref(), out, err) {
+            err(tr("log.bump_failed", cur_lang()));
+            return 1;
+        }
         out(tr("log.done", cur_lang()));
         0
     })
@@ -12617,6 +12752,8 @@ pub fn run() {
             set_profile_proxy,
             set_profile_folders,
             set_profile_plugins,
+            unblock_managed_plugin,
+            read_codex_profiles,
             run_profile_relink,
             run_provider,
             list_my_providers,

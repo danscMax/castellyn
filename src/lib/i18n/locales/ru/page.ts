@@ -33,6 +33,7 @@ export default {
   home_tasks: 'Задачи',
   home_tasksFailing: '{n} с ошибкой',
   home_tasksOff: '{n} выключено',
+  home_tasksMissing: '{n} не создано',
   // F23: чипы стека и сессий + быстрые действия
   home_stack: 'LLM-стек',
   home_stackRunning: '{up}/{total} запущено',
@@ -206,6 +207,10 @@ export default {
   confirm_mcp_btn: 'Развернуть',
   confirm_mcp_remove_title: 'Удалить MCP-сервер?',
   confirm_mcp_remove_msg: 'Сервер «{name}» будет удалён из config/.mcp.json. Продолжить?',
+  confirm_unblock_title: 'Разблокировать плагин?',
+  confirm_unblock_msg: '{id}: уберу явную блокировку из managed-источника и передеплою managed-settings (запрос UAC). После этого плагин можно включать по профилям.',
+  confirm_unblock_btn: 'Разблокировать',
+  unblock_done: 'Разблокировано и передеплоено: {id}',
   confirm_mcp_extra_title: 'Убрать сервер из профиля?',
   confirm_mcp_extra_msg: 'Сервер «{name}» будет убран из живого конфига профиля {profile}. Продолжить?',
 

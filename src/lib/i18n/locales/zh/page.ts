@@ -33,6 +33,7 @@ export default {
   home_tasks: '计划任务',
   home_tasksFailing: '{n} 个失败',
   home_tasksOff: '{n} 个已禁用',
+  home_tasksMissing: '{n} 个未创建',
   // F23: 技术栈与会话徽标 + 快捷操作
   home_stack: 'LLM 技术栈',
   home_stackRunning: '{up}/{total} 运行中',
@@ -205,6 +206,10 @@ export default {
   confirm_mcp_btn: '部署',
   confirm_mcp_remove_title: '删除 MCP 服务器？',
   confirm_mcp_remove_msg: '服务器「{name}」将从 config/.mcp.json 中删除。是否继续？',
+  confirm_unblock_title: '解除插件阻止？',
+  confirm_unblock_msg: '{id}：将从 managed 源中移除显式阻止并重新部署 managed-settings（UAC 提示）。之后即可按配置启用。',
+  confirm_unblock_btn: '解除阻止',
+  unblock_done: '已解除并重新部署：{id}',
   confirm_mcp_extra_title: '从配置中移除服务器？',
   confirm_mcp_extra_msg: '服务器「{name}」将从配置 {profile} 的当前文件中移除。是否继续？',
 

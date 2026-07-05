@@ -761,6 +761,9 @@ export type PluginInfo = {
   lastUpdated?: string;
   description?: string;
   mine?: boolean; // from your own local (directory) marketplace
+  // Deployed managed-settings enabledPlugins verdict: false = blocked by policy (CC refuses a
+  // user-scope enable), true = policy-enabled, absent = policy silent.
+  managedPolicy?: boolean;
 };
 // source: 'own' (symlinked) | 'default' | 'plugin:<id>'; mine = authored by you (symlink or local marketplace)
 export type SkillInfo = { name: string; description: string; version: string; dir: string; source: string; mine: boolean };
@@ -777,6 +780,11 @@ export type PluginContents = {
 
 export const listPlugins = () => invoke<PluginInfo[]>('list_plugins');
 export const listSkills = () => invoke<SkillInfo[]>('list_skills');
+// Removes the plugin's explicit enabledPlugins entry from the SOURCE managed-settings.json;
+// chain runManagedDeploy() (one UAC prompt) to publish the change.
+export const unblockManagedPlugin = (id: string) => invoke<void>('unblock_managed_plugin', { id });
+// Codex profile names from ~/.codex/config.toml [profiles.*] — offered as `--profile` launch chips.
+export const readCodexProfiles = () => invoke<string[]>('read_codex_profiles');
 
 // --- Environments tab (cross-harness coverage: skills / providers / RTK) ---
 // Read-only overview of every coding harness (Claude Code, OpenCode, Codex, zcode) — how many

@@ -48,6 +48,8 @@ export default {
   skillDeleteTip: '删除技能文件夹',
   enabledTip: '插件已启用',
   disabledTip: '插件已禁用',
+  blockedBadge: '策略',
+  blockedTip: '被 managed 策略在所有配置中阻止 — 点击以在源中解除并重新部署 (UAC)',
 
   // Plugin contents (details)
   catSkills: '技能',

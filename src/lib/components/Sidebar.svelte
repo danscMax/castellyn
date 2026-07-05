@@ -13,7 +13,8 @@
     attention = {},
     loading = {},
     notifOpen = false,
-    onToggleNotif
+    onToggleNotif,
+    notifAnchor = $bindable()
   }: {
     active: string;
     onSelect: (id: string) => void;
@@ -21,6 +22,8 @@
     loading?: Record<string, boolean>;
     notifOpen?: boolean;
     onToggleNotif?: () => void;
+    // Bound out so the sibling NotificationPanel can pin itself to the bell button.
+    notifAnchor?: HTMLElement;
   } = $props();
 
   let notifCount = $derived(toastStore.history.unread);
@@ -233,7 +236,7 @@
     {/each}
   </div>
   <div class="notif-area">
-    <button class="notif-btn" onclick={onToggleNotif} title={t('common.notifications')} aria-label={t('common.notifications')}>
+    <button class="notif-btn" bind:this={notifAnchor} onclick={onToggleNotif} title={t('common.notifications')} aria-label={t('common.notifications')}>
       <span class="nav-icon">{@html NOTIF_ICON}</span>
       <span class="nav-label">{t('common.notifications')}</span>
       {#if notifCount}

@@ -320,8 +320,11 @@ const handlers: Record<string, (args: any) => any> = {
     { id: 'ponytail', version: '1.1.0', scope: 'user', enabled: true, installedAt: '2026-04-11', lastUpdated: '2026-06-18', description: 'Laziest-solution-that-works engineering mode', mine: false },
     { id: 'speckit', version: '0.9.3', scope: 'user', enabled: true, installedAt: '2026-02-19', lastUpdated: '2026-06-15', description: 'Spec-driven development workflow', mine: false },
     { id: 'drywall', version: '0.3.0', scope: 'user', enabled: false, installedAt: '2026-05-01', lastUpdated: '2026-05-30', description: 'Duplicate-code detection (jscpd)', mine: false },
-    { id: 'max', version: '3.0.0', scope: 'user', enabled: true, installedAt: '2026-01-15', lastUpdated: '2026-06-24', description: 'Multi-agent audits, reviews, smoke tests', mine: true }
+    { id: 'max', version: '3.0.0', scope: 'user', enabled: true, installedAt: '2026-01-15', lastUpdated: '2026-06-24', description: 'Multi-agent audits, reviews, smoke tests', mine: true },
+    // Managed-policy quarantined plugin — renders the 🔒 unblock button instead of a toggle.
+    { id: 'serena', version: '0.2.0', scope: 'managed', enabled: false, managedPolicy: false, installedAt: '2026-05-10', lastUpdated: '2026-06-01', description: 'Semantic code retrieval MCP', mine: false }
   ]),
+  read_codex_profiles: () => (['work', 'personal']),
   list_skills: () => ([
     { name: 'brainstorming', description: 'Explore intent before building', version: '1.0', dir: '~/.claude/skills/brainstorming', source: 'plugin:superpowers', mine: false },
     { name: 'systematic-debugging', description: 'Root-cause before fixing', version: '1.0', dir: '~/.claude/skills/systematic-debugging', source: 'plugin:superpowers', mine: false },

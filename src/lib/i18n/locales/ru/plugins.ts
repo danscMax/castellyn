@@ -48,6 +48,8 @@ export default {
   skillDeleteTip: 'Удалить папку скилла',
   enabledTip: 'Плагин включён',
   disabledTip: 'Плагин выключен',
+  blockedBadge: 'политика',
+  blockedTip: 'Заблокирован managed-политикой во всех профилях — клик, чтобы разблокировать в источнике и передеплоить (UAC)',
 
   // Plugin contents (details)
   catSkills: 'Скиллы',

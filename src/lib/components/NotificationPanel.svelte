@@ -1,16 +1,15 @@
 <script lang="ts">
   import { toastStore, markNotifRead, clearHistory, dismissFromHistory } from '$lib/toast.svelte';
   import { t } from '$lib/i18n';
+  import { anchored } from '$lib/floating';
   import { Check, TriangleAlert, X, Info } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
-  let { open = false, onClose }: { open: boolean; onClose: () => void } = $props();
+  // `anchor` is the bell button (bottom of the sidebar); the panel pins to it via use:anchored,
+  // opening above since there's no room below. Falls back to hidden until the anchor is mounted.
+  let { open = false, onClose, anchor }: { open: boolean; onClose: () => void; anchor?: HTMLElement } = $props();
 
   let history = $derived(toastStore.history);
-
-  function onBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) onClose();
-  }
 
   $effect(() => {
     if (open) markNotifRead();
@@ -36,9 +35,9 @@
 <!-- U2: Escape closes the panel (click-outside already works via the backdrop). -->
 <svelte:window onkeydown={(e) => e.key === 'Escape' && open && onClose()} />
 
-{#if open}
-  <div class="backdrop" onclick={onBackdropClick} role="presentation">
-    <div class="panel" role="dialog" aria-label={t('page.notifTitle')}>
+{#if open && anchor}
+  <div class="panel" role="dialog" aria-label={t('page.notifTitle')}
+    use:anchored={{ anchor, onOutside: onClose }}>
       <header class="head">
         <h2 class="title">{t('page.notifTitle')}</h2>
         <div class="acts">
@@ -66,22 +65,14 @@
           {/each}
         </div>
       {/if}
-    </div>
   </div>
 {/if}
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 55;
-    display: flex;
-    justify-content: flex-start;
-    align-items: flex-start;
-    padding: 80px 0 0 80px;
-    pointer-events: auto;
-  }
   .panel {
+    /* position/top/left set inline by use:anchored (fixed, pins above the sidebar bell). */
+    position: fixed;
+    z-index: 60;
     width: 380px;
     max-height: min(480px, 80vh);
     background: var(--sw-bg-secondary);

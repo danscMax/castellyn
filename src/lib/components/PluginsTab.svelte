@@ -23,7 +23,8 @@
     onOpenSkill,
     onDeleteSkill,
     onSyncNow,
-    onSyncHookToggle
+    onSyncHookToggle,
+    onUnblock
   }: {
     plugins: PluginInfo[] | null;
     skills: SkillInfo[] | null;
@@ -41,6 +42,8 @@
     onDeleteSkill: (dir: string, name: string) => void;
     onSyncNow: () => void;
     onSyncHookToggle: (enabled: boolean) => void;
+    /** Unblock a managed-policy-blocked plugin: source edit + redeploy, wired in +page. */
+    onUnblock?: (id: string) => void;
   } = $props();
 
   // Auto-sync toggle reflects FULL coverage; a partial wiring (e.g. a profile added after
@@ -345,8 +348,15 @@
         {:else if col.key === 'status'}
           <span class="statuscell">
             {#if actingId === p.id && busy}<Spinner size={13} />{/if}
-            <Toggle checked={p.enabled} disabled={busy} onCheckedChange={() => act(p.enabled ? 'disable' : 'enable', p.id)}
-              title={p.enabled ? t('plugins.disableBtnTip') : t('plugins.enableBtnTip')} />
+            {#if p.managedPolicy === false}
+              <!-- Managed policy blocks this plugin in EVERY profile — a toggle would just fail
+                   nine times. Offer the real fix: unblock in the source + redeploy (UAC). -->
+              <button class="lockbtn" disabled={busy || !onUnblock} onclick={() => onUnblock?.(p.id)}
+                title={t('plugins.blockedTip')}>🔒 {t('plugins.blockedBadge')}</button>
+            {:else}
+              <Toggle checked={p.enabled} disabled={busy} onCheckedChange={() => act(p.enabled ? 'disable' : 'enable', p.id)}
+                title={p.enabled ? t('plugins.disableBtnTip') : t('plugins.enableBtnTip')} />
+            {/if}
           </span>
         {:else if col.key === 'actions'}
           <span class="act">
@@ -646,6 +656,24 @@
     color: var(--sw-text-secondary);
     cursor: pointer;
     white-space: nowrap;
+  }
+  .lockbtn {
+    background: none;
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-sm, 6px);
+    padding: 2px 8px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .lockbtn:hover:not(:disabled) {
+    border-color: var(--sw-accent);
+    color: var(--sw-accent);
+  }
+  .lockbtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .iconbtn:hover {
     color: var(--sw-text);
