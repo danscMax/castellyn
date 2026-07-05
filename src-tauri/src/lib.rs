@@ -4043,6 +4043,19 @@ fn mcp_canon_servers() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Canon servers Deploy-Mcp.ps1 SKIPS because the plugin marketplace provides them (never in a
+/// profile's user-scope mcpServers). Must stay in sync with `$skip` in Deploy-Mcp.ps1 — comparing
+/// against the full canon flags these as eternally "missing" and the deploy fix never converges.
+const MCP_PLUGIN_PROVIDED: [&str; 2] = ["context7", "serena"];
+
+/// The canon servers a user-scope deploy is actually expected to place (canon minus plugin-provided).
+fn mcp_deployable_canon() -> Vec<String> {
+    mcp_canon_servers()
+        .into_iter()
+        .filter(|n| !MCP_PLUGIN_PROVIDED.contains(&n.as_str()))
+        .collect()
+}
+
 /// `sharedFoldersDefault` (canonical column order) from a parsed profiles.json.
 fn shared_folders_default(cfg: &serde_json::Value) -> Vec<String> {
     cfg.get("sharedFoldersDefault")
@@ -4121,7 +4134,7 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
         }
     }
     let universe = union_sorted(universe_keys);
-    let mcp_canon = mcp_canon_servers();
+    let mcp_canon = mcp_deployable_canon();
 
     let mut rows = Vec::new();
     for p in profiles {
@@ -9934,6 +9947,191 @@ async fn run_managed_deploy() -> Result<StackDriftItem, String> {
     .map_err(|e| e.to_string())
 }
 
+// --- Onboarding: new-machine deployment checklist (first-run view + Settings entry) ---
+//
+// read_onboarding scans the machine into idempotent checklist steps; every fix routes to an
+// EXISTING command (run_profiles 'reinstall', run_mcp 'deploy', run_managed_deploy, Backup tab).
+// run_onboarding_step covers the two scripts not wrapped elsewhere (Configure-Syncthing.ps1,
+// Assert-Installation.ps1); create_settings_junction is the one native action. Re-running any
+// step is safe — the wizard is a reconciler, not a one-shot.
+
+const SYNCTHING_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Configure-Syncthing.ps1";
+const ASSERT_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Assert-Installation.ps1";
+const SETTINGS_TREE_REL: &str = "!Настройки и MCP";
+
+/// One onboarding step. Field names ARE the IPC contract.
+#[derive(Serialize, Clone)]
+struct OnbStep {
+    /// "prereq_git"|"prereq_node"|"prereq_claude"|"prereq_syncthing"|"tree"|"junction"
+    /// |"profiles"|"creds"|"mcp"|"managed"|"syncthing"|"verify"
+    id: String,
+    /// "ok" | "todo" | "blocked" (dependency not met) | "unknown" (not natively detectable —
+    /// the action is idempotent, run it to be sure)
+    state: String,
+    detail: String,
+    /// Fix key the UI wires to a command: "install_profiles" | "mcp_deploy" | "managed_deploy"
+    /// | "junction" | "syncthing" | "verify" | "backup_tab"; None = informational.
+    fix: Option<String>,
+}
+
+fn onb(id: &str, state: &str, detail: String, fix: Option<&str>) -> OnbStep {
+    OnbStep { id: id.into(), state: state.into(), detail, fix: fix.map(String::from) }
+}
+
+/// Machine scan for the onboarding checklist. Pure detection — no writes, no elevation, no spawns.
+fn onboarding_scan() -> Vec<OnbStep> {
+    {
+        let mut out: Vec<OnbStep> = Vec::new();
+        // Prerequisites: PATH-resolvable CLIs (exe_on_path — no process spawns).
+        for (id, name) in [("prereq_git", "git"), ("prereq_node", "node"), ("prereq_claude", "claude")] {
+            out.push(match exe_on_path(name) {
+                Some(p) => onb(id, "ok", p.to_string_lossy().into_owned(), None),
+                None => onb(id, "todo", format!("`{name}` not found on PATH"), None),
+            });
+        }
+        // Syncthing is optional; presence = its config.xml exists.
+        let st_cfg = std::env::var("LOCALAPPDATA")
+            .map(|l| format!("{l}\\Syncthing\\config.xml"))
+            .ok()
+            .filter(|p| std::path::Path::new(p).is_file());
+        out.push(match &st_cfg {
+            Some(p) => onb("prereq_syncthing", "ok", p.clone(), None),
+            None => onb("prereq_syncthing", "todo", "Syncthing config.xml not found".into(), None),
+        });
+        // Settings tree = the ClaudeProfiles source of truth (arrives via Syncthing / copy / backup).
+        let tree = abs(&format!("{SETTINGS_TREE_REL}\\ClaudeProfiles"));
+        let tree_ok = std::path::Path::new(&tree).is_dir();
+        out.push(if tree_ok {
+            onb("tree", "ok", tree.clone(), None)
+        } else {
+            onb("tree", "todo", format!("{tree} missing — sync the settings tree or restore a backup"), Some("backup_tab"))
+        });
+        // ASCII junction <scripts_root>\SettingsMCP → the Cyrillic tree (shell-safe path).
+        let junction = format!("{}\\SettingsMCP", scripts_root());
+        out.push(if std::path::Path::new(&junction).is_dir() {
+            onb("junction", "ok", junction, None)
+        } else if tree_ok {
+            onb("junction", "todo", format!("{junction} missing"), Some("junction"))
+        } else {
+            onb("junction", "blocked", String::new(), None)
+        });
+        // Profiles: expected list from profiles.json vs `~\.claude-<name>` dirs on disk.
+        let home = std::env::var("USERPROFILE").unwrap_or_default();
+        let names = profile_names();
+        let present = names
+            .iter()
+            .filter(|n| std::path::Path::new(&format!("{home}\\.claude-{n}")).is_dir())
+            .count();
+        out.push(if !tree_ok {
+            onb("profiles", "blocked", String::new(), None)
+        } else if present == names.len() {
+            onb("profiles", "ok", format!("{present}/{}", names.len()), None)
+        } else {
+            onb("profiles", "todo", format!("{present}/{}", names.len()), Some("install_profiles"))
+        });
+        // Credentials: presence only — the file is never read.
+        let creds = format!("{home}\\.claude\\.credentials.json");
+        out.push(if std::path::Path::new(&creds).is_file() {
+            onb("creds", "ok", creds, None)
+        } else {
+            onb("creds", "todo", format!("{creds} missing — restore a backup or log in once"), Some("backup_tab"))
+        });
+        // MCP canon deployed: every profile carries every canon server (matrix V2 reconcile reuse).
+        out.push(if !tree_ok {
+            onb("mcp", "blocked", String::new(), None)
+        } else {
+            let canon = mcp_deployable_canon();
+            let missing = names
+                .iter()
+                .filter(|n| {
+                    let deployed = profile_mcp_servers(n).unwrap_or_default();
+                    mcp_split(&canon, &deployed).0.len() < canon.len()
+                })
+                .count();
+            if canon.is_empty() || missing == 0 {
+                onb("mcp", "ok", format!("{} canon servers in all profiles", canon.len()), None)
+            } else {
+                onb("mcp", "todo", format!("{missing} profile(s) missing canon servers"), Some("mcp_deploy"))
+            }
+        });
+        // Managed settings: source↔deployed comparison (stack-drift reuse).
+        out.push(if !tree_ok {
+            onb("managed", "blocked", String::new(), None)
+        } else {
+            let m = managed_settings_drift_item();
+            match m.state.as_str() {
+                "ok" => onb("managed", "ok", m.detail, None),
+                _ => onb("managed", "todo", m.detail, Some("managed_deploy")),
+            }
+        });
+        // ponytail: Syncthing hardening state isn't detected natively (REST + API key); the script
+        // is idempotent and self-skipping — offer the run, report "unknown" until then.
+        out.push(match (&st_cfg, tree_ok) {
+            (None, _) | (_, false) => onb("syncthing", "blocked", String::new(), None),
+            _ => onb("syncthing", "unknown", String::new(), Some("syncthing")),
+        });
+        // Final gate: Assert-Installation.ps1 (non-zero exit on any failure) — streamed to console.
+        out.push(if tree_ok {
+            onb("verify", "unknown", String::new(), Some("verify"))
+        } else {
+            onb("verify", "blocked", String::new(), None)
+        });
+        out
+    }
+}
+
+#[tauri::command]
+async fn read_onboarding() -> Result<Vec<OnbStep>, String> {
+    tokio::task::spawn_blocking(onboarding_scan)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Streamed onboarding actions not wrapped by other commands.
+#[tauri::command]
+async fn run_onboarding_step(
+    app: AppHandle,
+    state: State<'_, RunState>,
+    action: String,
+) -> Result<i32, String> {
+    let rel = match action.as_str() {
+        "syncthing" => SYNCTHING_SCRIPT_REL,
+        "verify" => ASSERT_SCRIPT_REL,
+        _ => {
+            return Err(trv("err.unknown_onb_action", cur_lang(), &[("action", &action)]));
+        }
+    };
+    spawn_streamed(app, state, "onboarding".to_string(), abs(rel), Vec::new()).await
+}
+
+/// Create the ASCII junction <scripts_root>\SettingsMCP → the Cyrillic settings dir.
+/// Junctions need no elevation (unlike symlinks); verified by a fresh probe after mklink.
+#[tauri::command]
+async fn create_settings_junction() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| {
+        let target = abs(SETTINGS_TREE_REL);
+        let link = format!("{}\\SettingsMCP", scripts_root());
+        if std::path::Path::new(&link).is_dir() {
+            return Ok(()); // idempotent
+        }
+        if !std::path::Path::new(&target).is_dir() {
+            return Err(format!("target missing: {target}"));
+        }
+        let st = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &link, &target])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if std::path::Path::new(&link).is_dir() {
+            Ok(())
+        } else {
+            Err(format!("mklink /J failed (exit {:?})", st.code()))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // --- Ф2-GC: stack garbage collector (Home card) ---
 //
 // Plugin updates leave junk behind in the physical plugin store
@@ -12778,6 +12976,9 @@ pub fn run() {
             set_profile_plugins,
             unblock_managed_plugin,
             read_codex_profiles,
+            read_onboarding,
+            run_onboarding_step,
+            create_settings_junction,
             run_profile_relink,
             run_provider,
             list_my_providers,
@@ -13097,6 +13298,24 @@ mod tests {
         let item = marketplace_versions_drift_item();
         println!("id={} state={} detail={}", item.id, item.state, item.detail);
         assert_eq!(item.fix, None);
+    }
+
+    /// Manual live smoke of the onboarding scan on the REAL machine (read-only). Not a gate:
+    /// `cargo test onboarding_scan_live_smoke -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn onboarding_scan_live_smoke() {
+        let steps = onboarding_scan();
+        for s in &steps {
+            println!("{:<18} {:<8} fix={:<16} {}", s.id, s.state, s.fix.as_deref().unwrap_or("-"), s.detail);
+        }
+        // The scan is a fixed-shape checklist: every id present exactly once, states in-vocabulary.
+        let ids: Vec<&str> = steps.iter().map(|s| s.id.as_str()).collect();
+        for want in ["prereq_git", "prereq_node", "prereq_claude", "prereq_syncthing", "tree",
+                     "junction", "profiles", "creds", "mcp", "managed", "syncthing", "verify"] {
+            assert_eq!(ids.iter().filter(|i| **i == want).count(), 1, "{want}");
+        }
+        assert!(steps.iter().all(|s| ["ok", "todo", "blocked", "unknown"].contains(&s.state.as_str())));
     }
 
     /// Manual live smoke over the REAL plugin stores (read-only). Not part of the gates:

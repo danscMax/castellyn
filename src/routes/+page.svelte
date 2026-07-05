@@ -122,7 +122,11 @@
     type StackDriftItem,
     readGcScan,
     runGcDelete,
-    type GcItem
+    type GcItem,
+    readOnboarding,
+    runOnboardingStep,
+    createSettingsJunction,
+    type OnbStep
   } from '$lib/ipc';
   import { fmtBytes } from '$lib/bytes';
   import {
@@ -161,6 +165,7 @@
   import PluginsTab from '$lib/components/PluginsTab.svelte';
   import ScheduleTab from '$lib/components/ScheduleTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
+  import OnboardingView from '$lib/components/OnboardingView.svelte';
   import OnboardingWizard from '$lib/components/OnboardingWizard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ToastHost from '$lib/components/ToastHost.svelte';
@@ -342,7 +347,28 @@
       /* treat an unreadable config as "not configured" */
     }
     const hasProfiles = (profilesData?.profiles?.length ?? 0) > 0;
-    if (!hasScriptsRoot && !hasProfiles) onboardingOpen = true;
+    if (!hasScriptsRoot && !hasProfiles) {
+      onboardingOpen = true; // OU-04: empty setup (no root, no tree) — light modal
+      return;
+    }
+    // New-machine deploy checklist: the settings tree is already around (synced/copied) but no
+    // profile dirs exist yet — the owner's "fresh machine" case, distinct from OU-04's empty setup.
+    if (!hasProfiles) {
+      try {
+        const s = await readOnboarding();
+        const prof = s.find((x) => x.id === 'profiles');
+        if (
+          s.find((x) => x.id === 'tree')?.state === 'ok' &&
+          prof?.state === 'todo' &&
+          prof.detail.startsWith('0/')
+        ) {
+          onbSteps = s;
+          showOnboarding = true;
+        }
+      } catch {
+        /* detection only — never block startup */
+      }
+    }
   }
 
   // Finish/skip: mark onboarded (persist the flag), close, refresh the data the setup touched,
@@ -754,6 +780,56 @@
         reject(e);
       });
     });
+  }
+
+  // Onboarding: new-machine deployment checklist (full-screen on a bare machine, re-openable
+  // from Settings). Steps are idempotent; streamed fixes hold the global run lock via waitRun.
+  let onbSteps = $state<OnbStep[] | null>(null);
+  let showOnboarding = $state(false);
+  async function reloadOnboarding() {
+    try {
+      onbSteps = await readOnboarding();
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+  }
+  function openOnboarding() {
+    showOnboarding = true;
+    void reloadOnboarding();
+  }
+  function onbSpawn(label: string, spawn: () => Promise<number>): Promise<number> {
+    if (running) return Promise.reject(t('common.busy'));
+    running = 'onboarding';
+    log = [label];
+    return waitRun(spawn).finally(() => (running = null));
+  }
+  async function onbFix(step: OnbStep) {
+    if (!step.fix) return;
+    try {
+      if (step.fix === 'backup_tab') {
+        showOnboarding = false;
+        active = 'backup';
+        return;
+      }
+      if (step.fix === 'junction') await createSettingsJunction();
+      else if (step.fix === 'managed_deploy') await runManagedDeploy();
+      else if (step.fix === 'install_profiles')
+        await onbSpawn(t('page.prof_verb_reinstall'), () => runProfiles('reinstall'));
+      else if (step.fix === 'mcp_deploy')
+        await onbSpawn(t('page.onb_step_mcp'), () => runMcp('deploy'));
+      else await onbSpawn(t(`page.onb_step_${step.id}`), () => runOnboardingStep(step.fix as 'syncthing' | 'verify'));
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+    await reloadOnboarding();
+  }
+  // «Run all»: the runnable steps in dependency order, sequentially (each holds the run lock).
+  async function onbRunAll() {
+    const order = ['junction', 'profiles', 'mcp', 'managed', 'syncthing', 'verify'];
+    const steps = (onbSteps ?? [])
+      .filter((s) => s.fix && s.fix !== 'backup_tab' && (s.state === 'todo' || s.state === 'unknown'))
+      .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    for (const s of steps) await onbFix(s);
   }
 
   // Apply the accumulated matrix change-set. Order per profile: provider → proxy → folders; then all
@@ -2283,11 +2359,19 @@
         </div>
       {/if}
 
+      {#if showOnboarding}
+        <!-- New-machine deployment checklist — replaces the tab area (tabs stay mounted, just
+             hidden); the console below stays visible so streamed steps are watchable live. -->
+        <OnboardingView steps={onbSteps} busy={!!running} onFix={onbFix} onRunAll={onbRunAll}
+          onRefresh={reloadOnboarding} onDismiss={() => (showOnboarding = false)} />
+      {/if}
+
       {#key active}
       <div
         class="transition-opacity duration-200 animate-[sw-fade-in_0.2s_ease-out]"
         class:opacity-40={blockingRefresh}
         class:pointer-events-none={blockingRefresh}
+        class:hidden={showOnboarding}
       >
       {#if active === 'home'}
         <HomeTab profiles={profilesData} sync={syncData} drift={driftData} schedules={schedulesData}
@@ -2319,7 +2403,7 @@
       {:else if active === 'schedule'}
         <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} />
       {:else if active === 'settings'}
-        <SettingsTab {theme} onSetTheme={setTheme} {density} {fullWidth} onSetDensity={setDensity} onSetFullWidth={setFullWidth} {confirmDestructive} onSetConfirmDestructive={setConfirmDestructive} />
+        <SettingsTab {theme} onSetTheme={setTheme} {density} {fullWidth} onSetDensity={setDensity} onSetFullWidth={setFullWidth} {confirmDestructive} onSetConfirmDestructive={setConfirmDestructive} onOpenOnboarding={openOnboarding} />
       {:else if active !== 'sessions' && !PERSIST_TABS.includes(active)}
         <div class="grid h-full place-items-center p-sw-6 text-center text-sw-text-muted">
           <div>
@@ -2336,7 +2420,7 @@
            health/balance checks, expanded rows and inline editors survive a tab switch. Same
            centered container as the chain; data flows via reactive props so nothing goes stale.
            No fade here (matches the Sessions overlay's display-toggle). -->
-      <div class:opacity-40={blockingRefresh} class:pointer-events-none={blockingRefresh}>
+      <div class:opacity-40={blockingRefresh} class:pointer-events-none={blockingRefresh} class:hidden={showOnboarding}>
         {#if everOpened.providers}
           <div class:hidden={active !== 'providers'}>
             <ProvidersTab

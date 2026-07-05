@@ -93,6 +93,8 @@ export default {
   openStackFileTip: 'Открыть конфиг LLM-стека',
   openBackupFolder: 'Открыть папку бекапов',
   openBackupFolderTip: 'Открыть папку Backups в проводнике',
+  onboardingBtn: 'Развёртывание стека…',
+  onboardingBtnTip: 'Чек-лист развёртывания на новой машине (идемпотентный — безопасно на живой)',
   // C3: автообновление
   checkUpdates: 'Проверить обновления',
   checkUpdatesTip: 'Проверить на GitHub новый подписанный релиз',

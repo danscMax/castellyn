@@ -339,5 +339,32 @@ export default {
   // Notification history
   notifTitle: 'Notification history',
   notifEmpty: 'No notifications',
-  notifDismissAll: 'Clear history'
+  notifDismissAll: 'Clear history',
+
+  // Onboarding: new-machine deployment checklist
+  onb_title: 'Stack deployment',
+  onb_subtitle: 'Idempotent new-machine checklist — every step is safe to re-run.',
+  onb_step_prereq_git: 'git',
+  onb_step_prereq_node: 'Node.js',
+  onb_step_prereq_claude: 'Claude CLI',
+  onb_step_prereq_syncthing: 'Syncthing',
+  onb_step_tree: 'Settings tree',
+  onb_step_junction: 'ASCII junction SettingsMCP',
+  onb_step_profiles: 'Claude profiles',
+  onb_step_creds: 'Credentials (~/.claude)',
+  onb_step_mcp: 'MCP canon across profiles',
+  onb_step_managed: 'Managed settings',
+  onb_step_syncthing: 'Syncthing hardening',
+  onb_step_verify: 'Final verification',
+  onb_state_blocked: 'blocked by earlier steps',
+  onb_fix_install: 'Install profiles',
+  onb_fix_mcp: 'Deploy MCP',
+  onb_fix_managed: 'Deploy (UAC)',
+  onb_fix_junction: 'Create junction',
+  onb_fix_run: 'Run',
+  onb_fix_verify: 'Verify',
+  onb_fix_backup: 'Open Backup',
+  onb_run_all: 'Run everything in order',
+  onb_continue: 'Continue to the app',
+  onb_all_ok: 'Everything deployed — the stack is healthy'
 };

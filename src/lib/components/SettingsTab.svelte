@@ -38,7 +38,8 @@
     onSetDensity,
     onSetFullWidth,
     confirmDestructive = true,
-    onSetConfirmDestructive
+    onSetConfirmDestructive,
+    onOpenOnboarding
   }: {
     theme: Theme;
     onSetTheme: (th: Theme) => void;
@@ -48,6 +49,8 @@
     onSetFullWidth?: (v: boolean) => void;
     confirmDestructive?: boolean;
     onSetConfirmDestructive?: (v: boolean) => void;
+    /** Open the new-machine deployment checklist (full-screen onboarding view). */
+    onOpenOnboarding?: () => void;
   } = $props();
 
   // #37: filter the settings cards by a free-text query matched against each section's labels.
@@ -535,6 +538,10 @@
         {#if paths?.backupDir}
           <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => openPath(paths!.backupDir!)}
             title={t('settings.openBackupFolderTip')}>{t('settings.openBackupFolder')}</button>
+        {/if}
+        {#if onOpenOnboarding}
+          <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={onOpenOnboarding}
+            title={t('settings.onboardingBtnTip')}>{t('settings.onboardingBtn')}</button>
         {/if}
       </div>
     </div>

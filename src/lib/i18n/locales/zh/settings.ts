@@ -93,6 +93,8 @@ export default {
   openStackFileTip: '打开 LLM 技术栈配置',
   openBackupFolder: '打开备份文件夹',
   openBackupFolderTip: '在资源管理器中打开备份文件夹',
+  onboardingBtn: '部署技术栈…',
+  onboardingBtnTip: '新机器部署检查清单（幂等——在现有机器上也安全）',
   // C3: 自动更新
   checkUpdates: '检查更新',
   checkUpdatesTip: '在 GitHub 上检查更新的已签名版本',

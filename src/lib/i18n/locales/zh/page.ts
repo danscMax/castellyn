@@ -334,5 +334,32 @@ export default {
   // Notification history
   notifTitle: '通知历史',
   notifEmpty: '没有通知',
-  notifDismissAll: '清空历史'
+  notifDismissAll: '清空历史',
+
+  // Onboarding: new-machine deployment checklist
+  onb_title: '部署技术栈',
+  onb_subtitle: '幂等的新机器检查清单——每一步都可以安全地重新运行。',
+  onb_step_prereq_git: 'git',
+  onb_step_prereq_node: 'Node.js',
+  onb_step_prereq_claude: 'Claude CLI',
+  onb_step_prereq_syncthing: 'Syncthing',
+  onb_step_tree: '设置目录树',
+  onb_step_junction: 'ASCII 联接点 SettingsMCP',
+  onb_step_profiles: 'Claude 配置档',
+  onb_step_creds: '凭据 (~/.claude)',
+  onb_step_mcp: '各配置档的 MCP 规范',
+  onb_step_managed: 'Managed 设置',
+  onb_step_syncthing: 'Syncthing 加固',
+  onb_step_verify: '最终验证',
+  onb_state_blocked: '被前面的步骤阻塞',
+  onb_fix_install: '安装配置档',
+  onb_fix_mcp: '部署 MCP',
+  onb_fix_managed: '部署 (UAC)',
+  onb_fix_junction: '创建联接点',
+  onb_fix_run: '运行',
+  onb_fix_verify: '验证',
+  onb_fix_backup: '打开备份',
+  onb_run_all: '按顺序执行全部',
+  onb_continue: '继续进入应用',
+  onb_all_ok: '全部部署完成——技术栈健康'
 };

@@ -339,5 +339,32 @@ export default {
   // Notification history
   notifTitle: 'История уведомлений',
   notifEmpty: 'Нет уведомлений',
-  notifDismissAll: 'Очистить историю'
+  notifDismissAll: 'Очистить историю',
+
+  // Onboarding: new-machine deployment checklist
+  onb_title: 'Развёртывание стека',
+  onb_subtitle: 'Идемпотентный чек-лист новой машины — каждый шаг можно перезапускать.',
+  onb_step_prereq_git: 'git',
+  onb_step_prereq_node: 'Node.js',
+  onb_step_prereq_claude: 'Claude CLI',
+  onb_step_prereq_syncthing: 'Syncthing',
+  onb_step_tree: 'Дерево настроек',
+  onb_step_junction: 'ASCII-джанкшен SettingsMCP',
+  onb_step_profiles: 'Профили Claude',
+  onb_step_creds: 'Креды (~/.claude)',
+  onb_step_mcp: 'Канон MCP по профилям',
+  onb_step_managed: 'Managed-settings',
+  onb_step_syncthing: 'Syncthing-hardening',
+  onb_step_verify: 'Финальная верификация',
+  onb_state_blocked: 'заблокировано предыдущими шагами',
+  onb_fix_install: 'Установить профили',
+  onb_fix_mcp: 'Задеплоить MCP',
+  onb_fix_managed: 'Задеплоить (UAC)',
+  onb_fix_junction: 'Создать джанкшен',
+  onb_fix_run: 'Выполнить',
+  onb_fix_verify: 'Проверить',
+  onb_fix_backup: 'Открыть Бэкап',
+  onb_run_all: 'Выполнить всё по порядку',
+  onb_continue: 'Продолжить в приложение',
+  onb_all_ok: 'Всё развёрнуто — стек здоров'
 };

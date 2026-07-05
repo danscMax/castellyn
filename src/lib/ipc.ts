@@ -881,6 +881,20 @@ export const readStackDrift = () => invoke<StackDriftItem[]>('read_stack_drift')
 // Redeploys managed-settings — triggers ONE Windows UAC prompt. Returns the post-deploy check.
 export const runManagedDeploy = () => invoke<StackDriftItem>('run_managed_deploy');
 
+// Onboarding: new-machine deployment checklist. Steps are idempotent; `fix` routes to an
+// existing command (install_profiles/mcp_deploy/managed_deploy/backup_tab) or to
+// runOnboardingStep (syncthing/verify) / createSettingsJunction (junction).
+export type OnbStep = {
+  id: string;
+  state: 'ok' | 'todo' | 'blocked' | 'unknown';
+  detail: string;
+  fix?: 'install_profiles' | 'mcp_deploy' | 'managed_deploy' | 'junction' | 'syncthing' | 'verify' | 'backup_tab' | null;
+};
+export const readOnboarding = () => invoke<OnbStep[]>('read_onboarding');
+export const runOnboardingStep = (action: 'syncthing' | 'verify') =>
+  invoke<number>('run_onboarding_step', { action });
+export const createSettingsJunction = () => invoke<void>('create_settings_junction');
+
 // Ф2-GC: "stack garbage" — stale plugin versions, temp_git dirs, .bak leftovers, wrong-OS binaries.
 // `id` is a stable key ("stale:org/plugin/ver" | "tempgit:<dir>" | "bak:<name>" | "wrongos:<store>");
 // wrong_os items are report-only (deletable=false). Deletes go to the Recycle Bin (reversible).

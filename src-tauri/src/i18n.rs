@@ -150,6 +150,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("err.set_needs_base_url", ["для set нужен base_url", "set requires base_url", "set 需要 base_url"]),
     ("err.unknown_schedule_action", ["неизвестное действие schedule: {action}", "unknown schedule action: {action}", "未知的 schedule 操作: {action}"]),
     ("err.unknown_mcp_action", ["неизвестное действие mcp: {action}", "unknown mcp action: {action}", "未知的 mcp 操作: {action}"]),
+    ("err.unknown_onb_action", ["неизвестный шаг онбординга: {action}", "unknown onboarding step: {action}", "未知的入门步骤: {action}"]),
     ("err.claude_launch", ["запуск claude: {e}", "launching claude: {e}", "启动 claude: {e}"]),
     ("err.invalid_plugin_id", ["недопустимый id плагина: {id}", "invalid plugin id: {id}", "插件 id 无效: {id}"]),
     ("err.unknown_plugin_action", ["неизвестное действие plugin: {action}", "unknown plugin action: {action}", "未知的 plugin 操作: {action}"]),

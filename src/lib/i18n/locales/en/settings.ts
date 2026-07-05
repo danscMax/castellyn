@@ -93,6 +93,8 @@ export default {
   openStackFileTip: 'Open the LLM stack config',
   openBackupFolder: 'Open backups folder',
   openBackupFolderTip: 'Open the Backups folder in Explorer',
+  onboardingBtn: 'Stack deployment…',
+  onboardingBtnTip: 'New-machine deployment checklist (idempotent — safe on a live machine)',
   // C3: auto-update
   checkUpdates: 'Check for updates',
   checkUpdatesTip: 'Check GitHub for a newer signed release',

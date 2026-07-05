@@ -391,6 +391,22 @@ const handlers: Record<string, (args: any) => any> = {
     }
   ]),
 
+  // Onboarding checklist: a fresh machine with the settings tree synced but nothing deployed.
+  read_onboarding: () => ([
+    { id: 'prereq_git', state: 'ok', detail: 'C:\\Program Files\\Git\\cmd\\git.exe', fix: null },
+    { id: 'prereq_node', state: 'ok', detail: 'C:\\Program Files\\nodejs\\node.exe', fix: null },
+    { id: 'prereq_claude', state: 'ok', detail: 'C:\\Users\\User\\AppData\\Roaming\\npm\\claude.cmd', fix: null },
+    { id: 'prereq_syncthing', state: 'ok', detail: 'C:\\Users\\User\\AppData\\Local\\Syncthing\\config.xml', fix: null },
+    { id: 'tree', state: 'ok', detail: 'E:\\Scripts\\!Настройки и MCP\\ClaudeProfiles', fix: null },
+    { id: 'junction', state: 'todo', detail: 'E:\\Scripts\\SettingsMCP missing', fix: 'junction' },
+    { id: 'profiles', state: 'todo', detail: '0/10', fix: 'install_profiles' },
+    { id: 'creds', state: 'todo', detail: 'C:\\Users\\User\\.claude\\.credentials.json missing — restore a backup or log in once', fix: 'backup_tab' },
+    { id: 'mcp', state: 'todo', detail: '10 profile(s) missing canon servers', fix: 'mcp_deploy' },
+    { id: 'managed', state: 'todo', detail: 'deployed file missing', fix: 'managed_deploy' },
+    { id: 'syncthing', state: 'unknown', detail: '', fix: 'syncthing' },
+    { id: 'verify', state: 'unknown', detail: '', fix: 'verify' }
+  ]),
+
   // --- Sessions launcher ---
   read_ssh_hosts: () => ([
     { id: 'minipc', name: 'MiniPC', host: '192.168.1.42', port: 22, user: 'dev', keyPath: '~/.ssh/id_ed25519', remoteDir: '/home/dev/work', source: 'saved' },
