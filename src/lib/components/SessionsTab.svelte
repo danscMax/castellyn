@@ -2018,6 +2018,14 @@
             <button type="button" class="rail-item" class:active={activeKey === pane.key}
               onclick={() => railFocus(pane.key)}
               oncontextmenu={(e) => openRailMenu(e, pane.key)}
+              onkeydown={(e) => {
+                // Keyboard parity with right-click: Shift+F10 / the ContextMenu key open the row menu.
+                if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
+                  e.preventDefault();
+                  railMenuAnchor = e.currentTarget as HTMLElement;
+                  railMenuFor = pane.key;
+                }
+              }}
               title={st && st !== 'unknown' ? t(`sessions.state_${st}`) : paneLabel(pane)}>
               <span class="env-ic">{@html envIcon(pane.tool)}</span>
               <span class="dot" class:working={st === 'working'} class:blocked={st === 'blocked'}

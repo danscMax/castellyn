@@ -2,7 +2,8 @@
   import { toastStore, markNotifRead, clearHistory, dismissFromHistory } from '$lib/toast.svelte';
   import { t } from '$lib/i18n';
   import { anchored } from '$lib/floating';
-  import { Check, TriangleAlert, X, Info } from '@lucide/svelte';
+  import EmptyState from './EmptyState.svelte';
+  import { Check, TriangleAlert, X, Info, BellOff } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   // `anchor` is the bell button (bottom of the sidebar); the panel pins to it via use:anchored,
@@ -48,7 +49,7 @@
         </div>
       </header>
       {#if history.items.length === 0}
-        <div class="empty">{t('page.notifEmpty')}</div>
+        <EmptyState icon={BellOff} description={t('page.notifEmpty')} />
       {:else}
         <div class="list">
           {#each history.items as item, i (item.timestamp)}
@@ -124,12 +125,6 @@
     line-height: 1;
   }
   .close-btn:hover { color: var(--sw-text-primary); }
-  .empty {
-    padding: 32px 14px;
-    text-align: center;
-    font-size: var(--sw-text-sm);
-    color: var(--sw-text-muted);
-  }
   .list {
     overflow-y: auto;
     flex: 1;
@@ -186,6 +181,9 @@
     opacity: 0;
     flex-shrink: 0;
   }
-  .entry:hover .entry-x { opacity: 1; }
+  /* Keyboard parity with the hover reveal: a Tab-focused ✕ must be visible too. */
+  .entry:hover .entry-x,
+  .entry:focus-within .entry-x,
+  .entry-x:focus-visible { opacity: 1; }
   .entry-x:hover { color: var(--sw-text-primary); }
 </style>

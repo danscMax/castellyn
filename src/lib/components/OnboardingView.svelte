@@ -94,6 +94,8 @@
           <div class="flex flex-wrap items-center gap-sw-2" class:dim={r.state === 'blocked'}>
             <span class="dot" style="background:{dotColor(r.state)}" aria-hidden="true"></span>
             <span class="text-sw-sm font-medium">{labelOf(r.id)}</span>
+            <!-- The dot is color-only; screen readers get the state as text. -->
+            <span class="sr-only">{t(`page.onb_state_${r.state}`)}</span>
             {#if r.detail}
               <span class="text-sw-xs text-sw-text-secondary det" title={r.detail}>· {r.detail}</span>
             {:else if r.state === 'blocked'}

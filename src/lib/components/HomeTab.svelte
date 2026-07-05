@@ -2,6 +2,7 @@
   import { t, plural, pFile } from '$lib/i18n';
   import { statusTextClass } from '$lib/statusColor';
   import { agentSummary } from '$lib/agentStatus.svelte';
+  import { Check, X, Info } from '@lucide/svelte';
   import { profileHasMissingLink } from '$lib/attention';
   import StackDriftCard from './StackDriftCard.svelte';
   import StackGcCard from './StackGcCard.svelte';
@@ -289,7 +290,7 @@
 
   <div class="card-grid">
     {#each calm as c (c.key)}
-      <div class="sw-card flex flex-col gap-1">
+      <div class="sw-card calm-card flex flex-col gap-1">
         <button class="flex flex-col gap-1 text-left" onclick={() => onOpen(c.tab)} title={t('common.open')}>
           <span class="text-sw-xs uppercase tracking-wide text-sw-text-muted">{c.title}</span>
           <span class="font-medium {color(c.level)}">{c.value}</span>
@@ -307,7 +308,10 @@
     <div class="flex flex-col gap-sw-1">
       {#each runs as r (r.id)}
         <button class="run-row" onclick={() => onOpen(r.id === 'forks' ? 'forks' : 'updates')}>
-          <span class="{color(r.level)} font-medium">{r.level === 'ok' ? '✓' : r.level === 'bad' ? '✗' : '•'}</span>
+          <!-- V6 icon language (same trio NotificationPanel uses) instead of ✓/✗/• text glyphs. -->
+          <span class="{color(r.level)} run-ic">
+            {#if r.level === 'ok'}<Check size={13} aria-hidden="true" />{:else if r.level === 'bad'}<X size={13} aria-hidden="true" />{:else}<Info size={13} aria-hidden="true" />{/if}
+          </span>
           <span class="font-medium">{r.name}</span>
           <span class="text-sw-text-muted text-sw-sm">{r.when}</span>
           {#if r.summary}<span class="truncate text-sw-sm text-sw-text-secondary">{r.summary}</span>{/if}
@@ -347,6 +351,17 @@
     min-width: 0;
   }
   .run-row:hover {
+    background: var(--sw-bg-hover);
+  }
+  .run-ic {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  /* The whole calm card deep-links via its inner button — show that it's clickable. */
+  .calm-card {
+    transition: background 0.12s ease;
+  }
+  .calm-card:hover {
     background: var(--sw-bg-hover);
   }
 </style>

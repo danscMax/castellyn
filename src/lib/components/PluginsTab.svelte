@@ -412,13 +412,15 @@
           {@const cur = flat.find((f) => f.key === detSel[p.id]) ?? flat[0]}
           {@const pname = split(p.id).name}
           <div class="detail md">
-            <div class="mdlist" role="listbox" aria-label={t('plugins.detListLabel')}>
+            <!-- Plain buttons, not a fake listbox: role=listbox/option promises arrow-key
+                 navigation we don't implement — buttons already give correct Tab semantics. -->
+            <div class="mdlist" role="group" aria-label={t('plugins.detListLabel')}>
               {#each groups as g (g.key)}
                 {@const GIcon = g.icon}
                 <p class="detlabel"><GIcon size={12} aria-hidden="true" /> {g.label} <span class="ph">{g.items.length}</span></p>
                 {#each g.items as item (item.name)}
                   {@const k = `${g.key}:${item.name}`}
-                  <button type="button" class="mditem" class:sel={cur?.key === k} role="option" aria-selected={cur?.key === k}
+                  <button type="button" class="mditem" class:sel={cur?.key === k} aria-pressed={cur?.key === k}
                     onclick={() => (detSel[p.id] = k)}>
                     {g.key === 'cmd' ? `/${pname}:${item.name}` : item.name}
                   </button>
@@ -501,6 +503,9 @@
   {/if}
   {/if}
 </div>
+
+<!-- Escape closes the changelog, like every other overlay in the app. -->
+<svelte:window onkeydown={(e) => e.key === 'Escape' && changelogPlugin !== null && closeChangelog()} />
 
 {#if changelogPlugin !== null}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
