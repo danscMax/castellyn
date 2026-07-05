@@ -4,6 +4,7 @@
   import { base } from '$app/paths';
   import { t } from '$lib/i18n';
   import { runningStore, opName } from '$lib/running.svelte';
+  import { navHistory, navGo } from '$lib/navHistory.svelte';
 
   const appWin = getCurrentWindow();
 
@@ -48,6 +49,17 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="titlebar" class:inactive={!winFocused} data-tauri-drag-region ondblclick={toggleMaximize}>
+  <!-- Browser-style tab history — mirrors mouse buttons 3/4 and Alt+←/→ (handlers in +page). -->
+  <div class="nav">
+    <button class="tb-btn tb-nav" onclick={() => navGo('back')} disabled={navHistory.back.length === 0}
+      aria-label={t('titlebar.navBack')} title={t('titlebar.navBack')}>
+      <svg viewBox="0 0 12 12" width="11" height="11"><path d="M7.5 2.5 L4 6 L7.5 9.5" /></svg>
+    </button>
+    <button class="tb-btn tb-nav" onclick={() => navGo('fwd')} disabled={navHistory.fwd.length === 0}
+      aria-label={t('titlebar.navForward')} title={t('titlebar.navForward')}>
+      <svg viewBox="0 0 12 12" width="11" height="11"><path d="M4.5 2.5 L8 6 L4.5 9.5" /></svg>
+    </button>
+  </div>
   <div class="brand" data-tauri-drag-region>
     <img class="logo" src="{base}/favicon.png" alt="" data-tauri-drag-region width="18" height="18" />
     <span class="title" data-tauri-drag-region>{t('titlebar.title')}</span>
@@ -101,11 +113,25 @@
     border-bottom: 1px solid var(--sw-border);
     user-select: none;
   }
+  .nav {
+    display: flex;
+    height: 100%;
+    padding-left: 2px;
+  }
+  .tb-nav {
+    width: 36px;
+  }
+  .tb-nav:disabled {
+    color: var(--sw-text-muted);
+    opacity: 0.45;
+    cursor: default;
+    background: transparent;
+  }
   .brand {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-left: 12px;
+    padding-left: 8px;
     height: 100%;
     flex: 1;
     min-width: 0;

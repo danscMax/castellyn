@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import {
     listComponents,
@@ -141,6 +141,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import { navOrder } from '$lib/navOrder.svelte';
+  import { navBind, navTrack, navGo } from '$lib/navHistory.svelte';
   import Console from '$lib/components/Console.svelte';
   import UpdatesTab from '$lib/components/UpdatesTab.svelte';
   import ForksTab from '$lib/components/ForksTab.svelte';
@@ -200,32 +201,10 @@
   let notifOpen = $state(false);
   let notifAnchor = $state<HTMLElement>(); // bell button, bound from Sidebar → anchors NotificationPanel
 
-  // Tab navigation history: mouse Back/Forward (buttons 3/4) and Alt+←/→ walk it like a browser.
-  // Plain arrays — nothing renders them; lastActive keeps the tracking $effect from re-pushing
-  // when goBack/goForward themselves change `active`.
-  let navBack: string[] = [];
-  let navFwd: string[] = [];
-  let lastActive: string | undefined;
-  $effect(() => {
-    const a = active;
-    if (lastActive === undefined || a === lastActive) {
-      lastActive = a;
-      return;
-    }
-    navBack.push(lastActive);
-    if (navBack.length > 50) navBack.shift();
-    navFwd = [];
-    lastActive = a;
-  });
-  function navGo(dir: 'back' | 'fwd') {
-    const from = dir === 'back' ? navBack : navFwd;
-    const to = dir === 'back' ? navFwd : navBack;
-    const target = from.pop();
-    if (!target) return;
-    to.push(active);
-    lastActive = target;
-    active = target;
-  }
+  // Tab navigation history (lib/navHistory.svelte.ts): mouse Back/Forward (buttons 3/4),
+  // Alt+←/→ here, plus the visible ←/→ chrome buttons in WindowTitleBar — one shared walk.
+  navBind(untrack(() => active), (tab) => (active = tab));
+  $effect(() => navTrack(active));
   function onNavMouse(e: MouseEvent) {
     if (e.button === 3) {
       e.preventDefault();

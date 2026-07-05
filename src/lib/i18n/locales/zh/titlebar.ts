@@ -1,5 +1,7 @@
 export default {
   title: 'Castellyn',
+  navBack: '后退 (Alt+←)',
+  navForward: '前进 (Alt+→)',
   minimize: '最小化',
   maximize: '最大化',
   restore: '还原',
