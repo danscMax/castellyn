@@ -550,24 +550,25 @@
   // including SSH/remote panes. That's the most destructive surface in the app, so gate it behind
   // the canonical confirm dialog (project rule: destructive actions confirm first) showing the
   // exact command + the pane list.
-  let confirmSend = $state<{ cmd: string; targets: string[] } | null>(null);
+  let confirmSend = $state<{ cmd: string; targets: string[]; keys: string[] } | null>(null);
   function sendToAll() {
     const cmd = sendAllText.trim();
     if (!cmd) return;
     // F15: list the exact panes the command lands in (tool@profile · cwd/host) — count alone hid
     // which sessions get hit, so the user couldn't catch a stray SSH pane before sending.
-    const targets = spacePanes
-      .filter((p) => sessionIds[p.key])
-      .map((p) => {
-        const where = p.sshTarget ? `🖥 ${p.sshTarget}` : p.cwd || '~';
-        return p.tool === 'claude' ? `${p.tool}@${p.profile} · ${where}` : `${p.tool} · ${where}`;
-      });
-    confirmSend = { cmd, targets };
+    // The pane KEYS are captured here too: what the dialog listed is exactly what gets hit,
+    // even if the user switches project tabs while the confirm is open.
+    const live = spacePanes.filter((p) => sessionIds[p.key]);
+    const targets = live.map((p) => {
+      const where = p.sshTarget ? `🖥 ${p.sshTarget}` : p.cwd || '~';
+      return p.tool === 'claude' ? `${p.tool}@${p.profile} · ${where}` : `${p.tool} · ${where}`;
+    });
+    confirmSend = { cmd, targets, keys: live.map((p) => p.key) };
   }
   function doSendToAll() {
     if (!confirmSend) return;
-    for (const p of spacePanes) {
-      const id = sessionIds[p.key];
+    for (const k of confirmSend.keys) {
+      const id = sessionIds[k];
       if (id) sessionWrite(id, confirmSend.cmd + '\r');
     }
     sendAllText = '';
