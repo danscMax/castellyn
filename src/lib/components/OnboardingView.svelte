@@ -11,7 +11,7 @@
     {
       steps: OnbStep[] | null;
       busy?: boolean;
-      onFix: (step: OnbStep) => void | Promise<void>;
+      onFix: (step: OnbStep) => boolean | Promise<boolean>;
       onRunAll: () => void | Promise<void>;
       onRefresh: () => void | Promise<void>;
       onDismiss: () => void;

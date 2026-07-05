@@ -278,6 +278,7 @@
     message: string;
     confirmLabel: string;
     action: (() => void) | null;
+    onCancel: (() => void) | null;
     details: string[];
     requireText: string | null;
     danger: boolean;
@@ -287,6 +288,7 @@
     message: '',
     confirmLabel: t('common.confirm'),
     action: null,
+    onCancel: null,
     details: [],
     requireText: null,
     danger: false
@@ -435,16 +437,19 @@
   }
 
   function closeConfirm() {
+    const cancelled = confirm.onCancel;
     confirm = {
       open: false,
       title: '',
       message: '',
       confirmLabel: t('common.confirm'),
       action: null,
+      onCancel: null,
       details: [],
       requireText: null,
       danger: false
     };
+    cancelled?.();
   }
 
   function askConfirm(
@@ -452,7 +457,7 @@
     message: string,
     confirmLabel: string,
     action: () => void,
-    opts: { details?: string[]; requireText?: string | null; danger?: boolean } = {}
+    opts: { details?: string[]; requireText?: string | null; danger?: boolean; onCancel?: () => void } = {}
   ) {
     // #120: when confirm-prompts are disabled, run immediately — except type-to-confirm actions
     // (restore/reinstall), which are destructive enough to always require explicit confirmation.
@@ -466,6 +471,7 @@
       message,
       confirmLabel,
       action,
+      onCancel: opts.onCancel ?? null,
       details: opts.details ?? [],
       requireText: opts.requireText ?? null,
       danger: opts.danger ?? false
@@ -474,6 +480,7 @@
 
   function doConfirm() {
     const a = confirm.action;
+    confirm.onCancel = null; // confirmed — closeConfirm must not fire the cancel path
     closeConfirm();
     a?.();
   }
@@ -772,11 +779,33 @@
   // part of the frozen contract). The run-done listener resolves `pendingRun` before its normal
   // per-component handling, so no per-step toast/reload fires — we reload+verify once at the end.
   let pendingRun: ((code: number) => void) | null = null;
+  let pendingRunFail: ((e: unknown) => void) | null = null;
+  // Watchdog: a run that dies without ever emitting run-done would hold the GLOBAL run lock
+  // forever (every button → common.busy). Idle-based, not total-duration — long runs
+  // (Update-All, 30+ min) keep printing, and every run-log re-arms the timer; 5 silent
+  // minutes → reject the awaited step so the caller's finally releases the lock.
+  const RUN_IDLE_MS = 5 * 60_000;
+  let runIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  function armRunWatchdog() {
+    if (runIdleTimer) clearTimeout(runIdleTimer);
+    runIdleTimer = null;
+    if (!pendingRun) return;
+    runIdleTimer = setTimeout(() => {
+      const rej = pendingRunFail;
+      pendingRun = null;
+      pendingRunFail = null;
+      rej?.(new Error(t('page.run_watchdog')));
+    }, RUN_IDLE_MS);
+  }
   function waitRun(spawn: () => Promise<number>): Promise<number> {
     return new Promise((resolve, reject) => {
       pendingRun = resolve;
+      pendingRunFail = reject;
+      armRunWatchdog();
       spawn().catch((e) => {
         pendingRun = null;
+        pendingRunFail = null;
+        armRunWatchdog();
         reject(e);
       });
     });
@@ -803,33 +832,88 @@
     log = [label];
     return waitRun(spawn).finally(() => (running = null));
   }
-  async function onbFix(step: OnbStep) {
-    if (!step.fix) return;
+  // Assert-Installation's exit code IS the verdict; the scan can't detect it natively, so the
+  // last run's result overlays the eternally-"unknown" verify step (session-local).
+  let onbVerify = $state<'ok' | 'todo' | null>(null);
+  const onbViewSteps = $derived(
+    onbSteps === null
+      ? null
+      : onbSteps.map((s) => (s.id === 'verify' && onbVerify ? { ...s, state: onbVerify } : s))
+  );
+  // Reinstall over EXISTING profiles gets the same confirm gate the Profiles tab has; a bare
+  // machine (0 present) installs without ceremony.
+  function confirmOnbInstall(): Promise<boolean> {
+    const present = parseInt((onbSteps ?? []).find((s) => s.id === 'profiles')?.detail ?? '0', 10) || 0;
+    if (present <= 0) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      askConfirm(
+        t('page.onb_title'),
+        t('page.onb_install_confirm', { n: present }),
+        t('page.prof_verb_reinstall'),
+        () => resolve(true),
+        { danger: true, onCancel: () => resolve(false) }
+      );
+    });
+  }
+  // Fail-closed: returns false on any error, non-zero exit, or user decline — onbRunAll stops there.
+  async function onbFix(step: OnbStep): Promise<boolean> {
+    if (!step.fix) return true;
     try {
       if (step.fix === 'backup_tab') {
         showOnboarding = false;
         active = 'backup';
-        return;
+        return true;
       }
-      if (step.fix === 'junction') await createSettingsJunction();
-      else if (step.fix === 'managed_deploy') await runManagedDeploy();
-      else if (step.fix === 'install_profiles')
-        await onbSpawn(t('page.prof_verb_reinstall'), () => runProfiles('reinstall'));
-      else if (step.fix === 'mcp_deploy')
-        await onbSpawn(t('page.onb_step_mcp'), () => runMcp('deploy'));
-      else await onbSpawn(t(`page.onb_step_${step.id}`), () => runOnboardingStep(step.fix as 'syncthing' | 'verify'));
+      if (step.fix === 'junction' || step.fix === 'managed_deploy') {
+        // Native (non-streamed) fixes honor the global run lock too — a double click on the
+        // managed fix would otherwise stack two UAC prompts.
+        if (running) return false;
+        running = 'onboarding';
+        try {
+          if (step.fix === 'junction') await createSettingsJunction();
+          else if ((await runManagedDeploy()).state !== 'ok') {
+            pushToast({ kind: 'error', title: t('page.onb_fix_failed', { step: t('page.onb_step_managed') }) });
+            return false;
+          }
+        } finally {
+          running = null;
+        }
+      } else {
+        let code: number;
+        if (step.fix === 'install_profiles') {
+          if (!(await confirmOnbInstall())) return false;
+          code = await onbSpawn(t('page.prof_verb_reinstall'), () => runProfiles('reinstall'));
+        } else if (step.fix === 'mcp_deploy') {
+          code = await onbSpawn(t('page.onb_step_mcp'), () => runMcp('deploy'));
+        } else {
+          code = await onbSpawn(t(`page.onb_step_${step.id}`), () =>
+            runOnboardingStep(step.fix as 'syncthing' | 'verify')
+          );
+          if (step.fix === 'verify') onbVerify = code === 0 ? 'ok' : 'todo';
+        }
+        if (code !== 0) {
+          pushToast({ kind: 'error', title: t('page.onb_fix_failed', { step: t(`page.onb_step_${step.id}`) }) });
+          await reloadOnboarding();
+          return false;
+        }
+      }
     } catch (e) {
       pushToast({ kind: 'error', title: String(e) });
+      return false;
     }
     await reloadOnboarding();
+    return true;
   }
-  // «Run all»: the runnable steps in dependency order, sequentially (each holds the run lock).
+  // «Run all»: the runnable steps in dependency order, sequentially (each holds the run lock);
+  // the first failed step stops the series (its toast explains why).
   async function onbRunAll() {
     const order = ['junction', 'profiles', 'mcp', 'managed', 'syncthing', 'verify'];
     const steps = (onbSteps ?? [])
       .filter((s) => s.fix && s.fix !== 'backup_tab' && (s.state === 'todo' || s.state === 'unknown'))
       .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-    for (const s of steps) await onbFix(s);
+    for (const s of steps) {
+      if (!(await onbFix(s))) break;
+    }
   }
 
   // Apply the accumulated matrix change-set. Order per profile: provider → proxy → folders; then all
@@ -2040,6 +2124,8 @@
     unlisten.push(
       await listen<{ component: string; stream: string; line: string }>('run-log', (e) => {
         const p = e.payload;
+        armRunWatchdog(); // liveness signal — an awaited run is healthy while it prints
+
         // #15: track the current orchestrator step for the Updates progress line ('>>> <label>').
         if (p.component === 'all' && p.stream !== 'err') {
           for (const ln of p.line.split('\n')) {
@@ -2072,6 +2158,8 @@
         if (pendingRun) {
           const r = pendingRun;
           pendingRun = null;
+          pendingRunFail = null;
+          armRunWatchdog(); // clears the idle timer
           appendLog(t('page.log_done', { code: e.payload.code }));
           r(e.payload.code);
           return;
@@ -2364,7 +2452,7 @@
       {#if showOnboarding}
         <!-- New-machine deployment checklist — replaces the tab area (tabs stay mounted, just
              hidden); the console below stays visible so streamed steps are watchable live. -->
-        <OnboardingView steps={onbSteps} busy={!!running} onFix={onbFix} onRunAll={onbRunAll}
+        <OnboardingView steps={onbViewSteps} busy={!!running} onFix={onbFix} onRunAll={onbRunAll}
           onRefresh={reloadOnboarding} onDismiss={() => (showOnboarding = false)} />
       {/if}
 

@@ -366,5 +366,8 @@ export default {
   onb_fix_backup: 'Open Backup',
   onb_run_all: 'Run everything in order',
   onb_continue: 'Continue to the app',
-  onb_all_ok: 'Everything deployed — the stack is healthy'
+  onb_all_ok: 'Everything deployed — the stack is healthy',
+  onb_install_confirm: 'This machine already has profiles ({n}). Reinstalling will overwrite their configuration. Continue?',
+  onb_fix_failed: 'Step “{step}” failed — the series stopped there',
+  run_watchdog: 'No output for 5 minutes — the wait was released, check the console'
 };

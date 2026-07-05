@@ -361,5 +361,8 @@ export default {
   onb_fix_backup: '打开备份',
   onb_run_all: '按顺序执行全部',
   onb_continue: '继续进入应用',
-  onb_all_ok: '全部部署完成——技术栈健康'
+  onb_all_ok: '全部部署完成——技术栈健康',
+  onb_install_confirm: '此机器已有配置文件（{n} 个）。重新安装将覆盖其配置。继续吗？',
+  onb_fix_failed: '步骤“{step}”失败——序列已停止',
+  run_watchdog: '进程 5 分钟无输出——等待已解除，请查看控制台'
 };

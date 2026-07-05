@@ -4029,9 +4029,10 @@ fn read_enabled_plugins_at(path: &str) -> serde_json::Map<String, serde_json::Va
         .unwrap_or_default()
 }
 
-/// Canonical MCP server names from config/.mcp.json (mirrors `read_mcp`'s source read). Empty on
-/// any IO/parse failure.
-fn mcp_canon_servers() -> Vec<String> {
+/// Canonical MCP server names from config/.mcp.json (mirrors `read_mcp`'s source read). None when
+/// the file is missing/unparseable or lacks an mcpServers object — callers must NOT read that as
+/// "empty canon, nothing to reconcile" (that fail-open painted a broken canon green).
+fn mcp_canon_servers() -> Option<Vec<String>> {
     std::fs::read_to_string(abs(MCP_CONFIG_REL))
         .ok()
         .and_then(|c| parse_json_bom(&c).ok())
@@ -4040,7 +4041,6 @@ fn mcp_canon_servers() -> Vec<String> {
                 .and_then(|m| m.as_object())
                 .map(|o| o.keys().cloned().collect())
         })
-        .unwrap_or_default()
 }
 
 /// Canon servers Deploy-Mcp.ps1 SKIPS because the plugin marketplace provides them (never in a
@@ -4049,11 +4049,13 @@ fn mcp_canon_servers() -> Vec<String> {
 const MCP_PLUGIN_PROVIDED: [&str; 2] = ["context7", "serena"];
 
 /// The canon servers a user-scope deploy is actually expected to place (canon minus plugin-provided).
-fn mcp_deployable_canon() -> Vec<String> {
-    mcp_canon_servers()
-        .into_iter()
-        .filter(|n| !MCP_PLUGIN_PROVIDED.contains(&n.as_str()))
-        .collect()
+/// None propagates "canon unreadable" from `mcp_canon_servers`.
+fn mcp_deployable_canon() -> Option<Vec<String>> {
+    mcp_canon_servers().map(|v| {
+        v.into_iter()
+            .filter(|n| !MCP_PLUGIN_PROVIDED.contains(&n.as_str()))
+            .collect()
+    })
 }
 
 /// `sharedFoldersDefault` (canonical column order) from a parsed profiles.json.
@@ -4134,7 +4136,10 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
         }
     }
     let universe = union_sorted(universe_keys);
-    let mcp_canon = mcp_deployable_canon();
+    // None (canon unreadable) → neutral MCP cells (no canon, no extras noise); the onboarding
+    // checklist carries the visible "unknown" signal for a broken .mcp.json.
+    let mcp_canon_opt = mcp_deployable_canon();
+    let mcp_canon = mcp_canon_opt.clone().unwrap_or_default();
 
     let mut rows = Vec::new();
     for p in profiles {
@@ -4162,7 +4167,11 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
             })
             .collect();
         let deployed_all = profile_mcp_servers(name).unwrap_or_default();
-        let (deployed, extras) = mcp_split(&mcp_canon, &deployed_all);
+        let (deployed, extras) = if mcp_canon_opt.is_some() {
+            mcp_split(&mcp_canon, &deployed_all)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         rows.push(MatrixRow {
             name: name.to_string(),
             color: p.get("color").and_then(|c| c.as_str()).unwrap_or("").to_string(),
@@ -9978,14 +9987,25 @@ fn onb(id: &str, state: &str, detail: String, fix: Option<&str>) -> OnbStep {
     OnbStep { id: id.into(), state: state.into(), detail, fix: fix.map(String::from) }
 }
 
+/// Does a link's read_link target match the expected dir? Windows may report a `\\?\`-prefixed
+/// target; compare after stripping it, ASCII-case-insensitively (drive letters), trailing `\`
+/// ignored. Pure, unit-tested. A false negative only re-flags the step "todo" — safe direction.
+fn link_target_matches(target: &std::path::Path, expected: &str) -> bool {
+    let t = target.to_string_lossy();
+    let t = t.strip_prefix(r"\\?\").unwrap_or(&t);
+    t.trim_end_matches('\\')
+        .eq_ignore_ascii_case(expected.trim_end_matches('\\'))
+}
+
 /// Machine scan for the onboarding checklist. Pure detection — no writes, no elevation, no spawns.
 fn onboarding_scan() -> Vec<OnbStep> {
+    let lang = cur_lang();
     let mut out: Vec<OnbStep> = Vec::new();
     // Prerequisites: PATH-resolvable CLIs (exe_on_path — no process spawns).
     for (id, name) in [("prereq_git", "git"), ("prereq_node", "node"), ("prereq_claude", "claude")] {
         out.push(match exe_on_path(name) {
             Some(p) => onb(id, "ok", p.to_string_lossy().into_owned(), None),
-            None => onb(id, "todo", format!("`{name}` not found on PATH"), None),
+            None => onb(id, "todo", trv("onb.not_on_path", lang, &[("name", &name)]), None),
         });
     }
     // Syncthing is optional; presence = its config.xml exists.
@@ -9995,7 +10015,7 @@ fn onboarding_scan() -> Vec<OnbStep> {
         .filter(|p| std::path::Path::new(p).is_file());
     out.push(match &st_cfg {
         Some(p) => onb("prereq_syncthing", "ok", p.clone(), None),
-        None => onb("prereq_syncthing", "todo", "Syncthing config.xml not found".into(), None),
+        None => onb("prereq_syncthing", "todo", tr("onb.syncthing_cfg_missing", lang).into(), None),
     });
     // Settings tree = the ClaudeProfiles source of truth (arrives via Syncthing / copy / backup).
     let tree = abs(&format!("{SETTINGS_TREE_REL}\\ClaudeProfiles"));
@@ -10003,16 +10023,29 @@ fn onboarding_scan() -> Vec<OnbStep> {
     out.push(if tree_ok {
         onb("tree", "ok", tree.clone(), None)
     } else {
-        onb("tree", "todo", format!("{tree} missing — sync the settings tree or restore a backup"), Some("backup_tab"))
+        onb("tree", "todo", trv("onb.tree_missing", lang, &[("path", &tree)]), Some("backup_tab"))
     });
-    // ASCII junction <scripts_root>\SettingsMCP → the Cyrillic tree (shell-safe path).
+    // ASCII junction <scripts_root>\SettingsMCP → the Cyrillic tree (shell-safe path). "ok" needs
+    // an actual reparse point AIMED AT the tree — a plain dir or a junction to an old tree is drift.
     let junction = format!("{}\\SettingsMCP", scripts_root());
-    out.push(if std::path::Path::new(&junction).is_dir() {
-        onb("junction", "ok", junction, None)
-    } else if tree_ok {
-        onb("junction", "todo", format!("{junction} missing"), Some("junction"))
+    let jpath = std::path::Path::new(&junction);
+    let jtarget = abs(SETTINGS_TREE_REL);
+    let jstate: Option<Result<(), String>> = if is_reparse_point(jpath) {
+        Some(match std::fs::read_link(jpath) {
+            Ok(t) if link_target_matches(&t, &jtarget) => Ok(()),
+            Ok(t) => Err(trv("onb.junction_wrong_target", lang, &[("target", &t.display())])),
+            Err(_) => Err(tr("onb.junction_unreadable", lang).into()),
+        })
+    } else if jpath.is_dir() {
+        Some(Err(tr("onb.junction_plain_dir", lang).into()))
     } else {
-        onb("junction", "blocked", String::new(), None)
+        None // absent
+    };
+    out.push(match (jstate, tree_ok) {
+        (Some(Ok(())), _) => onb("junction", "ok", junction, None),
+        (Some(Err(d)), _) => onb("junction", "todo", d, Some("junction")),
+        (None, true) => onb("junction", "todo", trv("onb.missing_path", lang, &[("path", &junction)]), Some("junction")),
+        (None, false) => onb("junction", "blocked", String::new(), None),
     });
     // Profiles: expected list from profiles.json vs `~\.claude-<name>` dirs on disk.
     let home = std::env::var("USERPROFILE").unwrap_or_default();
@@ -10033,24 +10066,30 @@ fn onboarding_scan() -> Vec<OnbStep> {
     out.push(if std::path::Path::new(&creds).is_file() {
         onb("creds", "ok", creds, None)
     } else {
-        onb("creds", "todo", format!("{creds} missing — restore a backup or log in once"), Some("backup_tab"))
+        onb("creds", "todo", trv("onb.creds_missing", lang, &[("path", &creds)]), Some("backup_tab"))
     });
     // MCP canon deployed: every profile carries every canon server (matrix V2 reconcile reuse).
+    // Unreadable canon → "unknown" WITHOUT a deploy fix (deploying against a broken .mcp.json is
+    // not the cure) — never "ok" (the old fail-open painted a broken canon green).
     out.push(if !tree_ok {
         onb("mcp", "blocked", String::new(), None)
     } else {
-        let canon = mcp_deployable_canon();
-        let missing = names
-            .iter()
-            .filter(|n| {
-                let deployed = profile_mcp_servers(n).unwrap_or_default();
-                mcp_split(&canon, &deployed).0.len() < canon.len()
-            })
-            .count();
-        if canon.is_empty() || missing == 0 {
-            onb("mcp", "ok", format!("{} canon servers in all profiles", canon.len()), None)
-        } else {
-            onb("mcp", "todo", format!("{missing} profile(s) missing canon servers"), Some("mcp_deploy"))
+        match mcp_deployable_canon() {
+            None => onb("mcp", "unknown", tr("onb.mcp_canon_unreadable", lang).into(), None),
+            Some(canon) => {
+                let missing = names
+                    .iter()
+                    .filter(|n| {
+                        let deployed = profile_mcp_servers(n).unwrap_or_default();
+                        mcp_split(&canon, &deployed).0.len() < canon.len()
+                    })
+                    .count();
+                if missing == 0 {
+                    onb("mcp", "ok", trv("onb.mcp_ok", lang, &[("n", &canon.len())]), None)
+                } else {
+                    onb("mcp", "todo", trv("onb.mcp_missing", lang, &[("n", &missing)]), Some("mcp_deploy"))
+                }
+            }
         }
     });
     // Managed settings: source↔deployed comparison (stack-drift reuse).
@@ -10109,8 +10148,22 @@ async fn create_settings_junction() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
         let target = abs(SETTINGS_TREE_REL);
         let link = format!("{}\\SettingsMCP", scripts_root());
-        if std::path::Path::new(&link).is_dir() {
-            return Ok(()); // idempotent
+        let lpath = std::path::Path::new(&link);
+        if lpath.exists() || is_reparse_point(lpath) {
+            // Idempotent only when it's already a junction AIMED AT the tree; a plain dir or a
+            // junction to an old tree is a conflict the user must resolve (we never delete here).
+            if is_reparse_point(lpath)
+                && std::fs::read_link(lpath)
+                    .map(|t| link_target_matches(&t, &target))
+                    .unwrap_or(false)
+            {
+                return Ok(());
+            }
+            return Err(trv(
+                "err.junction_conflict",
+                cur_lang(),
+                &[("link", &link), ("target", &target)],
+            ));
         }
         if !std::path::Path::new(&target).is_dir() {
             return Err(format!("target missing: {target}"));
@@ -13314,6 +13367,20 @@ mod tests {
             assert_eq!(ids.iter().filter(|i| **i == want).count(), 1, "{want}");
         }
         assert!(steps.iter().all(|s| ["ok", "todo", "blocked", "unknown"].contains(&s.state.as_str())));
+    }
+
+    #[test]
+    fn link_target_match_rules() {
+        use std::path::Path;
+        let exp = r"E:\Scripts\!Настройки и MCP";
+        // Exact, \\?\-prefixed, trailing-backslash and ASCII-case variants all match.
+        assert!(link_target_matches(Path::new(r"E:\Scripts\!Настройки и MCP"), exp));
+        assert!(link_target_matches(Path::new(r"\\?\E:\Scripts\!Настройки и MCP"), exp));
+        assert!(link_target_matches(Path::new(r"E:\Scripts\!Настройки и MCP\"), exp));
+        assert!(link_target_matches(Path::new(r"e:\scripts\!Настройки и MCP"), exp));
+        // A different tree (old location, sibling dir) must NOT match.
+        assert!(!link_target_matches(Path::new(r"E:\Old\!Настройки и MCP"), exp));
+        assert!(!link_target_matches(Path::new(r"E:\Scripts\SettingsMCP"), exp));
     }
 
     /// Manual live smoke over the REAL plugin stores (read-only). Not part of the gates:
