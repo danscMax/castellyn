@@ -3787,6 +3787,20 @@ fn manage_provider_native(
     )
 }
 
+/// A settings.json read for a surgical edit: missing or truly empty file → `{}` (fresh start), but
+/// an unreadable (e.g. non-UTF-8) or unparsable file is an ERROR — treating it as empty would
+/// clobber the profile's real settings on the follow-up atomic write (secret files get no .bak).
+fn read_settings_for_edit(path: &str) -> Result<serde_json::Value, String> {
+    match std::fs::read_to_string(path) {
+        Ok(ref c) if !c.trim().is_empty() => {
+            parse_json_bom(c).map_err(|e| format!("parse settings: {e}"))
+        }
+        Ok(_) => Ok(serde_json::json!({})),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
+        Err(e) => Err(format!("read settings: {e}")),
+    }
+}
+
 /// The settings.json merge of `manage_provider_native`, taking an explicit path (testable; no
 /// USERPROFILE/profile-list coupling). See `manage_provider_native` for the parameter semantics.
 #[allow(clippy::too_many_arguments)]
@@ -3803,15 +3817,12 @@ fn apply_provider_env(
     err: &dyn Fn(&str),
 ) -> i32 {
     use serde_json::{json, Value};
-    let mut settings: Value = match std::fs::read_to_string(settings_path) {
-        Ok(ref c) if !c.trim().is_empty() => match parse_json_bom(c) {
-            Ok(v) => v,
-            Err(e) => {
-                err(&trv("log.read_settings", cur_lang(), &[("e", &e)]));
-                return 1;
-            }
-        },
-        _ => json!({}),
+    let mut settings: Value = match read_settings_for_edit(settings_path) {
+        Ok(v) => v,
+        Err(e) => {
+            err(&trv("log.read_settings", cur_lang(), &[("e", &e)]));
+            return 1;
+        }
     };
     if !settings.is_object() {
         settings = json!({});
@@ -4172,12 +4183,7 @@ fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
 /// `apply_provider_env`).
 fn apply_proxy_env(settings_path: &str, url: &str) -> Result<(), String> {
     use serde_json::{json, Value};
-    let mut settings: Value = match std::fs::read_to_string(settings_path) {
-        Ok(ref c) if !c.trim().is_empty() => {
-            parse_json_bom(c).map_err(|e| format!("parse settings: {e}"))?
-        }
-        _ => json!({}),
-    };
+    let mut settings: Value = read_settings_for_edit(settings_path)?;
     if !settings.is_object() {
         settings = json!({});
     }
@@ -4380,12 +4386,7 @@ fn set_profile_plugins(name: String, enable: Vec<String>, disable: Vec<String>) 
     }
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
     let settings_path = format!("{home}\\.claude-{name}\\settings.json");
-    let mut settings: serde_json::Value = match std::fs::read_to_string(&settings_path) {
-        Ok(ref c) if !c.trim().is_empty() => {
-            parse_json_bom(c).map_err(|e| format!("parse settings: {e}"))?
-        }
-        _ => serde_json::json!({}),
-    };
+    let mut settings: serde_json::Value = read_settings_for_edit(&settings_path)?;
     upsert_enabled_plugins(&mut settings, &enable, &disable);
     let serialized =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {e}"))?;
@@ -9886,6 +9887,10 @@ fn install_path_tuple(install_path: &str) -> Option<(String, String, String)> {
 type GcActiveSets = (
     std::collections::HashSet<(String, String)>,
     std::collections::HashSet<(String, String, String)>,
+    // Dirnames of stores whose installed_plugins.json was read+parsed OK. Stale detection is
+    // limited to these: an unreadable manifest means this store's active versions were never
+    // blessed, and a blessing from ANOTHER store would then flag them as stale (fail-closed).
+    std::collections::HashSet<String>,
 );
 
 /// Global active-version sets (lowercased) over every store's installed_plugins.json:
@@ -9894,13 +9899,15 @@ type GcActiveSets = (
 fn gc_active_sets(stores: &[(String, std::path::PathBuf)]) -> GcActiveSets {
     let mut pairs = std::collections::HashSet::new();
     let mut triples = std::collections::HashSet::new();
-    for (_, store) in stores {
+    let mut manifest_ok = std::collections::HashSet::new();
+    for (dirname, store) in stores {
         let Ok(txt) = std::fs::read_to_string(store.join("installed_plugins.json")) else {
             continue;
         };
         let Ok(v) = parse_json_bom(&txt) else {
             continue;
         };
+        manifest_ok.insert(dirname.clone());
         let Some(plugins) = v.get("plugins").and_then(|p| p.as_object()) else {
             continue;
         };
@@ -9921,7 +9928,7 @@ fn gc_active_sets(stores: &[(String, std::path::PathBuf)]) -> GcActiveSets {
             }
         }
     }
-    (pairs, triples)
+    (pairs, triples, manifest_ok)
 }
 
 /// A version dir is stale iff its (org, plugin) has SOME active version but THIS version isn't it.
@@ -9992,13 +9999,18 @@ fn gc_scan_wrong_os(cache: &std::path::Path) -> (u64, u64) {
 /// Scan all physical stores for garbage. Never errors: a per-store IO failure yields fewer items.
 fn gc_scan(home: &str) -> Vec<GcItem> {
     let stores = gc_stores(home);
-    let (pairs, triples) = gc_active_sets(&stores);
+    let (pairs, triples, manifest_ok) = gc_active_sets(&stores);
     let mut items = Vec::new();
     for (dirname, store) in &stores {
         let cache = store.join("cache");
 
-        // 1. stale versions: cache\<org>\<plugin>\<ver> (exactly 3 levels).
+        // 1. stale versions: cache\<org>\<plugin>\<ver> (exactly 3 levels). Only in stores whose
+        // own manifest was readable — otherwise this store's active versions were never blessed
+        // and another store's blessing of the same pair would flag them (fail-closed).
         for org_e in gc_read_dir(&cache) {
+            if !manifest_ok.contains(dirname) {
+                break;
+            }
             let org_p = org_e.path();
             if !org_p.is_dir() || is_reparse_point(&org_p) {
                 continue;
@@ -10044,11 +10056,12 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
             }
         }
 
-        // 3. .bak files/dirs at store and cache top-levels (case-insensitive).
+        // 3. .bak files/dirs at store and cache top-levels (case-insensitive). Suffix match only:
+        // a bare `contains(".bak")` would also flag `.backup`, `x.bak2`, `x.bak.zip` for deletion.
         for base in [store.as_path(), cache.as_path()] {
             for e in gc_read_dir(base) {
                 let name = e.file_name().to_string_lossy().to_string();
-                if name.to_ascii_lowercase().contains(".bak") {
+                if name.to_ascii_lowercase().ends_with(".bak") {
                     let p = e.path();
                     let size = if p.is_dir() {
                         gc_dir_size(&p)
@@ -12968,6 +12981,44 @@ mod tests {
             RunSlot::reserve(&state).is_ok(),
             "the slot frees after a panic, not wedged busy"
         );
+    }
+
+    #[test]
+    fn read_settings_for_edit_never_clobbers_unreadable() {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        // Missing → fresh {} (a new profile settings.json is legitimate).
+        let missing = dir.join(format!("castellyn_sfe_none_{pid}.json"));
+        assert_eq!(
+            read_settings_for_edit(&missing.display().to_string()).unwrap(),
+            serde_json::json!({})
+        );
+        // Empty/whitespace → fresh {}.
+        let empty = dir.join(format!("castellyn_sfe_empty_{pid}.json"));
+        std::fs::write(&empty, "  \n").unwrap();
+        assert_eq!(
+            read_settings_for_edit(&empty.display().to_string()).unwrap(),
+            serde_json::json!({})
+        );
+        let _ = std::fs::remove_file(&empty);
+        // Valid (with BOM) → parsed as-is.
+        let ok = dir.join(format!("castellyn_sfe_ok_{pid}.json"));
+        std::fs::write(&ok, "\u{feff}{\"env\":{\"K\":\"v\"}}").unwrap();
+        assert_eq!(
+            read_settings_for_edit(&ok.display().to_string()).unwrap()["env"]["K"],
+            "v"
+        );
+        let _ = std::fs::remove_file(&ok);
+        // Corrupt JSON → Err (NOT {}: an edit would atomically clobber the real file).
+        let bad = dir.join(format!("castellyn_sfe_bad_{pid}.json"));
+        std::fs::write(&bad, "{ not json").unwrap();
+        assert!(read_settings_for_edit(&bad.display().to_string()).is_err());
+        let _ = std::fs::remove_file(&bad);
+        // Non-UTF-8 (e.g. a PowerShell UTF-16 rewrite) → Err, same reason.
+        let utf16 = dir.join(format!("castellyn_sfe_utf16_{pid}.json"));
+        std::fs::write(&utf16, [0xFF, 0xFE, 0x7B, 0x00, 0x7D, 0x00]).unwrap(); // UTF-16LE "{}"
+        assert!(read_settings_for_edit(&utf16.display().to_string()).is_err());
+        let _ = std::fs::remove_file(&utf16);
     }
 
     #[test]

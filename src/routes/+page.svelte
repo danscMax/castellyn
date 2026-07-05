@@ -1006,7 +1006,10 @@
       gcItems = await readGcScan();
     } catch (e) {
       pushToast({ kind: 'error', title: t('page.toast_generic_error'), detail: String(e) });
-      gcItems = [];
+      // Keep null (not []): [] renders as "no garbage", masking the failure. Re-arm the once-gate
+      // so the next Home visit retries the scan.
+      gcItems = null;
+      gcScanned = false;
     }
   }
   function onGcDelete(ids: string[], labels: string[]) {

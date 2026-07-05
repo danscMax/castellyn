@@ -45,6 +45,7 @@ export default {
   sendAllConfirmMsg: 'This runs the command (with Enter) in all {count} live sessions at once, including any SSH/remote panes.',
   sendAllConfirmOk: 'Send to all',
   sshUnsafeHost: 'Unsafe SSH host blocked: {host}',
+  hostGone: 'This launch\'s SSH host was deleted — pick a server again in the launch form',
   limitNote: 'Reached the {n}-pane limit — close some before opening more.',
   globalLimitNote: 'Reached the global limit of {n} live sessions across all windows — close some before opening more.',
   globalNearNote: '{used} of {max} live sessions used across all windows.',

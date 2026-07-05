@@ -293,14 +293,16 @@
   async function confirmApply() {
     previewOpen = false;
     applying = true;
+    let ok = true;
     try {
       await onApplyMatrix(buildChanges());
     } catch {
-      // +page surfaces the error toast; keep dirty state so the user can retry.
+      ok = false; // +page surfaces the error toast
     } finally {
-      // Re-read to verify actual state; applied rows auto-clear (draft now equals baseline),
-      // failed/unapplied rows stay dirty.
-      await load();
+      // Re-read to verify actual state. Success → reseed (everything applied, draft = baseline).
+      // Failure → keep the draft overlay (load(false)): rows already applied auto-clear because
+      // the refreshed baseline now matches them, failed/unapplied rows stay dirty for a retry.
+      await load(ok);
       applying = false;
     }
   }

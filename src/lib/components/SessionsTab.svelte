@@ -146,8 +146,10 @@
       lastFolders = JSON.parse(localStorage.getItem(FKEY) ?? '{}');
       workspaces = JSON.parse(localStorage.getItem(WKEY) ?? '{}');
       defaultArgs = localStorage.getItem(DAKEY) ?? '';
-      favorites = JSON.parse(localStorage.getItem(VKEY) ?? '[]');
-      recents = JSON.parse(localStorage.getItem(RECKEY) ?? '[]');
+      const favs = JSON.parse(localStorage.getItem(VKEY) ?? '[]');
+      if (Array.isArray(favs)) favorites = favs;
+      const recs = JSON.parse(localStorage.getItem(RECKEY) ?? '[]');
+      if (Array.isArray(recs)) recents = recs;
       projectsRoot = localStorage.getItem(ROOT) ?? '';
       remoteRecent = JSON.parse(localStorage.getItem(RRKEY) ?? '[]');
       const c = Number(localStorage.getItem(CKEY));
@@ -702,8 +704,12 @@
   }
   function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string; space?: string }) {
     // Don't block re-attaching an EXISTING session (e.g. a pane returned from a monitor) on the cap —
-    // it's not a new spawn. Only new spawns count against MAX_PANES.
-    if (atLimit && !v.attachId) return null;
+    // it's not a new spawn. Only new spawns count against MAX_PANES. Toast, not just null: several
+    // callers (space "＋", Ctrl+Shift+D clone) have no disabled affordance of their own.
+    if (atLimit && !v.attachId) {
+      pushToast({ kind: 'error', title: t('sessions.limitNote', { n: MAX_PANES }) });
+      return null;
+    }
     const key = `${v.tool}:${v.profile || 'sh'}#${seq++}`;
     panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space: v.space ?? activeSpace }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
@@ -1145,7 +1151,12 @@
     const prof = env === 'claude' ? profile : '';
     if (!locId) return { tool: env as SessionTool, profile: prof, cwd: folder.trim(), args: a };
     const h = sshHostList.find((x) => x.id === locId);
-    if (!h) return null;
+    if (!h) {
+      // The recipe (favorite/recent) references a since-deleted SSH host — say so instead of a
+      // silent dead click (the unsafe-host branch below already toasts; this one must too).
+      pushToast({ kind: 'error', title: t('sessions.hostGone') });
+      return null;
+    }
     let target: string;
     try {
       target = sshTarget(h); // throws on an arg-injection host/user (bad charset / whitespace / '-')
@@ -1228,7 +1239,9 @@
     [r.env, r.profile, r.locId, r.folder.trim(), r.remoteDir.trim(), r.args.trim()].join('\u0000');
   function recordRecent(env: Env, profile: string, locId: string, folder: string, remoteDir: string, args: string) {
     const rec: Recent = {
-      env, profile, locId, folder, remoteDir,
+      // Normalize like paneFrom does: profile only matters for claude, args never for shell —
+      // otherwise a stale lProfile forks visually identical rows with different recipe keys.
+      env, profile: env === 'claude' ? profile : '', locId, folder, remoteDir,
       args: env === 'shell' ? '' : args,
       label: favLabel(env, profile, locId, folder),
       when: Date.now()

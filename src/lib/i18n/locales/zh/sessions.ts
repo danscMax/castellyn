@@ -45,6 +45,7 @@ export default {
   sendAllConfirmMsg: '该命令（带回车）将立即在全部 {count} 个活动会话中执行，包括任何 SSH/远程面板。',
   sendAllConfirmOk: '发送到全部',
   sshUnsafeHost: '已阻止不安全的 SSH 主机：{host}',
+  hostGone: '该启动的 SSH 主机已被删除 — 请在启动表单中重新选择服务器',
   limitNote: '已达到 {n} 个面板上限 — 请先关闭一些再新建。',
   globalLimitNote: '已达到所有窗口共 {n} 个活动会话的全局上限 — 请先关闭一些再新建。',
   globalNearNote: '所有窗口已使用 {used}/{max} 个活动会话。',
