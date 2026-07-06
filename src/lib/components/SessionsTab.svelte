@@ -22,6 +22,7 @@
     parseSshTarget,
     pickFolder,
     readCodexProfiles,
+    readOpencode,
     globalSessionCount,
     agentStatusHookStatus,
     agentStatusHookSet,
@@ -170,9 +171,14 @@
     } catch {
       /* first run / private mode */
     }
-    // Codex config.toml profiles → `--profile` chips; best-effort, empty when none defined.
+    // Codex config.toml profiles → first-class `--profile` picker; best-effort, empty when none defined.
     readCodexProfiles()
       .then((v) => (codexProfiles = Array.isArray(v) ? v : []))
+      .catch(() => {});
+    // opencode's active model → placeholder for its launcher model picker (empty field = use default).
+    // No model catalog is exposed (providers carry no model list), so the field is free-form.
+    readOpencode()
+      .then((s) => (opencodeModel = s?.model ?? ''))
       .catch(() => {});
     // Re-attach sessions that survived a webview reload (#5): the backend keeps them running, so
     // mirror the still-alive ones back here as owner instead of orphaning them against SESSION_LIMIT.
@@ -1203,14 +1209,32 @@
     // with a Claude flag it rejects (error: unexpected argument '--dangerously-skip-permissions').
     if (!argsTouched) lArgs = lEnv === 'claude' ? defaultArgs : '';
   });
-  // Per-harness launch chips (claude seeds from ⚙ default-args instead — no chips there). Codex
-  // additionally offers its config.toml profiles as `--profile <name>`.
+  // Per-harness launch chips (claude seeds from ⚙ default-args instead — no chips there). The codex
+  // `--profile` selection is now a first-class picker (below), not a chip.
   let codexProfiles = $state<string[]>([]);
-  const launchChips = $derived(
-    lEnv === 'claude'
-      ? []
-      : [...(ARG_PRESETS[lEnv] ?? []), ...(lEnv === 'codex' ? codexProfiles.map((p) => `--profile ${p}`) : [])]
-  );
+  const launchChips = $derived(lEnv === 'claude' ? [] : (ARG_PRESETS[lEnv] ?? []));
+  // First-class identity selectors for the non-claude agents (parity with claude's profile dropdown):
+  // codex → a `config.toml` profile (--profile), opencode → a provider/model (--model). Empty = the
+  // tool's own default. The selection is composed into the launch args at spawn time (composeArgs),
+  // so the whole recents/favorites machinery round-trips it via `args` with no new recipe field.
+  let lCodexProfile = $state('');
+  let lOpencodeModel = $state('');
+  let opencodeModel = $state(''); // opencode's active model, shown as the picker placeholder
+  function identityFlag(env: Env): string {
+    if (env === 'codex' && lCodexProfile.trim()) return `--profile ${lCodexProfile.trim()}`;
+    if (env === 'opencode' && lOpencodeModel.trim()) return `--model ${lOpencodeModel.trim()}`;
+    return '';
+  }
+  // Compose the identity flag with the free-text args, skipping it if the user already typed the same
+  // flag by hand (no double --profile/--model).
+  function composeArgs(env: Env, args: string): string {
+    const a = args.trim();
+    const flag = identityFlag(env);
+    if (!flag) return a;
+    const dup = env === 'codex' ? /(^|\s)(--profile|-p)(\s|=)/.test(a) : /(^|\s)(--model|-m)(\s|=)/.test(a);
+    if (dup) return a;
+    return a ? `${flag} ${a}` : flag;
+  }
   // Switching harness re-seeds the args field (unless the user already edited it) so a leftover Claude
   // flag doesn't leak into codex/opencode — and can't get pinned into a favorite mid-switch.
   function selectEnv(id: Env) {
@@ -1285,10 +1309,13 @@
     }
   }
   function launchPhrase() {
-    const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs);
+    // Bake the identity selection (codex --profile / opencode --model) into the args once, so the
+    // pane, the space-recipe and the recorded "recent" all carry it.
+    const finalArgs = composeArgs(lEnv, lArgs);
+    const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs);
     if (v) {
       if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
-      setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, lArgs); // explicit choice
+      setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs); // explicit choice
       addPane(v); // addPane records the recipe into "recents"
       newOpen = false; // close the launcher popover once a session starts
     }
@@ -1297,21 +1324,26 @@
   type Fav = { id: string; env: Env; profile: string; locId: string; folder: string; remoteDir: string; args: string; label: string };
   const VKEY = 'cmh-sessions-favorites';
   let favorites = $state<Fav[]>([]);
-  function favLabel(env: Env, profile: string, locId: string, folder: string): string {
+  // `args` lets the label surface the chosen codex profile / opencode model (parsed from the composed
+  // flag) so a codex/opencode favorite isn't just an anonymous "codex · folder".
+  function favLabel(env: Env, profile: string, locId: string, folder: string, args = ''): string {
     const h = locId ? sshHostList.find((x) => x.id === locId) : null;
     const where = h
       ? `🖥 ${h.name}`
       : folder
         ? folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder
         : t('sessions.cwdShort');
-    return env === 'claude' ? `${env}·${profile} · ${where}` : `${env} · ${where}`;
+    if (env === 'claude') return `${env}·${profile} · ${where}`;
+    const id = args.match(/--(?:profile|model)\s+(\S+)/)?.[1] ?? '';
+    return id ? `${env}·${id} · ${where}` : `${env} · ${where}`;
   }
   function pinCurrent() {
     const id = `f${Date.now()}${Math.round(Math.random() * 1e4)}`;
-    const label = favLabel(lEnv, lProfile, lLoc, lFolder);
+    const finalArgs = lEnv === 'shell' ? '' : composeArgs(lEnv, lArgs);
+    const label = favLabel(lEnv, lProfile, lLoc, lFolder, finalArgs);
     favorites = [
       ...favorites,
-      { id, env: lEnv, profile: lProfile, locId: lLoc, folder: lFolder, remoteDir: lRemoteDir, args: lEnv === 'shell' ? '' : lArgs, label }
+      { id, env: lEnv, profile: lProfile, locId: lLoc, folder: lFolder, remoteDir: lRemoteDir, args: finalArgs, label }
     ];
     pushToast({ kind: 'success', title: t('sessions.pinned', { label }) }); // feedback — pinning was silent (#17)
   }
@@ -1351,7 +1383,7 @@
       // otherwise a stale lProfile forks visually identical rows with different recipe keys.
       env, profile: env === 'claude' ? profile : '', locId, folder, remoteDir,
       args: env === 'shell' ? '' : args,
-      label: favLabel(env, profile, locId, folder),
+      label: favLabel(env, profile, locId, folder, env === 'shell' ? '' : args),
       when: Date.now()
     };
   }
@@ -1801,6 +1833,15 @@
       {#if lEnv === 'claude'}
         <span class="pw">{t('sessions.phProfile')}</span>
         <div class="psel"><Select bind:value={lProfile} options={profiles} placeholder={t('sessions.dlgProfile')} /></div>
+      {:else if lEnv === 'codex' && codexProfiles.length}
+        <!-- Codex config.toml profiles as a first-class picker (parity with claude's profile dropdown). -->
+        <span class="pw">{t('sessions.phProfile')}</span>
+        <div class="psel"><Select bind:value={lCodexProfile} options={codexProfiles} placeholder={t('sessions.phCodexDefault')} /></div>
+      {:else if lEnv === 'opencode'}
+        <!-- opencode model as provider/model (no catalog exposed → free-form, seeded placeholder = active). -->
+        <span class="pw">{t('sessions.phModel')}</span>
+        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel}
+          placeholder={opencodeModel || t('sessions.phModelPlaceholder')} spellcheck="false" autocomplete="off" />
       {/if}
       <span class="pw">{t('sessions.phOn')}</span>
       <div class="psel"><Select value={lLoc} onChange={onLocChange} options={locOptions} placeholder={t('sessions.locThisPc')} /></div>
@@ -2328,6 +2369,10 @@
   .phrase .pargs {
     min-width: 160px;
     flex: 1;
+  }
+  .phrase .pmodel {
+    min-width: 150px;
+    max-width: 220px;
   }
   .phrase .ssh-hint {
     flex-basis: 100%;
