@@ -216,6 +216,7 @@
             ondrop={onDrop}
             onkeydown={(e) => moveItem(e, it.id)}
             onclick={() => it.enabled && onSelect(it.id)}
+            onpointerup={(e) => e.currentTarget.blur()}
           >
             <span class="nav-icon">{@html it.icon}</span>
             <span class="nav-label">{t(it.labelKey)}</span>
