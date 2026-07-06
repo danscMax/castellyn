@@ -25,6 +25,7 @@
   import { copyText } from '$lib/clipboard';
   import { pushToast } from '$lib/toast.svelte';
   import Toggle from './Toggle.svelte';
+  import { uiPrefs } from '$lib/uiPrefs.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import EmptyState from './EmptyState.svelte';
   import { Search } from '@lucide/svelte';
@@ -69,7 +70,7 @@
       [t('settings.view'), t('settings.density'), t('settings.fullWidth'), t('settings.termScrollback')],
       [t('settings.language'), t('settings.languageDesc')],
       [t('settings.scriptsRoot'), t('settings.scriptsRootDesc')],
-      [t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.toggleHotkey'), t('settings.shortcutsSection')],
+      [t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection')],
       [t('settings.timeouts'), t('settings.timeoutsDesc')],
       [t('settings.backupSection'), t('settings.exportConfig'), t('settings.importConfig')],
       [t('settings.about'), t('settings.version'), t('settings.scripts'), t('settings.config'), t('settings.checkUpdates'), t('settings.openScriptsFolder'), t('settings.openConfigFile'), t('settings.openStackFile'), t('settings.openBackupFolder')]
@@ -84,6 +85,7 @@
   let autostart = $state(false);
   let startHidden = $state(false);
   let closeToTray = $state(true);
+  let showSessionStatusBar = $state(true);
   // #123: OS-global show/hide accelerator (empty = off).
   let toggleHotkey = $state('');
   // Phase 4.1: full shortcut mapping
@@ -147,6 +149,8 @@
     ghTimeout = c.ghTimeoutSec ?? '';
     startHidden = !!c.startHidden;
     closeToTray = c.closeToTray ?? true;
+    showSessionStatusBar = c.showSessionStatusBar ?? true;
+    uiPrefs.showSessionStatusBar = showSessionStatusBar;
     toggleHotkey = c.toggleHotkey ?? '';
   }
 
@@ -276,6 +280,16 @@
     }
     flash(t('settings.saved'));
   }
+  async function toggleStatusBar(v: boolean) {
+    showSessionStatusBar = v;
+    uiPrefs.showSessionStatusBar = v; // live-update the title-bar strip; persist in parallel
+    if (!(await persist({ showSessionStatusBar: v }))) {
+      showSessionStatusBar = !v;
+      uiPrefs.showSessionStatusBar = !v;
+      return;
+    }
+    flash(t('settings.saved'));
+  }
   // Phase 4.1: apply the full shortcut mapping (replaces the single toggleHotkey path).
   async function applyShortcuts() {
     errMsg = '';
@@ -397,7 +411,7 @@
     {/if}
 
     <!-- Launch -->
-    {#if show(t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.toggleHotkey'), t('settings.shortcutsSection'))}
+    {#if show(t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection'))}
     <div class="sw-card flex flex-col gap-sw-3" data-highlight-id="settings:launch">
       <div class="font-medium">{t('settings.launch')}</div>
       <label class="flex items-center justify-between gap-sw-4">
@@ -423,6 +437,12 @@
           <span class="block text-sw-xs text-sw-text-muted">{t('settings.confirmDestructiveDesc')}</span>
         </span>
         <Toggle checked={confirmDestructive} onCheckedChange={(v) => onSetConfirmDestructive?.(v)} title={t('settings.confirmDestructive')} />
+      </label>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('settings.statusBar')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('settings.statusBarDesc')}</span>
+        </span>
+        <Toggle checked={showSessionStatusBar} onCheckedChange={toggleStatusBar} title={t('settings.statusBarTip')} />
       </label>
       <div class="flex flex-col gap-2">
         <span class="text-sw-sm">{t('settings.shortcutsSection')}

@@ -5,8 +5,25 @@
   import { t } from '$lib/i18n';
   import { runningStore, opName } from '$lib/running.svelte';
   import { navHistory, navGo } from '$lib/navHistory.svelte';
+  import { agentSummary } from '$lib/agentStatus.svelte';
+  import { peakUtilization } from '$lib/limits.svelte';
+  import { uiPrefs } from '$lib/uiPrefs.svelte';
+  import { readConfig } from '$lib/ipc';
 
   const appWin = getCurrentWindow();
+
+  // Wave C-5: native session-status strip. Fed by data Castellyn already tracks (agent_status counts
+  // + the limits poll) — the in-terminal statusline stays owned by Claude Code; this only surfaces a
+  // parallel, always-visible glance. Initialized from config here (the title bar is always mounted);
+  // the Settings toggle updates uiPrefs live. Auto-hides when there's nothing to show.
+  const peak = $derived(peakUtilization());
+  const sessLive = $derived(agentSummary.working + agentSummary.blocked);
+  const showStrip = $derived(
+    uiPrefs.showSessionStatusBar && (sessLive > 0 || agentSummary.done > 0 || peak != null)
+  );
+  const peakClass = $derived(
+    !peak ? '' : peak.pct >= 99 ? 'strip-err' : peak.pct >= 85 ? 'strip-warn' : ''
+  );
 
   // Track maximized state so the caption button shows the correct glyph (single square =
   // maximize, overlapping squares = restore) — Windows convention.
@@ -17,6 +34,8 @@
   let winFocused = $state(true);
   onMount(() => {
     syncMax();
+    // Seed the shared pref from config once; the Settings toggle keeps it live thereafter.
+    readConfig().then((c) => (uiPrefs.showSessionStatusBar = c.showSessionStatusBar ?? true)).catch(() => {});
     let unlisten: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
     appWin.onResized(syncMax).then((u) => (unlisten = u)).catch(() => {});
@@ -71,6 +90,24 @@
       </span>
     {/if}
   </div>
+
+  {#if showStrip}
+    <!-- Session-status strip: live counts + the profile closest to an Anthropic limit. Drag region
+         like the rest of the bar (not interactive). -->
+    <div class="sess-strip {peakClass}" data-tauri-drag-region title={t('titlebar.stripHint')}>
+      {#if agentSummary.working}
+        <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-work" data-tauri-drag-region></span>{agentSummary.working}</span>
+      {/if}
+      {#if agentSummary.blocked}
+        <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-block" data-tauri-drag-region></span>{agentSummary.blocked}</span>
+      {/if}
+      {#if peak}
+        <span class="ss-item ss-peak" data-tauri-drag-region title={t('titlebar.stripPeak', { profile: peak.profile })}>
+          {peak.window} {Math.round(peak.pct)}%
+        </span>
+      {/if}
+    </div>
+  {/if}
 
   {#if runningStore.op}
     <div class="tb-progress"></div>
@@ -196,6 +233,40 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* Wave C-5: session-status strip — compact, sits between the brand and the caption buttons. */
+  .sess-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-right: 10px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    background: var(--sw-bg-secondary);
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .sess-strip.strip-warn { color: var(--sw-warn); }
+  .sess-strip.strip-err { color: var(--sw-err, #ef4444); }
+  .ss-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ss-peak {
+    font-weight: 600;
+  }
+  .ss-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .ss-work { background: var(--sw-ok, #22c55e); }
+  .ss-block { background: var(--sw-warn, #f59e0b); }
+  .titlebar.inactive .sess-strip { opacity: 0.6; }
   .controls {
     display: flex;
     height: 100%;

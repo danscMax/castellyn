@@ -5,5 +5,7 @@ export default {
   minimize: '最小化',
   maximize: '最大化',
   restore: '还原',
-  close: '关闭（最小化到托盘）'
+  close: '关闭（最小化到托盘）',
+  stripHint: '活动会话及最接近 Anthropic 用量上限的配置',
+  stripPeak: '最高用量：{profile}'
 };

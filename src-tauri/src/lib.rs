@@ -190,6 +190,15 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     limit_mode: Option<String>,
+    // Wave C-5: show the native session-status strip (live session counts + peak Anthropic
+    // utilization) in the window title bar. None = default (true). Purely a frontend read — the
+    // backend only persists it (write_config preserves it like the other Sessions toggles).
+    #[serde(
+        rename = "showSessionStatusBar",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    show_session_status_bar: Option<bool>,
     // Gap-2: MCP server names Castellyn has deployed to each harness — the reconcile ledger (see
     // ManagedMcp). Written by the OpenCode/Codex MCP fan-out; not user-facing.
     #[serde(

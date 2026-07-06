@@ -118,6 +118,7 @@
     type PluginContents,
     type PluginSyncStatus,
     type LimitsAlertEvent,
+    type LimitsStatusEvent,
     readStackDrift,
     type StackDriftItem,
     readGcScan,
@@ -142,6 +143,7 @@
     stackDriftAttention
   } from '$lib/attention';
   import { agentSummary } from '$lib/agentStatus.svelte';
+  import { pushLimits } from '$lib/limits.svelte';
   import { getTheme, applyTheme, type Theme } from '$lib/theme';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -2169,6 +2171,11 @@
           title: t('page.limitAlert', { profile: p.profile, window: p.window, pct: Math.round(p.utilization) })
         });
       })
+    );
+    // Wave C-4/5: the backend emits per-profile usage every poll; nothing listened before. Sink it
+    // into limitsStore so the Analytics "Claude usage" panel and the title-bar strip read live data.
+    unlisten.push(
+      await listen<LimitsStatusEvent>('limits-status', (e) => pushLimits(e.payload))
     );
     unlisten.push(
       await listen<{ component: string; code: number }>('run-done', async (e) => {

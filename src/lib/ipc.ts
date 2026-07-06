@@ -1000,6 +1000,8 @@ export type HubConfig = {
   // #21e: after-limit behaviour — 'wait' (default, auto-continue on reset) | 'switchProfile'
   // (respawn under a free OAuth profile immediately).
   limitMode?: string | null;
+  // Wave C-5: show the native session-status strip in the title bar. Absent = default (on).
+  showSessionStatusBar?: boolean | null;
 };
 
 /** A single entry in the global-shortcut mapping. */

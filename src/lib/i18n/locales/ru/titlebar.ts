@@ -5,5 +5,7 @@ export default {
   minimize: 'Свернуть',
   maximize: 'Развернуть',
   restore: 'Восстановить',
-  close: 'Закрыть (свернуть в трей)'
+  close: 'Закрыть (свернуть в трей)',
+  stripHint: 'Активные сессии и профиль ближе всех к лимиту Anthropic',
+  stripPeak: 'Наибольшая загрузка: {profile}'
 };

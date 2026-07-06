@@ -6,10 +6,26 @@
   import { chartSeriesColor } from '$lib/statusColor';
   import Sparkline from './Sparkline.svelte';
   import { runHistory, clearRunHistory, type RunRecord } from '$lib/runHistory.svelte';
+  import { limitsStore } from '$lib/limits.svelte';
+  import { agentSummary } from '$lib/agentStatus.svelte';
+  import type { LimitsStatusEvent } from '$lib/ipc';
+  import { formatAbsTime } from '$lib/relativeTime';
   import { BarChart3 } from '@lucide/svelte';
   import SectionHeader from './SectionHeader.svelte';
 
   let { onOpenProviders }: { onOpenProviders?: () => void } = $props();
+
+  // Multi-source dashboard: the gateway view is the original; Claude/Maintenance/Sessions aggregate
+  // data the app already tracks (limits poll, runHistory, agent_status) — each an independent panel
+  // with its own empty state. The range presets + gateway fetch only apply to the gateway source.
+  type AnaSource = 'gateway' | 'claude' | 'maintenance' | 'sessions';
+  const sources: { key: AnaSource; label: string }[] = [
+    { key: 'gateway', label: 'analytics.srcGateway' },
+    { key: 'claude', label: 'analytics.srcClaude' },
+    { key: 'maintenance', label: 'analytics.srcMaintenance' },
+    { key: 'sessions', label: 'analytics.srcSessions' }
+  ];
+  let source = $state<AnaSource>('gateway');
 
   // Range presets (hours). Self-contained: this tab owns its fetch + range state.
   const ranges = [
@@ -274,6 +290,37 @@
     return days;
   });
 
+  // --- Claude usage panel (Wave C-4): live per-profile 5h/7d utilization from the limits poll ---
+  type ClaudeRow = LimitsStatusEvent & { peak: number };
+  const claudeRows = $derived.by<ClaudeRow[]>(() =>
+    Object.values(limitsStore.byProfile)
+      .map((e) => ({ ...e, peak: Math.max(e.h5 ?? 0, e.d7 ?? 0) }))
+      .sort((a, b) => b.peak - a.peak)
+  );
+  const claudePctClass = (p: number | null) =>
+    p == null ? '' : p >= 99 ? 'status-bad' : p >= 85 ? 'status-warn' : 'status-ok';
+
+  // --- Maintenance panel (Wave C-4): per-component run stats from the persisted runHistory ---
+  type CompStat = { component: string; runs: number; ok: number; fail: number; avgSec: number; lastTs: number };
+  const maintStats = $derived.by<CompStat[]>(() => {
+    const acc = new Map<string, { runs: number; ok: number; fail: number; sum: number; lastTs: number }>();
+    for (const r of runHistory.items) {
+      let g = acc.get(r.component);
+      if (!g) acc.set(r.component, (g = { runs: 0, ok: 0, fail: 0, sum: 0, lastTs: 0 }));
+      g.runs++;
+      g.sum += r.durationSec;
+      if (r.status === 'error') g.fail++;
+      else g.ok++;
+      if (r.timestamp > g.lastTs) g.lastTs = r.timestamp;
+    }
+    return [...acc.entries()]
+      .map(([component, g]) => ({ component, runs: g.runs, ok: g.ok, fail: g.fail, avgSec: g.runs ? g.sum / g.runs : 0, lastTs: g.lastTs }))
+      .sort((a, b) => b.runs - a.runs);
+  });
+
+  // --- Sessions panel (Wave C-4): live snapshot from agent_status (no history persisted) ---
+  const sessTotal = $derived(agentSummary.working + agentSummary.blocked + agentSummary.done);
+
   const grainLabel = $derived.by(() => {
     const step = data?.stepSec ?? 0;
     const k =
@@ -299,28 +346,42 @@
       </h1>
       <p class="text-sw-sm text-sw-text-secondary">{t('analytics.subtitle')}</p>
     </div>
-    <div class="flex shrink-0 items-center gap-sw-2">
-      <div class="flex gap-1">
-        {#each ranges as r (r.hours)}
-          <button
-            class="sw-btn sw-btn-ghost text-sw-xs {rangeHours === r.hours ? 'is-active' : ''}"
-            aria-pressed={rangeHours === r.hours}
-            disabled={loading}
-            onclick={() => (rangeHours = r.hours)}>{t(r.key)}</button>
-        {/each}
-      </div>
-      {#if available && models.length}
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={exportCsv} title={t('analytics.exportCsvTip')}>
-          {t('analytics.exportCsv')}
+    {#if source === 'gateway'}
+      <div class="flex shrink-0 items-center gap-sw-2">
+        <div class="flex gap-1">
+          {#each ranges as r (r.hours)}
+            <button
+              class="sw-btn sw-btn-ghost text-sw-xs {rangeHours === r.hours ? 'is-active' : ''}"
+              aria-pressed={rangeHours === r.hours}
+              disabled={loading}
+              onclick={() => (rangeHours = r.hours)}>{t(r.key)}</button>
+          {/each}
+        </div>
+        {#if available && models.length}
+          <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={exportCsv} title={t('analytics.exportCsvTip')}>
+            {t('analytics.exportCsv')}
+          </button>
+        {/if}
+        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={loading} onclick={() => load(rangeHours, true)}
+          title={t('analytics.refreshTip')}>
+          {loading ? t('analytics.loading') : t('analytics.refresh')}
         </button>
-      {/if}
-      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={loading} onclick={() => load(rangeHours, true)}
-        title={t('analytics.refreshTip')}>
-        {loading ? t('analytics.loading') : t('analytics.refresh')}
-      </button>
-    </div>
+      </div>
+    {/if}
   </header>
 
+  <!-- Source switch: one dashboard, four independent data sources (Wave C-4). -->
+  <div class="mb-sw-4 flex flex-wrap gap-1" role="tablist" aria-label={t('analytics.sourceLabel')}>
+    {#each sources as s (s.key)}
+      <button
+        class="sw-btn sw-btn-ghost text-sw-xs {source === s.key ? 'is-active' : ''}"
+        role="tab"
+        aria-selected={source === s.key}
+        onclick={() => (source = s.key)}>{t(s.label)}</button>
+    {/each}
+  </div>
+
+  {#if source === 'maintenance'}
   <!-- Script run metrics — Phase 3.6 histogram by day -->
   <section class="sw-card mb-sw-6">
     <div class="mb-sw-2 flex items-center justify-between gap-sw-2">
@@ -400,6 +461,105 @@
     {/if}
   </section>
 
+  <!-- Per-component roll-up from the persisted run history -->
+  <SectionHeader title={t('analytics.maintByComponent')} />
+  {#if maintStats.length}
+    <div class="overflow-x-auto rounded-sw-md border border-sw-border">
+      <table class="w-full text-sw-sm">
+        <thead>
+          <tr class="border-b border-sw-border text-sw-xs text-sw-text-muted">
+            <th class="px-sw-3 py-sw-2 text-left font-medium">{t('analytics.scriptColComponent')}</th>
+            <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.maintRuns')}</th>
+            <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.maintOkFail')}</th>
+            <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.maintAvg')}</th>
+            <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.maintLast')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each maintStats as m (m.component)}
+            <tr class="border-b border-sw-border last:border-0">
+              <td class="px-sw-3 py-sw-2 font-medium">{m.component}</td>
+              <td class="px-sw-3 py-sw-2 text-right tabular-nums">{m.runs}</td>
+              <td class="px-sw-3 py-sw-2 text-right tabular-nums">
+                <span class="status-ok">{m.ok}</span>{#if m.fail} · <span class="status-bad">{m.fail}</span>{/if}
+              </td>
+              <td class="px-sw-3 py-sw-2 text-right tabular-nums">{m.avgSec.toFixed(1)} {t('analytics.unitS')}</td>
+              <td class="px-sw-3 py-sw-2 text-right text-sw-text-secondary">{formatAbsTime(new Date(m.lastTs).toISOString())}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <div class="sw-card text-sw-sm text-sw-text-muted">{t('analytics.scriptNoData')}</div>
+  {/if}
+  {/if}
+
+  {#if source === 'claude'}
+    <SectionHeader title={t('analytics.claudeTitle')} />
+    {#if claudeRows.length}
+      <p class="mb-sw-2 text-sw-xs text-sw-text-muted">{t('analytics.claudeHint')}</p>
+      <div class="overflow-x-auto rounded-sw-md border border-sw-border">
+        <table class="w-full text-sw-sm">
+          <thead>
+            <tr class="border-b border-sw-border text-sw-xs text-sw-text-muted">
+              <th class="px-sw-3 py-sw-2 text-left font-medium">{t('analytics.claudeProfile')}</th>
+              <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.claude5h')}</th>
+              <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.claude7d')}</th>
+              <th class="px-sw-3 py-sw-2 text-right font-medium">{t('analytics.claudeReset')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each claudeRows as r, i (r.profile)}
+              <!-- First row is the highest utilization (sorted): flag it as closest to a limit. -->
+              <tr class="border-b border-sw-border last:border-0 {i === 0 && r.peak >= 85 ? 'row-active' : ''}">
+                <td class="px-sw-3 py-sw-2 font-medium">
+                  {r.profile}
+                  {#if r.expired}<span class="badge badge-warn ml-sw-2">{t('analytics.claudeExpired')}</span>
+                  {:else if i === 0 && r.peak >= 85}<span class="badge badge-err ml-sw-2">{t('analytics.claudeNearLimit')}</span>{/if}
+                </td>
+                <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.h5)}">{r.h5 == null ? '—' : pct(r.h5)}</td>
+                <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.d7)}">{r.d7 == null ? '—' : pct(r.d7)}</td>
+                <td class="px-sw-3 py-sw-2 text-right text-sw-text-secondary">{formatAbsTime(r.h5Reset)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-sw-4 text-sw-xs text-sw-text-muted">{t('analytics.claudeFootnote')}</p>
+    {:else}
+      <EmptyState icon={BarChart3} title={t('analytics.claudeEmptyTitle')} description={t('analytics.claudeEmptyHint')} />
+    {/if}
+  {/if}
+
+  {#if source === 'sessions'}
+    <SectionHeader title={t('analytics.sessTitle')} />
+    {#if sessTotal}
+      <div class="card-grid mb-sw-4">
+        <div class="sw-card">
+          <p class="text-sw-xs text-sw-text-muted">{t('analytics.sessWorking')}</p>
+          <p class="mt-1 text-2xl font-semibold status-ok">{agentSummary.working}</p>
+        </div>
+        <div class="sw-card">
+          <p class="text-sw-xs text-sw-text-muted">{t('analytics.sessBlocked')}</p>
+          <p class="mt-1 text-2xl font-semibold {agentSummary.blocked ? 'status-warn' : ''}">{agentSummary.blocked}</p>
+        </div>
+        <div class="sw-card">
+          <p class="text-sw-xs text-sw-text-muted">{t('analytics.sessDone')}</p>
+          <p class="mt-1 text-2xl font-semibold">{agentSummary.done}</p>
+        </div>
+        <div class="sw-card">
+          <p class="text-sw-xs text-sw-text-muted">{t('analytics.sessTotal')}</p>
+          <p class="mt-1 text-2xl font-semibold">{sessTotal}</p>
+        </div>
+      </div>
+      <p class="text-sw-xs text-sw-text-muted">{t('analytics.sessFootnote')}</p>
+    {:else}
+      <EmptyState icon={BarChart3} title={t('analytics.sessEmptyTitle')} description={t('analytics.sessEmptyHint')} />
+    {/if}
+  {/if}
+
+  {#if source === 'gateway'}
   {#if !available}
     {#if loading}
       <!-- First load: skeleton totals instead of a bare "loading…" line (#147). -->
@@ -564,6 +724,7 @@
     {/if}
 
     <p class="mt-sw-4 text-sw-xs text-sw-text-muted">{t('analytics.footnote')}</p>
+  {/if}
   {/if}
 </div>
 
