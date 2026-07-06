@@ -44,15 +44,20 @@ export function formatAbsTime(
   snapshotFallback?: (s: string) => string | null
 ): string {
   if (!ts) return t('common.dash');
-  const d = new Date(ts);
-  if (!Number.isNaN(d.getTime())) return d.toLocaleString(localeTag());
-  // Tolerate a bare Unix epoch: the limits API may report resets_at as a NUMBER, which the backend
-  // stringifies (e.g. "1751565600"), and a plain digit string is not a Date-parseable format. Tried
-  // only after ISO parsing fails, so real ISO/year strings ("2026") keep their existing handling.
-  if (/^\d{9,}$/.test(ts)) {
-    const n = Number(ts);
-    const de = new Date(ts.length <= 10 ? n * 1000 : n); // ≤10 digits = seconds, else milliseconds
-    if (!Number.isNaN(de.getTime())) return de.toLocaleString(localeTag());
-  }
+  const ms = parseTsMs(ts);
+  if (!Number.isNaN(ms)) return new Date(ms).toLocaleString(localeTag());
   return snapshotFallback?.(ts) ?? t('common.dash');
+}
+
+// Parse a timestamp string to epoch-ms, tolerating both a Date-parseable string (ISO/year) AND a
+// bare Unix epoch (seconds or ms) — the limits API may report resets_at as a NUMBER that the backend
+// stringifies (e.g. "1751565600"), which Date.parse rejects. Returns NaN when unparseable. Shared so
+// display (formatAbsTime) and scheduling logic (SessionsTab auto-continue #21c) agree on the format.
+export function parseTsMs(ts?: string | null): number {
+  if (!ts) return NaN;
+  const d = Date.parse(ts);
+  if (!Number.isNaN(d)) return d;
+  // Only after Date.parse fails, so an ISO string or a 4-digit year is never mis-read as an epoch.
+  if (/^\d{9,}$/.test(ts)) return Number(ts) * (ts.length <= 10 ? 1000 : 1); // ≤10 digits = seconds
+  return NaN;
 }

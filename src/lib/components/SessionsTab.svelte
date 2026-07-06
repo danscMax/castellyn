@@ -33,6 +33,7 @@
     type ProfileInfo
   } from '$lib/ipc';
   import { pickResumeCandidate } from '$lib/limitSwitch';
+  import { parseTsMs } from '$lib/relativeTime';
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
@@ -365,8 +366,10 @@
       // a near-future 5h reset, so keying on h5Reset alone would fire a "continue" into a session
       // that's still 7-day-exhausted. The binding window is whichever resets last.
       const lim = limitsByProfile[p.profile];
-      const h5 = lim?.h5Reset ? Date.parse(lim.h5Reset) : NaN;
-      const d7 = lim?.d7Reset ? Date.parse(lim.d7Reset) : NaN;
+      // parseTsMs tolerates a numeric-epoch resets_at (backend may stringify it) — a bare Date.parse
+      // would yield NaN and silently defeat the auto-continue scheduling on that input.
+      const h5 = parseTsMs(lim?.h5Reset);
+      const d7 = parseTsMs(lim?.d7Reset);
       const candidates = [h5, d7].filter(Number.isFinite) as number[];
       if (!candidates.length) continue; // no known reset yet — wait for the next poll
       const reset = Math.max(...candidates);
