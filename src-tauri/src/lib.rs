@@ -114,6 +114,15 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     scripts_root: Option<String>,
+    /// Absolute path to the settings/MCP tree (the folder holding ClaudeProfiles + ClaudeMarketplace).
+    /// None = auto-detect (see `settings_tree_root`). De-hardcodes the old literal so a rename /
+    /// de-Cyrillicization (owner flipped `!Настройки и MCP` ↔ `SettingsMCP` 2026-07-06) needs no code change.
+    #[serde(
+        rename = "settingsDir",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    settings_dir: Option<String>,
     #[serde(rename = "startHidden", default)]
     start_hidden: bool,
     // None = default (true): the ✕ button hides to tray. false = ✕ actually quits the app.
@@ -286,12 +295,65 @@ fn scripts_root() -> String {
     "E:\\Scripts".to_string()
 }
 
+/// The settings/MCP tree folder name is NOT hardcoded: it was `!Настройки и MCP` (Cyrillic) and the
+/// owner de-Cyrillicized it to `SettingsMCP` (2026-07-06), keeping the old name as a reverse junction.
+/// Detection order below (env → config → first existing dir → ASCII default) makes the app follow the
+/// rename on any machine without a code change, and is direction-agnostic (junction either way resolves).
+const SETTINGS_TREE_CANDIDATES: [&str; 2] = ["SettingsMCP", "!Настройки и MCP"];
+
+/// Pure core of `settings_tree_root` (testable): env override → explicit config value → first
+/// candidate that exists under `sr` → ASCII default (`<sr>\SettingsMCP`). Returns an ABSOLUTE path.
+fn resolve_settings_tree(
+    env: Option<String>,
+    cfg: Option<String>,
+    sr: &str,
+    exists: impl Fn(&str) -> bool,
+) -> String {
+    if let Some(v) = env.filter(|v| !v.trim().is_empty()) {
+        return v;
+    }
+    if let Some(v) = cfg.filter(|v| !v.trim().is_empty()) {
+        return v;
+    }
+    for cand in SETTINGS_TREE_CANDIDATES {
+        let p = format!("{sr}\\{cand}");
+        if exists(&p) {
+            return p;
+        }
+    }
+    format!("{sr}\\{}", SETTINGS_TREE_CANDIDATES[0])
+}
+
+/// Absolute path to the settings/MCP tree: `$CASTELLYN_SETTINGS_DIR` → config.settingsDir →
+/// detect (`<scripts_root>\SettingsMCP`, then legacy `<scripts_root>\!Настройки и MCP`) → ASCII default.
+fn settings_tree_root() -> String {
+    resolve_settings_tree(
+        std::env::var("CASTELLYN_SETTINGS_DIR").ok(),
+        read_config_file().settings_dir,
+        &scripts_root(),
+        // A candidate qualifies only if it actually HOLDS ClaudeProfiles — so an empty leftover
+        // `SettingsMCP` can't mask a real Cyrillic tree (and vice-versa). is_dir() follows junctions,
+        // so both the real folder and a reverse-junction to it resolve the same.
+        |p| std::path::Path::new(&format!("{p}\\ClaudeProfiles")).is_dir(),
+    )
+}
+
+/// Absolute path to the ClaudeProfiles config tree (the source of truth every maintenance script and
+/// config reader lives under). De-hardcoded via `settings_tree_root` — no Cyrillic literal in code.
+fn profiles_root() -> String {
+    format!("{}\\ClaudeProfiles", settings_tree_root())
+}
+
 /// Expand manifest path placeholders the same way the PowerShell executors do, so paths surfaced
-/// to the UI match what actually runs. `{{SCRIPTS_ROOT}}` → scripts_root(), `{{USERPROFILE}}` → home.
+/// to the UI match what actually runs. `{{SCRIPTS_ROOT}}` → scripts_root(), `{{USERPROFILE}}` → home,
+/// `{{SETTINGS}}` → settings_tree_root(), `{{PROFILES}}` → profiles_root() (both ABSOLUTE, so `abs`
+/// uses them as-is instead of re-prefixing scripts_root).
 fn expand_placeholders(s: &str) -> String {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     s.replace("{{SCRIPTS_ROOT}}", &scripts_root())
         .replace("{{USERPROFILE}}", &home)
+        .replace("{{PROFILES}}", &profiles_root())
+        .replace("{{SETTINGS}}", &settings_tree_root())
 }
 
 /// Read the canonical manifest from disk; fall back to the embedded copy if the
@@ -348,6 +410,16 @@ fn raw_components() -> Vec<RawComponent> {
 }
 
 fn abs(rel: &str) -> String {
+    // Token-aware: a rel carrying a placeholder (e.g. `{{PROFILES}}\…` from the de-hardcoded
+    // constants/manifest) expands to an ABSOLUTE path and is used as-is; a plain relative path is
+    // still joined under scripts_root. The `{{` guard keeps the common (tokenless) case cheap.
+    if rel.contains("{{") {
+        let e = expand_placeholders(rel);
+        if std::path::Path::new(&e).is_absolute() {
+            return e;
+        }
+        return format!("{}\\{}", scripts_root(), e);
+    }
     format!("{}\\{}", scripts_root(), rel)
 }
 
@@ -1302,9 +1374,9 @@ fn read_fork_repo_status(path: String) -> Option<serde_json::Value> {
         .cloned()
 }
 
-const BACKUP_DIR_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Backups";
-const BACKUP_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Backup-ClaudeSetup.ps1";
-const RESTORE_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Restore-ClaudeSetup.ps1";
+const BACKUP_DIR_REL: &str = "{{PROFILES}}\\Backups";
+const BACKUP_SCRIPT_REL: &str = "{{PROFILES}}\\Backup-ClaudeSetup.ps1";
+const RESTORE_SCRIPT_REL: &str = "{{PROFILES}}\\Restore-ClaudeSetup.ps1";
 
 #[derive(Serialize)]
 struct BackupList {
@@ -1560,15 +1632,15 @@ async fn run_backup(
     spawn_streamed(app, state, stream_id::BACKUP.to_string(), script, args).await
 }
 
-const PROFILES_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Get-ProfilesStatus.ps1";
-const INSTALL_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Install-ClaudeProfiles.ps1";
-const REPAIR_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Repair-ProfileLinks.ps1";
-const PROFILES_JSON_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\profiles.last.json";
+const PROFILES_SCRIPT_REL: &str = "{{PROFILES}}\\Get-ProfilesStatus.ps1";
+const INSTALL_SCRIPT_REL: &str = "{{PROFILES}}\\Install-ClaudeProfiles.ps1";
+const REPAIR_SCRIPT_REL: &str = "{{PROFILES}}\\Repair-ProfileLinks.ps1";
+const PROFILES_JSON_REL: &str = "{{PROFILES}}\\profiles.last.json";
 // Config-drift (FUN-7): shared-config FILE link health. links.last.json is written by
 // Check-Integrity.ps1; Relink self-elevates; sync-now reuses the Backup mirror.
-const RELINK_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Relink-SharedConfig.ps1";
-const INTEGRITY_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Check-Integrity.ps1";
-const CONFIG_DRIFT_JSON_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\links.last.json";
+const RELINK_SCRIPT_REL: &str = "{{PROFILES}}\\Relink-SharedConfig.ps1";
+const INTEGRITY_SCRIPT_REL: &str = "{{PROFILES}}\\Check-Integrity.ps1";
+const CONFIG_DRIFT_JSON_REL: &str = "{{PROFILES}}\\links.last.json";
 
 /// Whether THIS process is running elevated (admin). Cached — elevation can't change at runtime.
 /// Uses the canonical .NET WindowsPrincipal check via pwsh (no extra crate); CREATE_NO_WINDOW.
@@ -1817,7 +1889,7 @@ fn compute_diff(a: &[String], b: &[String]) -> Vec<DiffLine> {
     result
 }
 
-const CONFIG_SOURCE_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config";
+const CONFIG_SOURCE_REL: &str = "{{PROFILES}}\\config";
 
 /// Read a unified diff between a drifted live file and its shared config copy.
 /// `name` is the filename (e.g. "statusline.py").
@@ -1851,8 +1923,8 @@ fn read_drift_diff(name: String) -> Result<Option<DriftDiff>, String> {
     }))
 }
 
-const PROFILES_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\profiles.json";
-const PROFILE_MGMT_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Manage-Profiles.ps1";
+const PROFILES_CONFIG_REL: &str = "{{PROFILES}}\\config\\profiles.json";
+const PROFILE_MGMT_SCRIPT_REL: &str = "{{PROFILES}}\\Manage-Profiles.ps1";
 
 /// Read the canonical profile config (config\profiles.json): names, colours, descriptions,
 /// and each profile's linkedFolders. Null until the file exists.
@@ -2025,8 +2097,8 @@ fn relaunch_as_admin(app: AppHandle) -> Result<(), String> {
 }
 
 // --- Sync tab (native; was Manage-Sync.ps1) ---
-const SYNC_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\sync-config.json";
-const SYNC_CANON_STIGNORE_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\.stignore";
+const SYNC_CONFIG_REL: &str = "{{PROFILES}}\\config\\sync-config.json";
+const SYNC_CANON_STIGNORE_REL: &str = "{{PROFILES}}\\config\\.stignore";
 
 /// Item key -> .stignore whitelist line (order matters; mirrors Manage-Sync.ps1 $ItemLines).
 fn sync_item_lines() -> [(&'static str, &'static str); 7] {
@@ -2532,9 +2604,9 @@ async fn run_sync(action: String, enabled: Option<Vec<String>>) -> Result<i32, S
 }
 
 // --- LLM provider per profile + local engine launcher ---
-const ENGINES_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\engines.json";
+const ENGINES_CONFIG_REL: &str = "{{PROFILES}}\\config\\engines.json";
 /// Per-profile launch config (full vs lean mode + which tools to re-include when lean).
-const LAUNCH_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\profile-launch.json";
+const LAUNCH_CONFIG_REL: &str = "{{PROFILES}}\\config\\profile-launch.json";
 
 #[derive(Serialize)]
 struct EngineStatus {
@@ -4648,7 +4720,7 @@ async fn run_provider(
 // A user-owned list of external LLM providers (DeepSeek, Minimax, any OpenAI/Anthropic-compatible
 // endpoint). Metadata lives in myproviders.json; the API key lives ONLY in the Credential Manager
 // (mirrors the user's Mediafarm api_profiles split — never plaintext in JSON).
-const MYPROVIDERS_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\myproviders.json";
+const MYPROVIDERS_CONFIG_REL: &str = "{{PROFILES}}\\config\\myproviders.json";
 /// Credential Manager service names. One entry per provider key (`provider:<id>`) + a single
 /// freellmapi dashboard-session token (`dashboard`) used by the "connect via freellmapi" path.
 const KR_PROVIDERS: &str = "castellyn.providers";
@@ -6442,8 +6514,8 @@ async fn run_opencode_provider(
     .await
 }
 
-const MCP_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\.mcp.json";
-const MCP_DEPLOY_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Deploy-Mcp.ps1";
+const MCP_CONFIG_REL: &str = "{{PROFILES}}\\config\\.mcp.json";
+const MCP_DEPLOY_SCRIPT_REL: &str = "{{PROFILES}}\\Deploy-Mcp.ps1";
 const PROFILE_NAMES: [&str; 6] = ["ccmy", "cc1", "cc2", "cc3", "cc4", "cc5"];
 
 #[derive(Serialize)]
@@ -6633,8 +6705,8 @@ fn mcp_remove_extra(name: String, profile: String) -> Result<(), String> {
     write_json_atomic(&path, &json).map_err(|e| format!("write .claude.json: {e}"))
 }
 
-const SCHEDULE_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Schedule-Hub.ps1";
-const SCHEDULES_JSON_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\schedules.last.json";
+const SCHEDULE_SCRIPT_REL: &str = "{{PROFILES}}\\Schedule-Hub.ps1";
+const SCHEDULES_JSON_REL: &str = "{{PROFILES}}\\schedules.last.json";
 
 /// Refresh (run the helper's query) and read schedules.last.json. Not streamed.
 #[tauri::command]
@@ -8289,8 +8361,8 @@ fn run_codex_providers() -> Result<bool, String> {
 /// Canonical rule files fanned into OpenCode's `instructions` array (paths, not copies —
 /// OpenCode reads them in place, so edits propagate without a re-deploy).
 const CANON_RULES_REL: [&str; 2] = [
-    "!Настройки и MCP\\ClaudeProfiles\\config\\CLAUDE.md",
-    "!Настройки и MCP\\ClaudeProfiles\\config\\RTK.md",
+    "{{PROFILES}}\\config\\CLAUDE.md",
+    "{{PROFILES}}\\config\\RTK.md",
 ];
 
 /// Attach the canonical rule files to OpenCode's `instructions` array (idempotent merge,
@@ -9911,7 +9983,7 @@ async fn run_plugin_sync(app: AppHandle, state: State<'_, RunState>) -> Result<i
 // run_managed_deploy fixes (3) via one elevated (UAC) redeploy, then re-verifies by comparison.
 
 /// Deploy script for managed-settings.json (parent of the config source dir). Elevated by RunAs.
-const MANAGED_DEPLOY_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Deploy-ManagedSettings.ps1";
+const MANAGED_DEPLOY_SCRIPT_REL: &str = "{{PROFILES}}\\Deploy-ManagedSettings.ps1";
 
 /// A single stack-drift check result. Field names are the IPC contract: id, state, detail, fix.
 #[derive(Serialize)]
@@ -10251,9 +10323,8 @@ async fn run_managed_deploy() -> Result<StackDriftItem, String> {
 // Assert-Installation.ps1); create_settings_junction is the one native action. Re-running any
 // step is safe — the wizard is a reconciler, not a one-shot.
 
-const SYNCTHING_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Configure-Syncthing.ps1";
-const ASSERT_SCRIPT_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\Assert-Installation.ps1";
-const SETTINGS_TREE_REL: &str = "!Настройки и MCP";
+const SYNCTHING_SCRIPT_REL: &str = "{{PROFILES}}\\Configure-Syncthing.ps1";
+const ASSERT_SCRIPT_REL: &str = "{{PROFILES}}\\Assert-Installation.ps1";
 
 /// One onboarding step. Field names ARE the IPC contract.
 #[derive(Serialize, Clone)]
@@ -10339,21 +10410,26 @@ fn onboarding_scan() -> Vec<OnbStep> {
         None => onb("prereq_syncthing", "todo", tr("onb.syncthing_cfg_missing", lang).into(), None),
     });
     // Settings tree = the ClaudeProfiles source of truth (arrives via Syncthing / copy / backup).
-    let tree = abs(&format!("{SETTINGS_TREE_REL}\\ClaudeProfiles"));
+    // De-hardcoded: profiles_root() detects the real tree (ASCII `SettingsMCP` or legacy Cyrillic).
+    let tree = profiles_root();
     let tree_ok = std::path::Path::new(&tree).is_dir();
     out.push(if tree_ok {
         onb("tree", "ok", tree.clone(), None)
     } else {
         onb("tree", "todo", trv("onb.tree_missing", lang, &[("path", &tree)]), Some("backup_tab"))
     });
-    // ASCII junction <scripts_root>\SettingsMCP → the Cyrillic tree (shell-safe path). "ok" needs
-    // an actual reparse point AIMED AT the tree — a plain dir or a junction to an old tree is drift.
+    // ASCII-safe path to the tree at <scripts_root>\SettingsMCP. Direction-agnostic: OK when
+    // SettingsMCP either IS the detected tree (owner de-Cyrillicized the real folder) or is a reparse
+    // point aimed at it (legacy: real Cyrillic folder + ASCII junction). A plain dir that isn't the
+    // tree, or a junction to an old tree, is drift.
     let junction = format!("{}\\SettingsMCP", scripts_root());
     let jpath = std::path::Path::new(&junction);
-    let jtarget = abs(SETTINGS_TREE_REL);
-    let jstate: Option<Result<(), String>> = if is_reparse_point(jpath) {
+    let tree_root = settings_tree_root();
+    let jstate: Option<Result<(), String>> = if link_target_matches(jpath, &tree_root) {
+        Some(Ok(())) // SettingsMCP is itself the tree — no separate junction needed
+    } else if is_reparse_point(jpath) {
         Some(match std::fs::read_link(jpath) {
-            Ok(t) if link_target_matches(&t, &jtarget) => Ok(()),
+            Ok(t) if link_target_matches(&t, &tree_root) => Ok(()),
             Ok(t) => Err(trv("onb.junction_wrong_target", lang, &[("target", &t.display())])),
             Err(_) => Err(tr("onb.junction_unreadable", lang).into()),
         })
@@ -10480,9 +10556,13 @@ async fn run_onboarding_step(
 #[tauri::command]
 async fn create_settings_junction() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        let target = abs(SETTINGS_TREE_REL);
+        let target = settings_tree_root();
         let link = format!("{}\\SettingsMCP", scripts_root());
         let lpath = std::path::Path::new(&link);
+        // De-Cyrillicized topology: SettingsMCP already IS the tree → nothing to create.
+        if link_target_matches(lpath, &target) {
+            return Ok(());
+        }
         if lpath.exists() || is_reparse_point(lpath) {
             // Idempotent only when it's already a junction AIMED AT the tree; a plain dir or a
             // junction to an old tree is a conflict the user must resolve (we never delete here).
@@ -12798,7 +12878,7 @@ fn list_subdirs(path: String) -> Vec<String> {
 // `read_ssh_hosts` command also surfaces hosts parsed read-only from the machine's ~/.ssh/config
 // (source="sshconfig") so existing SSH setup is reused (DRY). An ssh session is launched via the
 // normal session_spawn with tool="ssh" and the target carried in `args` (e.g. "user@host -p 22").
-const SSHHOSTS_CONFIG_REL: &str = "!Настройки и MCP\\ClaudeProfiles\\config\\sshhosts.json";
+const SSHHOSTS_CONFIG_REL: &str = "{{PROFILES}}\\config\\sshhosts.json";
 static SSHHOSTS_LOCK: Mutex<()> = Mutex::new(());
 
 fn default_ssh_source() -> String {
@@ -13743,6 +13823,36 @@ mod tests {
             assert_eq!(ids.iter().filter(|i| **i == want).count(), 1, "{want}");
         }
         assert!(steps.iter().all(|s| ["ok", "todo", "blocked", "unknown"].contains(&s.state.as_str())));
+    }
+
+    #[test]
+    fn settings_tree_precedence() {
+        // env override wins outright (even over a config value).
+        assert_eq!(
+            resolve_settings_tree(Some(r"D:\envtree".into()), Some(r"D:\cfg".into()), r"E:\Scripts", |_| true),
+            r"D:\envtree"
+        );
+        // else the explicit config value.
+        assert_eq!(
+            resolve_settings_tree(None, Some(r"D:\cfg".into()), r"E:\Scripts", |_| false),
+            r"D:\cfg"
+        );
+        // blank env/config are ignored → fall through to detection.
+        assert_eq!(
+            resolve_settings_tree(Some("  ".into()), Some(String::new()), r"E:\Scripts",
+                |p| p == r"E:\Scripts\!Настройки и MCP"),
+            r"E:\Scripts\!Настройки и MCP"
+        );
+        // detection prefers the ASCII candidate when it holds the tree (owner de-Cyrillicized).
+        assert_eq!(
+            resolve_settings_tree(None, None, r"E:\Scripts", |_| true),
+            r"E:\Scripts\SettingsMCP"
+        );
+        // nothing exists → ASCII default (created later, no Cyrillic literal in code).
+        assert_eq!(
+            resolve_settings_tree(None, None, r"E:\Scripts", |_| false),
+            r"E:\Scripts\SettingsMCP"
+        );
     }
 
     #[test]
