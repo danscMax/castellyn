@@ -59,6 +59,13 @@ fn now_ms() -> u64 {
 
 struct Track {
     tool: String,
+    /// A lifecycle hook is expected for this session (local claude only): the authoritative
+    /// working/idle signal. When true but no hook has ever reported, PTY activity is NOT used
+    /// as a fallback — Claude Code and background hooks (claude-mem) print into the terminal, so
+    /// activity ≠ a live turn — the session reports `unknown` instead of a false `working`
+    /// (A-residual). Remote claude / codex / opencode are genuinely hookless → heartbeat is their
+    /// only signal, so this is false and the activity branch applies.
+    hook_expected: bool,
     /// Human label for notifications ("claude · cc1", "codex").
     label: String,
     spawned_at: u64,
@@ -94,7 +101,9 @@ pub fn status_dir() -> Option<std::path::PathBuf> {
 }
 
 /// Register a freshly-spawned session. `shell`/`ssh` panes carry no agent — skipped.
-pub fn on_spawn(id: &str, tool: &str, profile: &str) {
+/// `hook_expected` is true only for a LOCAL claude pane, whose lifecycle hook can reach the
+/// local status dir; remote claude and codex/opencode are hookless (heartbeat only).
+pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
     if !matches!(tool, "claude" | "opencode" | "codex") {
         return;
     }
@@ -103,6 +112,7 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str) {
         id.to_string(),
         Track {
             tool: tool.to_string(),
+            hook_expected,
             label: if tool == "claude" && !profile.is_empty() {
                 format!("{tool} · {profile}")
             } else {
@@ -323,11 +333,19 @@ fn compute(t: &Track, now: u64) -> &'static str {
         // Hook-reported idle is authoritative: prompt-box echo/typing must not flip it —
         // the next UserPromptSubmit hook reports working.
         Some("idle") => "idle",
-        // No hook authority (codex/opencode, remote claude, or claude before its first
-        // event): PTY activity decides. A turn stays `working` through normal think/tool pauses
-        // (ACTIVITY_IDLE_MS = 15s) so a hookless agent doesn't false-flip to done mid-turn.
+        // No hook authority yet. PTY activity is the fallback, but ONLY for genuinely hookless
+        // sessions (codex/opencode, remote claude). A turn stays `working` through normal
+        // think/tool pauses (ACTIVITY_IDLE_MS = 15s) so a hookless agent doesn't false-flip to
+        // done mid-turn.
         _ => {
             if now.saturating_sub(t.spawned_at) < STARTUP_GRACE_MS {
+                "unknown"
+            } else if t.hook_expected {
+                // Local claude that expected a hook but never got one → the Agent-statuses hook is
+                // off/unwired. Claude Code and its background hooks (claude-mem) print into the PTY
+                // even when the user isn't in a turn, so activity is an unreliable proxy that
+                // false-flags `working` (A-residual). Report `unknown` (neutral dot, uncounted, no
+                // false "done") instead of lying; enabling the hook restores authoritative status.
                 "unknown"
             } else if silent {
                 "idle"
@@ -466,6 +484,8 @@ mod tests {
     fn track(tool: &str, now: u64) -> Track {
         Track {
             tool: tool.into(),
+            // Default hookless (codex/opencode/remote-claude); the local-claude tests set it true.
+            hook_expected: false,
             label: tool.into(),
             spawned_at: now,
             last_output: AtomicU64::new(now),
@@ -546,6 +566,29 @@ mod tests {
         );
         t.exited = true;
         assert_eq!(compute(&t, now), "idle");
+    }
+
+    #[test]
+    fn hook_expected_claude_stays_unknown_without_hook() {
+        // A-residual: a LOCAL claude pane whose Agent-statuses hook is off/unwired must NOT infer
+        // `working` from PTY activity — Claude Code + background hooks (claude-mem) print into the
+        // terminal even when idle. It reports `unknown` (neutral) until a real hook event arrives.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_expected = true;
+        assert_eq!(compute(&t, now + 1_000), "unknown"); // startup grace
+        // Fresh PTY output past the grace (background noise) — must stay `unknown`, NOT `working`.
+        t.last_output
+            .store(now + STARTUP_GRACE_MS + 2_000, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + STARTUP_GRACE_MS + 2_500), "unknown");
+        // Once a real lifecycle hook reports, authority takes over immediately.
+        t.hook_state = Some("working".into());
+        assert_eq!(compute(&t, now + STARTUP_GRACE_MS + 2_500), "working");
+        // Contrast: a genuinely hookless agent (remote claude / codex) DOES use the heartbeat.
+        let r = track("claude", now); // hook_expected = false (remote)
+        r.last_output
+            .store(now + STARTUP_GRACE_MS + 2_000, Ordering::Relaxed);
+        assert_eq!(compute(&r, now + STARTUP_GRACE_MS + 2_500), "working");
     }
 
     #[test]

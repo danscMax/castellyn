@@ -12535,8 +12535,11 @@ fn session_spawn(
         );
     }
     // Track for agent status (skips shell/ssh; remote agents get PTY-activity only —
-    // their hooks run on the remote host and never reach the local status dir).
-    agent_status::on_spawn(&id, &tool, &profile);
+    // their hooks run on the remote host and never reach the local status dir). Only a LOCAL
+    // claude pane expects the lifecycle hook; without it, activity is not used as a fallback
+    // (it would false-flag `working` on background hook output — A-residual).
+    let hook_expected = tool == "claude" && ssh.is_none();
+    agent_status::on_spawn(&id, &tool, &profile, hook_expected);
 
     // Reader thread: stream PTY output as raw bytes to EVERY attached channel (no base64/JSON event
     // per chunk) until EOF, keeping a bounded scrollback; then wait for the child and signal exit.
