@@ -51,7 +51,7 @@ toml_edit = "0.25.12"
 # Win32 Job Object so PTY child trees (pwsh → claude/node, ssh.exe) die with the app instead of
 # orphaning on a kill/crash. Windows-only; no-op stub elsewhere.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_JobObjects",
