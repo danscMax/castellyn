@@ -24,6 +24,10 @@
     readCodexProfiles,
     readOpencode,
     readOpencodeModels,
+    readStack,
+    runStack,
+    openUrl,
+    type StackService,
     globalSessionCount,
     agentStatusHookStatus,
     agentStatusHookSet,
@@ -184,6 +188,7 @@
     readOpencodeModels()
       .then((m) => (opencodeModels = Array.isArray(m) ? m : []))
       .catch(() => {});
+    void loadStack(); // FreeLLMAPI stack status for the opencode launcher block
     // Re-attach sessions that survived a webview reload (#5): the backend keeps them running, so
     // mirror the still-alive ones back here as owner instead of orphaning them against SESSION_LIMIT.
     if (savedLive.length) {
@@ -1215,6 +1220,40 @@
   let lOpencodeModel = $state('');
   let opencodeModel = $state(''); // opencode's active model, shown as the picker placeholder
   let opencodeModels = $state<string[]>([]); // "<provider>/<model>" catalog for the picker datalist
+  // D (live-smoke): the FreeLLMAPI stack surfaced right in the opencode launcher — status, a dashboard
+  // link and a one-click start — so opencode isn't launched blindly against a dead gateway.
+  let stackSvcs = $state<StackService[]>([]);
+  let stackChecking = $state(false);
+  let stackBusy = $state(false);
+  const gatewaySvc = $derived(stackSvcs.find((s) => s.id === 'gateway'));
+  const stackRunning = $derived(stackSvcs.filter((s) => s.enabled && s.running).length);
+  const stackTotal = $derived(stackSvcs.filter((s) => s.enabled).length);
+  async function loadStack() {
+    stackChecking = true;
+    try {
+      stackSvcs = await readStack();
+    } catch {
+      /* stack.json missing / not configured — the block just shows unknown */
+    } finally {
+      stackChecking = false;
+    }
+  }
+  async function startStack() {
+    stackBusy = true;
+    try {
+      await runStack('start');
+      pushToast({ kind: 'success', title: t('sessions.stackStarted') });
+      await loadStack();
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('sessions.stackStartFail'), detail: String(e) });
+    } finally {
+      stackBusy = false;
+    }
+  }
+  function openStackDashboard() {
+    const url = gatewaySvc?.dashboard || (gatewaySvc ? `http://localhost:${gatewaySvc.port}` : '');
+    if (url) openUrl(url).catch(() => {});
+  }
   const PROFILE_RE = /(^|\s)(--profile|-p)(\s|=)/;
   const MODEL_RE = /(^|\s)(--model|-m)(\s|=)/;
   // Compose the identity selection (codex --profile/--model, opencode --model) into the free-text
@@ -1885,6 +1924,26 @@
       <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
     </div>
 
+    {#if lEnv === 'opencode'}
+      <!-- D: FreeLLMAPI stack status + one-click start + dashboard, so opencode isn't launched blindly
+           against a dead gateway ("Cannot connect"). Backend already exists (readStack / runStack). -->
+      <div class="stackbar">
+        <span class="dot {gatewaySvc?.running ? 'dot-ok' : gatewaySvc ? 'dot-fail' : 'dot-checking'}"
+          title={gatewaySvc?.running ? t('sessions.stackGwUp') : t('sessions.stackGwDown')}></span>
+        <span class="stk-label">{t('sessions.stackLabel')}{#if stackTotal} <span class="text-sw-text-muted">· {stackRunning}/{stackTotal}</span>{/if}</span>
+        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={loadStack} disabled={stackChecking}>
+          {stackChecking ? t('common.busy') : t('sessions.stackCheck')}
+        </button>
+        {#if gatewaySvc && !gatewaySvc.running}
+          <button class="sw-btn sw-btn-primary text-sw-xs" onclick={startStack} disabled={stackBusy}
+            title={t('sessions.stackStartTip')}>{stackBusy ? t('common.busy') : t('sessions.stackStart')}</button>
+        {/if}
+        {#if gatewaySvc}
+          <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={openStackDashboard} title={t('sessions.stackDashboardTip')}>{t('sessions.stackDashboard')}</button>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Save the current panes as a workspace (favorites moved to the compact bar above the popover) -->
     {#if panes.length || savingWs}
       <div class="favs">
@@ -2388,6 +2447,21 @@
     color: var(--sw-text-muted);
     opacity: 0.85;
     align-self: center;
+  }
+  .stackbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sw-space-2);
+    margin-top: var(--sw-space-2);
+    padding: var(--sw-space-2) var(--sw-space-3);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-secondary);
+    font-size: var(--sw-text-xs);
+  }
+  .stackbar .stk-label {
+    font-weight: 500;
+    margin-right: auto;
   }
   .phrase .ssh-hint {
     flex-basis: 100%;
