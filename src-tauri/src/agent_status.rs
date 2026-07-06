@@ -214,9 +214,6 @@ struct StatusEvent {
     /// hookless activity-lull can't fire a false "finished" (live-smoke 2026-07-03). Backend-only.
     #[serde(skip)]
     hook_idle: bool,
-    /// Tool of the emitting session — codex/opencode have no hook, so they keep activity-based "done".
-    #[serde(skip)]
-    tool: String,
 }
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
@@ -246,13 +243,15 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
         return;
     }
     let to_blocked = ev.state == "blocked" && ev.prev.as_deref() != Some("blocked");
-    // "Finished" toast only on a real end-of-turn. For claude that means the Stop hook fired
-    // (hook_idle); an activity-lull idle greys the dot but must NOT claim "done" — that was the
-    // false "Агент закончил" mid-work (live-smoke 2026-07-03). codex/opencode have no hook, so they
-    // keep the activity-based idle they already used.
+    // "Finished" toast only on a REAL end-of-turn = the Stop hook fired (hook_idle). An activity-lull
+    // idle just greys the dot; it must NOT claim "done". This applies to codex/opencode too: they have
+    // no hook, so their idle is pure PTY-silence — clicking into the pane (cursor repaint) or any
+    // terminal noise would flip working→idle and fire a false "Агент закончил" though nothing ran
+    // (owner live-smoke). So NO completion toast for hookless agents until they gain a real turn
+    // signal (Codex `notify` / opencode plugin — Phase 2b). The status dot still tracks working/idle.
     let completed = ev.state == "idle"
         && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"))
-        && (ev.hook_idle || ev.tool != "claude");
+        && ev.hook_idle;
     if !to_blocked && !completed {
         return;
     }
@@ -448,7 +447,6 @@ pub fn start(app: tauri::AppHandle) {
                         label: t.label.clone(),
                         exited: t.exited,
                         hook_idle: t.hook_state.as_deref() == Some("idle"),
-                        tool: t.tool.clone(),
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop
@@ -596,7 +594,6 @@ mod tests {
             label: t.label.clone(),
             exited: t.exited,
             hook_idle: false,
-            tool: t.tool.clone(),
         };
         assert_ne!(ev.spawned_at, 0);
         assert_eq!(ev.spawned_at, now);
