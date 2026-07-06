@@ -53,6 +53,7 @@ export default {
   refreshing: 'Обновляется…',
   saved: 'Сохранено',
   busy: 'Идёт…',
+  busyDisabled: 'Недоступно, пока идёт другая задача',
   none: 'нет',
   noData: 'нет данных',
   dash: '—',

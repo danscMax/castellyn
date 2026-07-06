@@ -346,7 +346,7 @@
                   <span class="min-w-0">
                     <span class="flex items-center gap-sw-1 font-medium">
                       <span class="truncate" title={r.name}>{r.name}</span>
-                      {#if dirty}<span class="dirtydot" title={t('profiles.matrixDirtyTip')}>●</span>{/if}
+                      {#if dirty}<span class="unsaved-pill" title={t('profiles.matrixDirtyTip')}>{t('profiles.matrixUnsaved')}</span>{/if}
                     </span>
                     {#if r.description}<span class="block truncate text-sw-xs text-sw-text-muted" title={r.description}>{r.description}</span>{/if}
                   </span>
@@ -487,7 +487,8 @@
       {/if}
     {/if}
 
-    <div class="applybar">
+    <div class="applybar" class:has-changes={dirtyNames.length > 0}>
+      {#if dirtyNames.length > 0}<span class="applybar-count">{t('profiles.matrixPending', { n: dirtyNames.length })}</span>{/if}
       <button class="sw-btn sw-btn-primary" disabled={!canApply} onclick={openPreview} title={t('profiles.matrixApplyTip')}>
         {applying ? t('profiles.matrixApplying') : t('profiles.matrixApply', { n: dirtyNames.length })}
       </button>
@@ -544,10 +545,16 @@
   .mx tr.dirty td {
     background: var(--sw-accent-glow);
   }
-  .dirtydot {
+  .unsaved-pill {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: 99px;
+    background: color-mix(in srgb, var(--sw-warn) 22%, transparent);
     color: var(--sw-warn);
-    font-size: 9px;
-    line-height: 1;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
   }
   .chip {
     display: inline-flex;
@@ -652,6 +659,23 @@
     align-items: center;
     gap: var(--sw-space-3);
     margin-top: var(--sw-space-4);
+    /* Stick to the bottom of the viewport so pending edits + Apply stay reachable while scrolling
+       the matrix — the accumulate-then-apply model was invisible when the bar sat far below. */
+    position: sticky;
+    bottom: 0;
+    padding: var(--sw-space-3);
+    border-radius: var(--sw-radius);
+    background: var(--sw-bg);
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+  }
+  .applybar.has-changes {
+    background: color-mix(in srgb, var(--sw-accent) 10%, var(--sw-bg));
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 0.12), inset 0 0 0 1px var(--sw-accent);
+  }
+  .applybar-count {
+    font-size: var(--sw-text-sm);
+    font-weight: 600;
+    color: var(--sw-accent-text);
   }
   .chg {
     display: flex;

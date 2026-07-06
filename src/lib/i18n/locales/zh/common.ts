@@ -53,6 +53,7 @@ export default {
   refreshing: '刷新中…',
   saved: '已保存',
   busy: '处理中…',
+  busyDisabled: '另一个任务运行时不可用',
   none: '无',
   noData: '无数据',
   dash: '—',

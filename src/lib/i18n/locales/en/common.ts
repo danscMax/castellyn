@@ -53,6 +53,7 @@ export default {
   refreshing: 'Refreshing…',
   saved: 'Saved',
   busy: 'Working…',
+  busyDisabled: 'Unavailable while another task is running',
   none: 'none',
   noData: 'no data',
   dash: '—',

@@ -191,6 +191,8 @@ export default {
   matrixFolderRealTip: '该文件夹保存自身数据而非链接——重新链接会跳过它',
   matrixRelinkNote: '⚠ 重新链接将在「应用」时执行',
   matrixDirtyTip: '有未保存的更改',
+  matrixUnsaved: '未保存',
+  matrixPending: '{n} 项未保存的更改',
   matrixApply: '应用（{n}）',
   matrixApplying: '正在应用…',
   matrixApplyTip: '显示预览并应用累积的更改',

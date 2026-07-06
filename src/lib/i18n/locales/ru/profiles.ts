@@ -199,6 +199,8 @@ export default {
   matrixFolderRealTip: 'Папка хранит собственные данные, а не связь — перелинковка её пропустит',
   matrixRelinkNote: '⚠ Перелинковка выполнится при «Применить»',
   matrixDirtyTip: 'Есть несохранённые изменения',
+  matrixUnsaved: 'не сохранено',
+  matrixPending: 'Несохранённых правок: {n}',
   matrixApply: 'Применить ({n})',
   matrixApplying: 'Применяю…',
   matrixApplyTip: 'Показать предпросмотр и применить накопленные изменения',

@@ -289,7 +289,10 @@
       });
       items.push({
         label: t('profiles.menuRepair'),
-        title: t('profiles.menuRepairTip'),
+        // Immediate action (kicks off a run) — disable while busy, but say WHY (a mute grey read as
+        // "broken"). Dialog-openers below stay enabled: they only open a dialog, the mutation on
+        // submit is already guarded by the run lock.
+        title: busy ? t('common.busyDisabled') : t('profiles.menuRepairTip'),
         onClick: () => finishProfile(p.name),
         disabled: busy
       });
@@ -299,7 +302,7 @@
     if (p.exists && providerByName.get(p.name)?.baseUrl) {
       items.push({
         label: t('profiles.menuResetProvider'),
-        title: t('profiles.menuResetProviderTip'),
+        title: busy ? t('common.busyDisabled') : t('profiles.menuResetProviderTip'),
         onClick: () => onProviderClear(p.name),
         disabled: busy
       });
@@ -308,24 +311,21 @@
       {
         label: t('profiles.menuColor'),
         title: t('profiles.menuColorTip'),
-        onClick: () => openDlg('recolor', p.name, p.color),
-        disabled: busy
+        onClick: () => openDlg('recolor', p.name, p.color)
       },
       {
         label: t('profiles.menuRename'),
         title: t('profiles.menuRenameTip'),
-        onClick: () => openDlg('rename', p.name, p.color),
-        disabled: busy
+        onClick: () => openDlg('rename', p.name, p.color)
       },
       {
         label: t('profiles.menuDescribe'),
         title: t('profiles.menuDescribeTip'),
-        onClick: () => openDlg('redescribe', p.name, p.color, p.description ?? ''),
-        disabled: busy
+        onClick: () => openDlg('redescribe', p.name, p.color, p.description ?? '')
       },
       {
         label: t('profiles.menuDelete'),
-        title: t('profiles.menuDeleteTip', { name: p.name }),
+        title: busy ? t('common.busyDisabled') : t('profiles.menuDeleteTip', { name: p.name }),
         onClick: () => onMgmt({ action: 'remove', name: p.name }),
         disabled: busy,
         danger: true

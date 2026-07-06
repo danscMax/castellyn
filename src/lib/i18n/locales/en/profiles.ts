@@ -197,6 +197,8 @@ export default {
   matrixFolderRealTip: 'This folder holds its own data, not a link — relink will skip it',
   matrixRelinkNote: '⚠ Relink runs on Apply',
   matrixDirtyTip: 'Has unsaved changes',
+  matrixUnsaved: 'unsaved',
+  matrixPending: '{n} unsaved edit(s)',
   matrixApply: 'Apply ({n})',
   matrixApplying: 'Applying…',
   matrixApplyTip: 'Show the preview and apply the accumulated changes',
