@@ -23,6 +23,7 @@
     pickFolder,
     readCodexProfiles,
     readOpencode,
+    readOpencodeModels,
     globalSessionCount,
     agentStatusHookStatus,
     agentStatusHookSet,
@@ -176,9 +177,13 @@
       .then((v) => (codexProfiles = Array.isArray(v) ? v : []))
       .catch(() => {});
     // opencode's active model → placeholder for its launcher model picker (empty field = use default).
-    // No model catalog is exposed (providers carry no model list), so the field is free-form.
     readOpencode()
       .then((s) => (opencodeModel = s?.model ?? ''))
+      .catch(() => {});
+    // Real "<provider>/<model>" catalog fetched from opencode's providers (with their keys) → the model
+    // field's datalist, so the user can pick instead of guessing the name. Best-effort, background.
+    readOpencodeModels()
+      .then((m) => (opencodeModels = Array.isArray(m) ? m : []))
       .catch(() => {});
     // Re-attach sessions that survived a webview reload (#5): the backend keeps them running, so
     // mirror the still-alive ones back here as owner instead of orphaning them against SESSION_LIMIT.
@@ -1221,6 +1226,7 @@
   let lCodexModel = $state(''); // codex --model override (empty = the profile's / config default)
   let lOpencodeModel = $state('');
   let opencodeModel = $state(''); // opencode's active model, shown as the picker placeholder
+  let opencodeModels = $state<string[]>([]); // "<provider>/<model>" catalog for the picker datalist
   const PROFILE_RE = /(^|\s)(--profile|-p)(\s|=)/;
   const MODEL_RE = /(^|\s)(--model|-m)(\s|=)/;
   // Compose the identity selection (codex --profile/--model, opencode --model) into the free-text
@@ -1848,10 +1854,14 @@
         <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lCodexModel}
           placeholder={t('sessions.phCodexModelPlaceholder')} spellcheck="false" autocomplete="off" />
       {:else if lEnv === 'opencode'}
-        <!-- opencode model as provider/model (no catalog exposed → free-form, seeded placeholder = active). -->
+        <!-- opencode model as provider/model — datalist offers the real catalog (fetched from the
+             providers) while staying free-form so an unlisted model can still be typed. -->
         <span class="pw">{t('sessions.phModel')}</span>
-        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel}
+        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel} list="opencode-models"
           placeholder={opencodeModel || t('sessions.phModelPlaceholder')} spellcheck="false" autocomplete="off" />
+        <datalist id="opencode-models">
+          {#each opencodeModels as m (m)}<option value={m}></option>{/each}
+        </datalist>
       {/if}
       <span class="pw">{t('sessions.phOn')}</span>
       <div class="psel"><Select value={lLoc} onChange={onLocChange} options={locOptions} placeholder={t('sessions.locThisPc')} /></div>

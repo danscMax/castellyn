@@ -562,6 +562,9 @@ export type OpencodeProviderArgs = {
   keepKey?: boolean; // keep existing apiKey
 };
 export const readOpencode = () => invoke<OpencodeStatus>('read_opencode');
+// Available "<providerId>/<model>" across opencode's configured providers (fetched with their real
+// keys) — populates the launcher's opencode model picker. Best-effort; empty if nothing reachable.
+export const readOpencodeModels = () => invoke<string[]>('read_opencode_models');
 export const runOpencodeProvider = (args: OpencodeProviderArgs) =>
   invoke<number>('run_opencode_provider', {
     action: args.action,

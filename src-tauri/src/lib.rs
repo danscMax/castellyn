@@ -5662,6 +5662,14 @@ fn probe_provider(base_url: &str, protocol: &str, api_key: &str) -> serde_json::
 /// Native model list (was Get-EngineModels.ps1). Blocking — call via spawn_blocking.
 /// GET <base>/models (or /v1/models for a bare host). Returns model ids; empty on any error.
 fn fetch_engine_models(base_url: &str) -> Vec<String> {
+    // Some servers want an Authorization header even when no real key is needed.
+    fetch_models_bearer(base_url, "Bearer not-needed")
+}
+
+/// GET {baseUrl}/v1/models with a caller-supplied Authorization header value; returns the model ids
+/// (`data[].id`). Empty on any error / blocked URL. Shared by the keyless engine-model preview and the
+/// keyed opencode-model picker (read_opencode_models).
+fn fetch_models_bearer(base_url: &str, authorization: &str) -> Vec<String> {
     if base_url.is_empty() {
         return Vec::new();
     }
@@ -5685,10 +5693,9 @@ fn fetch_engine_models(base_url: &str) -> Vec<String> {
         .max_redirects(0) // single-shot API GET carrying a key — no cross-host redirects (V-12)
         .build()
         .into();
-    // Some servers want an Authorization header even when no real key is needed.
     let body = match agent
         .get(&url)
-        .header("Authorization", "Bearer not-needed")
+        .header("Authorization", authorization)
         .call()
     {
         Ok(mut resp) => resp.body_mut().read_to_string().unwrap_or_default(),
@@ -6162,6 +6169,68 @@ fn read_opencode() -> OpencodeStatus {
         model,
         providers,
     }
+}
+
+/// Resolve an opencode-style `{env:VAR}` apiKey reference to the env var's value; a literal key (or a
+/// non-ref string) passes through unchanged. Empty when the referenced var is unset.
+fn resolve_env_ref(s: &str) -> String {
+    match s.strip_prefix("{env:").and_then(|x| x.strip_suffix('}')) {
+        Some(var) => std::env::var(var.trim()).unwrap_or_default(),
+        None => s.to_string(),
+    }
+}
+
+/// Available models across opencode's configured providers, as `"<providerId>/<model>"` — so the
+/// launcher can offer a real `--model` picker instead of a blank field (owner live-smoke C). Resolves
+/// each provider's apiKey (`{env:X}` → the env var, or a literal) and GETs `{baseURL}/v1/models` with
+/// it. Best-effort: a provider that errors / 401s just contributes nothing. Read-only; the resolved key
+/// value never leaves the backend (only the model ids are returned).
+#[tauri::command]
+async fn read_opencode_models() -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(opencode_config_path()) else {
+        return Vec::new();
+    };
+    let Ok(v) = parse_json_bom(&content) else {
+        return Vec::new();
+    };
+    // (id, baseUrl, resolvedKey) per provider that has a base URL.
+    let mut targets: Vec<(String, String, String)> = Vec::new();
+    if let Some(obj) = v.get("provider").and_then(|p| p.as_object()) {
+        for (id, p) in obj {
+            let opts = p.get("options");
+            let base = opts
+                .and_then(|o| o.get("baseURL"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            if base.is_empty() {
+                continue;
+            }
+            let key = resolve_env_ref(
+                opts.and_then(|o| o.get("apiKey"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or(""),
+            );
+            targets.push((id.clone(), base.to_string(), key));
+        }
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut out: Vec<String> = Vec::new();
+        for (id, base, key) in targets {
+            let auth = if key.is_empty() {
+                "Bearer not-needed".to_string()
+            } else {
+                format!("Bearer {key}")
+            };
+            for m in fetch_models_bearer(&base, &auth) {
+                out.push(format!("{id}/{m}"));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Bind (`set`) or unbind (`clear`) a custom OpenAI-compatible provider for opencode via
@@ -13353,6 +13422,7 @@ pub fn run() {
             remove_provider_key,
             next_provider_key,
             read_opencode,
+read_opencode_models,
             run_opencode_provider,
             read_mcp,
             run_mcp,
