@@ -23,6 +23,7 @@ export default {
   colContents: 'Contents',
   colStatus: 'Status',
   colActions: 'Actions',
+  busyNote: 'Another operation is running — actions are temporarily unavailable',
   removeBtn: 'Remove',
   removeBtnTip: 'Uninstall the plugin (claude plugin remove)',
   summary: '{plugins} · {updates} with updates · {off} disabled',

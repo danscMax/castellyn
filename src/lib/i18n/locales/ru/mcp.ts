@@ -6,6 +6,7 @@ export default {
   colCommand: 'Команда',
   colDeployed: 'Развёрнут',
   colProfiles: 'Профили',
+  colActions: 'Действия',
   refreshTitle: 'Перечитать конфиги и обновить матрицу (только чтение)',
   refreshing: 'Идёт…',
   refresh: 'Обновить',

@@ -23,6 +23,7 @@ export default {
   colContents: 'Состав',
   colStatus: 'Статус',
   colActions: 'Действия',
+  busyNote: 'Идёт другая операция — действия временно недоступны',
   removeBtn: 'Удалить',
   removeBtnTip: 'Удалить плагин (claude plugin remove)',
   summary: '{plugins} · {updates} с обновлением · {off} выключено',

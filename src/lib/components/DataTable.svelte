@@ -490,6 +490,12 @@
     border-bottom: 1px solid var(--sw-border);
     vertical-align: middle;
     height: 38px;
+    /* Safety net for `table-layout: fixed`: a cell whose content is intrinsically wider than its
+       colgroup width (e.g. a `white-space:nowrap` badge, or flex chips) must NOT paint over the
+       neighbouring column — clip it to its own box. Content that wraps vertically (chip rows) still
+       grows the row height (this only clips the horizontal axis). Chromium/WebView2 honours overflow
+       on table cells. Fixes the МCP profiles→actions and Plugins policy→actions bleed. */
+    overflow: hidden;
   }
   .dt tbody tr:last-child td {
     border-bottom: none;

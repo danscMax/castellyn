@@ -214,7 +214,7 @@
     { key: 'desc', label: t('plugins.skillColDesc'), width: '240px' },
     { key: 'contents', label: t('plugins.colContents'), width: '110px' },
     { key: 'status', label: t('plugins.colStatus'), sortable: true, align: 'center', width: '74px', interactive: true },
-    { key: 'actions', label: '', align: 'right', width: '90px', interactive: true }
+    { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '90px', interactive: true }
   ]);
   function pluginSort(p: PluginInfo, key: string): string | number {
     if (key === 'name') return split(p.id).name.toLowerCase();
@@ -229,7 +229,7 @@
     { key: 'source', label: t('plugins.colSource'), sortable: true, width: '150px' },
     { key: 'version', label: t('plugins.colVersion'), sortable: true, width: '90px' },
     { key: 'desc', label: t('plugins.skillColDesc'), grow: true },
-    { key: 'actions', label: '', align: 'right', width: '110px', interactive: true }
+    { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '110px', interactive: true }
   ]);
   const SRANK: Record<string, number> = { own: 0, default: 1, plugin: 2 };
   function skillSort(s: SkillInfo, key: string): string | number {
@@ -304,6 +304,12 @@
   <div class="dt-summary mb-sw-2">
     {t('plugins.summary', { plugins: `${pluginList.length} ${pPlugin(pluginList.length)}`, updates: updateIds.length, off: disabledCount })}
   </div>
+  <!-- #4: the whole tab's action buttons share one global run-lock (busy) so concurrent `claude
+       plugin` writes can't race ~/.claude. Without this note a disabled ↑/toggle looked broken —
+       explain WHY it's inert instead of leaving the user guessing. -->
+  {#if busy}
+    <div class="busybar" role="status">⏳ {t('plugins.busyNote')}</div>
+  {/if}
   {#if pluginList.length}
     <DataTable
       columns={PLUGIN_COLS}
@@ -376,7 +382,7 @@
               <!-- Managed policy blocks this plugin in EVERY profile — a toggle would just fail
                    nine times. Offer the real fix: unblock in the source + redeploy (UAC). -->
               <button class="lockbtn" disabled={busy || !onUnblock} onclick={() => onUnblock?.(p.id)}
-                title={t('plugins.blockedTip')}>🔒 {t('plugins.blockedBadge')}</button>
+                title={`${t('plugins.blockedBadge')} — ${t('plugins.blockedTip')}`} aria-label={t('plugins.blockedBadge')}>🔒</button>
             {:else}
               <Toggle checked={p.enabled} disabled={busy} onCheckedChange={() => act(p.enabled ? 'disable' : 'enable', p.id)}
                 title={p.enabled ? t('plugins.disableBtnTip') : t('plugins.enableBtnTip')} />
@@ -489,8 +495,8 @@
         {:else if col.key === 'desc'}
           <span class="desc" title={s.description ?? ''}>{s.description ?? ''}</span>
         {:else if col.key === 'actions'}
-          <span class="act">
-            <button class="iconbtn" onclick={() => onOpenSkill(s.dir)} title={t('plugins.skillOpenTip')}>{t('plugins.skillOpen')}</button>
+          <span class="act act-always">
+            <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => onOpenSkill(s.dir)} title={t('plugins.skillOpenTip')}>{t('plugins.skillOpen')}</button>
             {#if !s.source.startsWith('plugin:')}
               <button class="iconbtn danger" onclick={() => onDeleteSkill(s.dir, s.name)} title={t('plugins.skillDeleteTip')} aria-label={t('plugins.skillDelete')}>{@render trashIcon()}</button>
             {/if}
@@ -695,6 +701,28 @@
   :global(.dt-row:hover) .act,
   .act:focus-within {
     opacity: 1;
+  }
+  /* Skills' primary action ("Открыть") must always be visible, not faint-until-hover — it's the
+     point of the row, not a secondary icon. */
+  .act.act-always {
+    opacity: 1;
+  }
+  .iconbtn:disabled {
+    cursor: not-allowed;
+  }
+  /* #4: tab is busy (global run-lock held) → explains why the action buttons are inert. */
+  .busybar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: var(--sw-space-2);
+    padding: var(--sw-space-2) var(--sw-space-3);
+    border: 1px solid var(--sw-border);
+    border-left: 3px solid var(--sw-status-warn);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-subtle);
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
   }
   .iconbtn {
     background: none;

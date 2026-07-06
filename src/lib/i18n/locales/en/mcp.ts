@@ -6,6 +6,7 @@ export default {
   colCommand: 'Command',
   colDeployed: 'Deployed',
   colProfiles: 'Profiles',
+  colActions: 'Actions',
   refreshTitle: 'Re-read configs and refresh the matrix (read-only)',
   refreshing: 'Working…',
   refresh: 'Refresh',

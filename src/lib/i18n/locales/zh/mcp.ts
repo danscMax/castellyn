@@ -6,6 +6,7 @@ export default {
   colCommand: '命令',
   colDeployed: '已部署',
   colProfiles: '配置',
+  colActions: '操作',
   refreshTitle: '重新读取配置并刷新矩阵（只读）',
   refreshing: '处理中…',
   refresh: '刷新',

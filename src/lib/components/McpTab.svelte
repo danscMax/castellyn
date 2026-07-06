@@ -102,7 +102,7 @@
     { key: 'command', label: t('mcp.colCommand'), width: '200px' },
     { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
     { key: 'profiles', label: t('mcp.colProfiles'), width: '300px', interactive: true },
-    { key: 'actions', label: '', width: '130px', align: 'right', interactive: true }
+    { key: 'actions', label: t('mcp.colActions'), width: '130px', align: 'right', interactive: true }
   ]);
   type Srv = (typeof sortedSource)[number];
   function sortVal(s: Srv, key: string): string | number {
