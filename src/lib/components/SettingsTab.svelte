@@ -85,6 +85,7 @@
   let autostart = $state(false);
   let startHidden = $state(false);
   let closeToTray = $state(true);
+  let stackNative = $state(false);
   let showSessionStatusBar = $state(true);
   // #123: OS-global show/hide accelerator (empty = off).
   let toggleHotkey = $state('');
@@ -149,6 +150,7 @@
     ghTimeout = c.ghTimeoutSec ?? '';
     startHidden = !!c.startHidden;
     closeToTray = c.closeToTray ?? true;
+    stackNative = !!c.stackNative;
     showSessionStatusBar = c.showSessionStatusBar ?? true;
     uiPrefs.showSessionStatusBar = showSessionStatusBar;
     toggleHotkey = c.toggleHotkey ?? '';
@@ -276,6 +278,14 @@
     closeToTray = v;
     if (!(await persist({ closeToTray: v }))) {
       closeToTray = !v;
+      return;
+    }
+    flash(t('settings.saved'));
+  }
+  async function toggleStackNative(v: boolean) {
+    stackNative = v;
+    if (!(await persist({ stackNative: v }))) {
+      stackNative = !v;
       return;
     }
     flash(t('settings.saved'));
@@ -431,6 +441,12 @@
           <span class="block text-sw-xs text-sw-text-muted">{t('settings.closeToTrayDesc')}</span>
         </span>
         <Toggle checked={closeToTray} onCheckedChange={toggleCloseToTray} title={t('settings.closeToTrayTip')} />
+      </label>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('settings.stackNative')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('settings.stackNativeDesc')}</span>
+        </span>
+        <Toggle checked={stackNative} onCheckedChange={toggleStackNative} title={t('settings.stackNativeTip')} />
       </label>
       <label class="flex items-center justify-between gap-sw-4">
         <span class="text-sw-sm">{t('settings.confirmDestructive')}

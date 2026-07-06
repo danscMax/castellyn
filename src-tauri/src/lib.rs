@@ -123,6 +123,15 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     settings_dir: Option<String>,
+    /// Opt-in: manage the LLM stack NATIVELY (Castellyn spawns/tracks/stops each service itself,
+    /// hidden, PID-tracked) instead of the PS launcher's detached `cmd /k` windows. None/false =
+    /// the scripts (default), so native ships dark until the owner smokes it live.
+    #[serde(
+        rename = "stackNative",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    stack_native: Option<bool>,
     #[serde(rename = "startHidden", default)]
     start_hidden: bool,
     // None = default (true): the ✕ button hides to tray. false = ✕ actually quits the app.
@@ -2908,6 +2917,266 @@ fn valid_stack_id(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+// ===================== Native LLM-stack supervisor (behind config.stackNative, default off) =========
+// Castellyn starts/tracks(PID)/stops each service ITSELF instead of the PS launcher's detached
+// `cmd /k` windows: hidden (CREATE_NO_WINDOW) → no orphaned consoles; killed by the tracked top-of-tree
+// pid → Stop always closes them; port-checked before spawn → no start race; output → a per-service log
+// file. PIDs persist to disk so Stop works across an app restart. Ships dark (scripts stay default)
+// until the owner flips stackNative and smokes it live.
+#[derive(Default)]
+struct StackProcs(Mutex<std::collections::HashMap<String, u32>>);
+
+// Cancel flag: a Stop signals an in-flight native start to abort its sequential spawn loop (mirrors
+// BULK_PLUGINS_CANCEL). Without it, Stop would kill the services started so far while the start loop
+// keeps spawning more.
+static STACK_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn stack_log_dir() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA")
+        .ok()
+        .map(|a| std::path::Path::new(&a).join("castellyn").join("stack-logs"))
+}
+fn stack_procs_path() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA")
+        .ok()
+        .map(|a| std::path::Path::new(&a).join("castellyn").join("stack-procs.json"))
+}
+fn load_stack_procs() -> std::collections::HashMap<String, u32> {
+    stack_procs_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+fn save_stack_procs(m: &std::collections::HashMap<String, u32>) {
+    if let Some(p) = stack_procs_path() {
+        if let Ok(txt) = serde_json::to_string(m) {
+            let _ = std::fs::write(p, txt);
+        }
+    }
+}
+
+/// Parse `netstat -ano` for LISTENING sockets → port → pid. Hidden. The fallback for stopping a
+/// service whose spawn pid we no longer hold (started outside the app, or after an app restart).
+fn listening_pids() -> std::collections::HashMap<u16, u32> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(o) = std::process::Command::new("netstat")
+        .args(["-ano", "-p", "TCP"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
+        return out;
+    };
+    for line in String::from_utf8_lossy(&o.stdout).lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        // "TCP  0.0.0.0:13001  0.0.0.0:0  LISTENING  1234"
+        if f.len() >= 5 && f[0].eq_ignore_ascii_case("TCP") && f[3].eq_ignore_ascii_case("LISTENING") {
+            if let (Some(port), Ok(pid)) = (
+                f[1].rsplit(':').next().and_then(|p| p.parse::<u16>().ok()),
+                f[4].parse::<u32>(),
+            ) {
+                out.entry(port).or_insert(pid);
+            }
+        }
+    }
+    out
+}
+
+/// Spawn ONE service in the background, HIDDEN, stdout+stderr appended to its log file. Returns the
+/// pid of the top `cmd` (kill_tree of it later takes the whole npm→node tree). env/cwd from the
+/// manifest; SCRIPTS_ROOT exported for {{SCRIPTS_ROOT}} expansion. Dropping the Child does NOT kill
+/// it on Windows — the service keeps running, tracked by pid.
+fn spawn_service_native(svc: &serde_json::Value) -> Option<u32> {
+    let s = |k: &str| svc.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let dir = expand_placeholders(&s("dir"));
+    let command = expand_placeholders(&s("command"));
+    let id = s("id");
+    if command.trim().is_empty() || !std::path::Path::new(&dir).is_dir() {
+        return None;
+    }
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/c", &command]);
+    cmd.current_dir(&dir);
+    cmd.env("SCRIPTS_ROOT", scripts_root());
+    if let Some(env) = svc.get("env").and_then(|e| e.as_object()) {
+        for (k, v) in env {
+            if let Some(val) = v.as_str() {
+                cmd.env(k, expand_placeholders(val));
+            }
+        }
+    }
+    if let Some(ld) = stack_log_dir() {
+        let _ = std::fs::create_dir_all(&ld);
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(ld.join(format!("{id}.log")))
+        {
+            if let Ok(f2) = f.try_clone() {
+                cmd.stdout(f);
+                cmd.stderr(f2);
+            }
+        }
+    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.spawn().ok().map(|c| c.id())
+}
+
+/// Wait until a service's port is listening (up to ~25s), the native equivalent of the launcher's
+/// Wait-Ready. Port-only for v1 (a listening port is a solid "came up" signal); health-path probing
+/// can layer on later.
+async fn native_wait_ready(svc: &serde_json::Value) -> bool {
+    let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+    if port == 0 {
+        return true;
+    }
+    for _ in 0..50 {
+        if probe_ports(&[port]).first().copied().unwrap_or(false) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    false
+}
+
+fn stack_emit(app: &AppHandle, line: String) {
+    let _ = app.emit(
+        "run-log",
+        LogLine {
+            component: stream_id::ENGINE.to_string(),
+            stream: "out".into(),
+            line,
+        },
+    );
+}
+
+/// Native START: spawn each target enabled service (idempotent — skip an already-listening port),
+/// track its pid, wait until it's up. `only` = one service; else the core+router groups (the PS
+/// -Router start-all). Aborts early if a Stop set STACK_CANCEL.
+async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
+    STACK_CANCEL.store(false, Ordering::SeqCst);
+    let mut started = 0;
+    for svc in stack_services() {
+        if STACK_CANCEL.load(Ordering::SeqCst) {
+            stack_emit(app, "[cancel] stop requested — aborting start".into());
+            break;
+        }
+        let sid = svc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let name = svc
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or(&sid)
+            .to_string();
+        let enabled = svc.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true);
+        let group = svc.get("group").and_then(|x| x.as_str()).unwrap_or("");
+        let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+        let target = match only {
+            Some(o) => sid == o,
+            None => enabled && matches!(group, "core" | "router"),
+        };
+        if !target {
+            continue;
+        }
+        if !enabled {
+            stack_emit(app, format!("[skip] {name}: disabled"));
+            continue;
+        }
+        if port != 0 && probe_ports(&[port]).first().copied().unwrap_or(false) {
+            stack_emit(app, format!("[skip] {name}: :{port} already up"));
+            continue;
+        }
+        match spawn_service_native(&svc) {
+            Some(pid) => {
+                {
+                    let mut m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
+                    m.insert(sid.clone(), pid);
+                    save_stack_procs(&m);
+                }
+                stack_emit(app, format!("[ .. ] {name} (pid {pid}) starting…"));
+                if native_wait_ready(&svc).await {
+                    started += 1;
+                    stack_emit(app, format!("[ ok ] {name}"));
+                } else {
+                    stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
+                }
+            }
+            None => stack_emit(app, format!("[fail] {name}: could not spawn (check dir / command)")),
+        }
+    }
+    stack_emit(app, format!("Started {started} service(s)."));
+    let _ = app.emit(
+        "run-done",
+        RunDone {
+            component: stream_id::ENGINE.to_string(),
+            code: 0,
+        },
+    );
+    0
+}
+
+/// Native STOP: kill each target service by its tracked top-of-tree pid (persisted, so it survives an
+/// app restart), with a port→pid fallback for anything we didn't spawn. kill_tree = taskkill /T so the
+/// whole npm→node tree dies and no window is orphaned.
+async fn native_stack_stop(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
+    STACK_CANCEL.store(true, Ordering::SeqCst);
+    let mut tracked = load_stack_procs();
+    {
+        let m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
+        for (k, v) in m.iter() {
+            tracked.insert(k.clone(), *v);
+        }
+    }
+    let by_port = listening_pids();
+    let mut stopped = 0;
+    for svc in stack_services() {
+        let sid = svc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if let Some(o) = only {
+            if sid != o {
+                continue;
+            }
+        }
+        let name = svc
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or(&sid)
+            .to_string();
+        let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+        let mut killed = false;
+        if let Some(pid) = tracked.get(&sid) {
+            if *pid != 0 && kill_tree(*pid).is_ok() {
+                killed = true;
+            }
+        }
+        if port != 0 {
+            if let Some(pid) = by_port.get(&port) {
+                let _ = kill_tree(*pid);
+                killed = true;
+            }
+        }
+        if killed {
+            stopped += 1;
+            stack_emit(app, format!("[stop] {name}"));
+        }
+        procs
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&sid);
+    }
+    {
+        let m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
+        save_stack_procs(&m);
+    }
+    stack_emit(app, format!("Stopped {stopped} service(s)."));
+    let _ = app.emit(
+        "run-done",
+        RunDone {
+            component: stream_id::ENGINE.to_string(),
+            code: 0,
+        },
+    );
+    0
+}
+
 /// Start or stop the LLM stack. With no `only`, acts on the whole stack (start `-Router` includes
 /// the paid GLM router on :4000; stop `-All`). With `only=<service id>`, acts on that one service
 /// via the launchers' `-Only` switch. Streamed via pwsh.
@@ -2915,6 +3184,7 @@ fn valid_stack_id(s: &str) -> bool {
 async fn run_stack(
     app: AppHandle,
     stack: State<'_, StackRun>,
+    procs: State<'_, StackProcs>,
     action: String,
     only: Option<String>,
 ) -> Result<i32, String> {
@@ -2925,51 +3195,68 @@ async fn run_stack(
         }
     }
     let id = stream_id::ENGINE;
+    // Opt-in native supervisor vs the PS launcher scripts (default). Both run under the same StackRun
+    // slot so start/stop concurrency + Stop's preempt behave identically.
+    let native = read_config_file().stack_native.unwrap_or(false);
+    let o = only.as_deref();
 
     match action.as_str() {
-        // Stop PREEMPTS any in-flight start (kills its tree), then tears down by port. Recovery must
-        // never be blocked by a running start — that was the "can't stop while starting" bug.
+        // Stop PREEMPTS any in-flight start (kills its tree), then tears down. Recovery must never be
+        // blocked by a running start — that was the "can't stop while starting" bug.
         "stop" => {
             let slot = StackSlot::reserve_preempt(stack.inner());
-            let args = match &only {
-                Some(id) => vec!["-Only".to_string(), id.clone()],
-                None => vec!["-All".to_string()],
+            let code = if native {
+                native_stack_stop(&app, procs.inner(), o).await
+            } else {
+                let args = match &only {
+                    Some(id) => vec!["-Only".to_string(), id.clone()],
+                    None => vec!["-All".to_string()],
+                };
+                spawn_stack_phase(&app, &slot, id, abs(STACK_STOP_REL), args, "run-done").await
             };
-            let code =
-                spawn_stack_phase(&app, &slot, id, abs(STACK_STOP_REL), args, "run-done").await;
             drop(slot);
             Ok(code)
         }
         "start" => {
             let slot = StackSlot::reserve(stack.inner())?;
-            let args = match &only {
-                Some(id) => vec!["-Only".to_string(), id.clone()],
-                None => vec!["-Router".to_string()],
+            let code = if native {
+                native_stack_start(&app, procs.inner(), o).await
+            } else {
+                let args = match &only {
+                    Some(id) => vec!["-Only".to_string(), id.clone()],
+                    None => vec!["-Router".to_string()],
+                };
+                spawn_stack_phase(&app, &slot, id, abs(STACK_START_REL), args, "run-done").await
             };
-            let code =
-                spawn_stack_phase(&app, &slot, id, abs(STACK_START_REL), args, "run-done").await;
             drop(slot);
             Ok(code)
         }
-        // Restart = stop then start under ONE stack slot, single run-done at the end. The stop phase
-        // emits an event the UI ignores so it doesn't read as a completed run mid-way. A second
-        // restart/start while one runs is rejected (only Stop preempts).
+        // Restart = stop then start under ONE stack slot. A second restart/start while one runs is
+        // rejected (only Stop preempts). The script path's stop phase emits an event the UI ignores.
         "restart" => {
             let slot = StackSlot::reserve(stack.inner())?;
-            let (stop_args, start_args) = match &only {
-                Some(id) => (
-                    vec!["-Only".to_string(), id.clone()],
-                    vec!["-Only".to_string(), id.clone()],
-                ),
-                None => (vec!["-All".to_string()], vec!["-Router".to_string()]),
+            let code = if native {
+                native_stack_stop(&app, procs.inner(), o).await;
+                native_stack_start(&app, procs.inner(), o).await
+            } else {
+                let (stop_args, start_args) = match &only {
+                    Some(id) => (
+                        vec!["-Only".to_string(), id.clone()],
+                        vec!["-Only".to_string(), id.clone()],
+                    ),
+                    None => (vec!["-All".to_string()], vec!["-Router".to_string()]),
+                };
+                let _ = spawn_stack_phase(
+                    &app,
+                    &slot,
+                    id,
+                    abs(STACK_STOP_REL),
+                    stop_args,
+                    "run-restart-stop",
+                )
+                .await;
+                spawn_stack_phase(&app, &slot, id, abs(STACK_START_REL), start_args, "run-done").await
             };
-            // Start even if stop failed — the goal is a running service.
-            let _ =
-                spawn_stack_phase(&app, &slot, id, abs(STACK_STOP_REL), stop_args, "run-restart-stop")
-                    .await;
-            let code =
-                spawn_stack_phase(&app, &slot, id, abs(STACK_START_REL), start_args, "run-done")
-                    .await;
             drop(slot);
             Ok(code)
         }
@@ -13496,6 +13783,7 @@ pub fn run() {
         )
         .manage(RunState::default())
         .manage(StackRun::default())
+        .manage(StackProcs::default())
         .manage(ForkRuns::default())
         .manage(SessionState::default())
         .manage(UsageCache::default())
