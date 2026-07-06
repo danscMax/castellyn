@@ -46,5 +46,13 @@ export function formatAbsTime(
   if (!ts) return t('common.dash');
   const d = new Date(ts);
   if (!Number.isNaN(d.getTime())) return d.toLocaleString(localeTag());
+  // Tolerate a bare Unix epoch: the limits API may report resets_at as a NUMBER, which the backend
+  // stringifies (e.g. "1751565600"), and a plain digit string is not a Date-parseable format. Tried
+  // only after ISO parsing fails, so real ISO/year strings ("2026") keep their existing handling.
+  if (/^\d{9,}$/.test(ts)) {
+    const n = Number(ts);
+    const de = new Date(ts.length <= 10 ? n * 1000 : n); // ≤10 digits = seconds, else milliseconds
+    if (!Number.isNaN(de.getTime())) return de.toLocaleString(localeTag());
+  }
   return snapshotFallback?.(ts) ?? t('common.dash');
 }

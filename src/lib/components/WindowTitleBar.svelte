@@ -19,7 +19,9 @@
   const peak = $derived(peakUtilization());
   const sessLive = $derived(agentSummary.working + agentSummary.blocked);
   const showStrip = $derived(
-    uiPrefs.showSessionStatusBar && (sessLive > 0 || agentSummary.done > 0 || peak != null)
+    uiPrefs.loaded &&
+      uiPrefs.showSessionStatusBar &&
+      (sessLive > 0 || agentSummary.done > 0 || peak != null)
   );
   const peakClass = $derived(
     !peak ? '' : peak.pct >= 99 ? 'strip-err' : peak.pct >= 85 ? 'strip-warn' : ''
@@ -35,7 +37,10 @@
   onMount(() => {
     syncMax();
     // Seed the shared pref from config once; the Settings toggle keeps it live thereafter.
-    readConfig().then((c) => (uiPrefs.showSessionStatusBar = c.showSessionStatusBar ?? true)).catch(() => {});
+    readConfig()
+      .then((c) => (uiPrefs.showSessionStatusBar = c.showSessionStatusBar ?? true))
+      .catch(() => {})
+      .finally(() => (uiPrefs.loaded = true));
     let unlisten: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
     appWin.onResized(syncMax).then((u) => (unlisten = u)).catch(() => {});

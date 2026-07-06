@@ -6,5 +6,8 @@
 
 export const uiPrefs = $state({
   // Wave C-5: native session-status strip in the window title bar. Default on.
-  showSessionStatusBar: true
+  showSessionStatusBar: true,
+  // False until the first config read resolves — the title-bar strip stays hidden until then so a
+  // user who turned it OFF doesn't see it flash on during the async readConfig() on startup.
+  loaded: false
 });
