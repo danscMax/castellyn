@@ -24,6 +24,7 @@ export default {
   colStatus: '状态',
   colActions: '操作',
   busyNote: '正在执行其他操作 — 操作暂时不可用',
+  syncCacheTip: '将缓存同步到你的源 (v{version}) — 这是你自己的插件，缓存落后于源',
   removeBtn: '删除',
   removeBtnTip: '卸载插件（claude plugin remove）',
   summary: '{plugins} · {updates} 个可更新 · {off} 个已禁用',

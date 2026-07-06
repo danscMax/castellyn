@@ -361,7 +361,7 @@
         {:else if col.key === 'version'}
           {@const up = updateMap.get(p.id)}
           <span class="ver">
-            {#if p.version && p.version !== 'unknown'}v{p.version}{:else}<span class="ph">—</span>{/if}{#if up}<span class="upto" title={t('plugins.updateAvailableBadgeTip', { version: up })}>→ v{up}</span>{/if}
+            {#if p.version && p.version !== 'unknown'}v{p.version}{:else}<span class="ph">—</span>{/if}{#if up}<button class="upto" disabled={busy} onclick={() => act('update', p.id)} title={p.mine ? t('plugins.syncCacheTip', { version: up }) : t('plugins.updateBtnTip', { version: up })}>→ v{up}</button>{/if}
           </span>
         {:else if col.key === 'desc'}
           {#if p.description}<span class="desc" title={p.description}>{p.description}</span>{:else}<span class="ph">—</span>{/if}
@@ -399,9 +399,6 @@
                 }))} />
             {/if}
             <button class="iconbtn" onclick={() => openChangelog(p.id)} title={t('plugins.changelogBtnTip')} aria-label={t('plugins.changelogBtn')}>{@render listIcon()}</button>
-            {#if updateMap.has(p.id)}
-              <button class="iconbtn" disabled={busy} onclick={() => act('update', p.id)} title={t('plugins.updateBtnTip', { version: updateMap.get(p.id) ?? '' })} aria-label={t('plugins.updateBtn')}>↑</button>
-            {/if}
             <button class="iconbtn danger" disabled={busy} onclick={() => act('remove', p.id)} title={t('plugins.removeBtnTip')} aria-label={t('plugins.removeBtn')}>{@render trashIcon()}</button>
           </span>
         {/if}
@@ -642,9 +639,24 @@
     color: var(--sw-text-secondary);
     white-space: nowrap;
   }
+  /* Clickable update/sync affordance in the version cell — the single "get the newer version"
+     control (the old duplicate ↑ action button was removed to kill the two-up-arrows confusion). */
   .upto {
     margin-left: 6px;
+    padding: 0 4px;
+    border: 1px solid transparent;
+    border-radius: var(--sw-radius-sm, 6px);
+    background: none;
+    font: inherit;
     color: var(--sw-accent-text);
+    cursor: pointer;
+  }
+  .upto:hover:not(:disabled) {
+    border-color: var(--sw-accent);
+  }
+  .upto:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
   .ph {
     color: var(--sw-text-muted);

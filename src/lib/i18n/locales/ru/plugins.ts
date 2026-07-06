@@ -24,6 +24,7 @@ export default {
   colStatus: 'Статус',
   colActions: 'Действия',
   busyNote: 'Идёт другая операция — действия временно недоступны',
+  syncCacheTip: 'Синхронизировать кэш с твоим источником (v{version}) — это твой плагин, кэш отстал от источника',
   removeBtn: 'Удалить',
   removeBtnTip: 'Удалить плагин (claude plugin remove)',
   summary: '{plugins} · {updates} с обновлением · {off} выключено',

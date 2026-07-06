@@ -24,6 +24,7 @@ export default {
   colStatus: 'Status',
   colActions: 'Actions',
   busyNote: 'Another operation is running — actions are temporarily unavailable',
+  syncCacheTip: 'Sync the cache to your source (v{version}) — this is your own plugin; the cache lags the source',
   removeBtn: 'Remove',
   removeBtnTip: 'Uninstall the plugin (claude plugin remove)',
   summary: '{plugins} · {updates} with updates · {off} disabled',
