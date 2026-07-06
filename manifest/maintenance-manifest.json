@@ -5,11 +5,11 @@
       "id": "all",
       "name": "Обновить всё",
       "group": "Оркестратор",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-All.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-All.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": [],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\all.last.json"
+      "lastJsonRel": "{{PROFILES}}\\all.last.json"
     },
     {
       "id": "plugins",
@@ -35,71 +35,71 @@
       "id": "rtk",
       "name": "RTK CLI",
       "group": "CLI-инструменты",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-RTK.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-RTK.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": ["-Force"],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\rtk.last.json"
+      "lastJsonRel": "{{PROFILES}}\\rtk.last.json"
     },
     {
       "id": "speckit",
       "name": "SpecKit команды",
       "group": "CLI-инструменты",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-SpecKit.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-SpecKit.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": ["-Force"],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\speckit.last.json"
+      "lastJsonRel": "{{PROFILES}}\\speckit.last.json"
     },
     {
       "id": "opencode",
       "name": "opencode CLI",
       "group": "CLI-инструменты",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-OpenCode.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-OpenCode.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": ["-Force"],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\opencode.last.json"
+      "lastJsonRel": "{{PROFILES}}\\opencode.last.json"
     },
     {
       "id": "ccrrouter",
       "name": "Claude Code Router",
       "group": "CLI-инструменты",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-CCR.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-CCR.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": ["-Force"],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\ccrrouter.last.json"
+      "lastJsonRel": "{{PROFILES}}\\ccrrouter.last.json"
     },
     {
       "id": "freellmapi",
       "name": "FreeLLMAPI прокси",
       "group": "CLI-инструменты",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-FreeLLMAPI.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-FreeLLMAPI.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": ["-Force"],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\freellmapi.last.json"
+      "lastJsonRel": "{{PROFILES}}\\freellmapi.last.json"
     },
     {
       "id": "cargo",
       "name": "Cargo-бинарники",
       "group": "CLI-инструменты",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Update-Cargo.ps1",
+      "scriptRel": "{{PROFILES}}\\Update-Cargo.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": ["-Force"],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\cargo.last.json"
+      "lastJsonRel": "{{PROFILES}}\\cargo.last.json"
     },
     {
       "id": "bomfix",
       "name": "BOM-fix конфигов",
       "group": "Обслуживание",
-      "scriptRel": "!Настройки и MCP\\ClaudeProfiles\\Fix-ClaudeBom.ps1",
+      "scriptRel": "{{PROFILES}}\\Fix-ClaudeBom.ps1",
       "checkArgs": ["-Check"],
       "applyArgs": [],
       "supportsApply": true,
-      "lastJsonRel": "!Настройки и MCP\\ClaudeProfiles\\bomfix.last.json"
+      "lastJsonRel": "{{PROFILES}}\\bomfix.last.json"
     }
   ]
 }
