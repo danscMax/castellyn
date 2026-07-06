@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { pickFolder, listSubdirs } from '$lib/ipc';
+  import { pickFolder } from '$lib/ipc';
   import { anchored } from '$lib/floating';
   import { t } from '$lib/i18n';
   import { FolderOpen, Star } from '@lucide/svelte';
 
-  // A folder input with a quick-pick dropdown: favourites + recent + a projects root's subfolders,
-  // plus native browse and a "set projects root" action. Favourites/root persist; recent is shared
-  // (written by the launcher on each launch).
+  // A folder input with a quick-pick dropdown: favourites + recent, plus native browse. One folder =
+  // one project (owner: "проект = папка") — no separate "projects root" concept in the picker; the
+  // root only seeds where Browse opens. Favourites persist; recent is shared (written on each launch).
   let {
     value = $bindable(''),
     placeholder = ''
@@ -21,8 +21,7 @@
   let rootEl = $state<HTMLDivElement>();
   let favorites = $state<string[]>([]);
   let recent = $state<string[]>([]);
-  let root = $state('');
-  let projects = $state<string[]>([]);
+  let root = $state(''); // only the Browse start dir now — not a "projects" list source
 
   function read() {
     try {
@@ -35,16 +34,9 @@
   }
   onMount(read);
 
-  async function openMenu() {
+  function openMenu() {
     read();
     open = true;
-    if (root) {
-      try {
-        projects = await listSubdirs(root);
-      } catch {
-        projects = [];
-      }
-    }
   }
   const base = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
   function choose(f: string) {
@@ -85,13 +77,7 @@
           <button class="row" onclick={() => choose(f)} title={f}><span class="b">{base(f)}</span><span class="p">{f}</span></button>
         {/each}
       {/if}
-      {#if projects.length}
-        <div class="sec">{t('sessions.projects')} · {base(root)}</div>
-        {#each projects as f (f)}
-          <button class="row" onclick={() => choose(f)} title={f}><span class="b">{base(f)}</span></button>
-        {/each}
-      {/if}
-      {#if !favorites.length && !recent.length && !projects.length}
+      {#if !favorites.length && !recent.length}
         <div class="sec">{t('sessions.folderMenuEmpty')}</div>
       {/if}
     </div>

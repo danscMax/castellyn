@@ -1265,7 +1265,7 @@
       iconHtml: `<span class="dot ${reachDotClass(sshReach[h.id])}" title="${reachTitle(sshReach[h.id])}"></span>`,
       hint: h.source === 'sshconfig' ? '~/.ssh/config' : undefined
     })),
-    { value: LOC_ADD, label: t('sessions.locAdd'), icon: '＋' }
+    { value: LOC_ADD, label: t('sessions.locAdd') } // label already carries a ＋ — no icon (was double)
   ]);
   function onLocChange(v: string) {
     if (v === LOC_ADD) {
