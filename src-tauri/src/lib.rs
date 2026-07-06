@@ -3028,44 +3028,59 @@ fn spawn_service_native(svc: &serde_json::Value) -> Option<u32> {
 /// One shared ~25s deadline for both, like start-stack.ps1. A bound port whose app isn't serving yet
 /// must NOT read as "up" (that was the v1 port-only gap). The blocking health GET runs off the async
 /// worker via spawn_blocking.
-async fn native_wait_ready(svc: &serde_json::Value) -> bool {
+/// Outcome of waiting for a service. A listening port alone counts as "up" — a declared health path
+/// is a soft upgrade, never a veto (an upstream-throttled proxy answers non-2xx on /v1/models while
+/// perfectly alive; failing it would report a running service as dead and leave it running).
+enum Readiness {
+    Down,   // port never listened within its budget — a real failure
+    PortUp, // port listens, but a declared health path didn't answer 2xx in time (still running)
+    Healthy, // port listens + 2xx health
+}
+
+async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
     let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     if port == 0 {
-        return true;
+        return Readiness::Healthy;
     }
     let health = svc
         .get("health")
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
-    // 1) port listen
+    // 1) wait for the port to listen — its OWN 25s budget. port_listening is a blocking TCP connect,
+    //    so run it off the async worker like the health probe below.
+    let port_deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
     let mut listening = false;
-    while std::time::Instant::now() < deadline {
-        if port_listening(port) {
+    while std::time::Instant::now() < port_deadline {
+        if tokio::task::spawn_blocking(move || port_listening(port))
+            .await
+            .unwrap_or(false)
+        {
             listening = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
     if !listening {
-        return false;
+        return Readiness::Down;
     }
     if health.is_empty() {
-        return true;
+        return Readiness::Healthy;
     }
-    // 2) HTTP health probe (any response = alive), same deadline. http_health_ok is blocking (ureq).
-    while std::time::Instant::now() < deadline {
+    // 2) soft health confirmation — a FRESH 15s budget so a slow-binding port can't starve it. A
+    //    non-2xx / no answer here downgrades to PortUp, it does NOT fail the service.
+    let health_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while std::time::Instant::now() < health_deadline {
         let h = health.clone();
-        let ok = tokio::task::spawn_blocking(move || http_health_ok(port, &h))
+        if tokio::task::spawn_blocking(move || http_health_ok(port, &h))
             .await
-            .unwrap_or(false);
-        if ok {
-            return true;
+            .unwrap_or(false)
+        {
+            return Readiness::Healthy;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    false
+    Readiness::PortUp
 }
 
 fn stack_emit(app: &AppHandle, line: String) {
@@ -3095,6 +3110,7 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     }
     let mut started = 0;
     let mut matched = 0;
+    let mut failed = 0;
     for svc in stack_services() {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             stack_emit(app, "[cancel] stop requested — aborting start".into());
@@ -3159,25 +3175,36 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                     save_stack_procs(&m);
                 }
                 stack_emit(app, format!("[ .. ] {name} (pid {pid}) starting…"));
-                if native_wait_ready(&svc).await {
-                    started += 1;
-                    stack_emit(app, format!("[ ok ] {name}"));
-                    // Auto-open the dashboard for services that declare it (gateway). Reuses the
-                    // opener command (scheme-guarded), not a console/Start-Process.
-                    if svc.get("openDashboard").and_then(|x| x.as_bool()).unwrap_or(false) {
-                        if let Some(url) = svc
-                            .get("dashboard")
-                            .and_then(|x| x.as_str())
-                            .filter(|u| !u.is_empty())
-                        {
-                            let _ = open_url(app.clone(), url.to_string());
+                match native_wait_ready(&svc).await {
+                    Readiness::Down => {
+                        failed += 1;
+                        stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
+                    }
+                    ready => {
+                        started += 1;
+                        if matches!(ready, Readiness::PortUp) {
+                            stack_emit(app, format!("[ ok ] {name} (port up; health not confirmed)"));
+                        } else {
+                            stack_emit(app, format!("[ ok ] {name}"));
+                        }
+                        // Auto-open the dashboard for services that declare it (gateway). Reuses the
+                        // opener command (scheme-guarded), not a console/Start-Process.
+                        if svc.get("openDashboard").and_then(|x| x.as_bool()).unwrap_or(false) {
+                            if let Some(url) = svc
+                                .get("dashboard")
+                                .and_then(|x| x.as_str())
+                                .filter(|u| !u.is_empty())
+                            {
+                                let _ = open_url(app.clone(), url.to_string());
+                            }
                         }
                     }
-                } else {
-                    stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
                 }
             }
-            None => stack_emit(app, format!("[fail] {name}: could not spawn (check command)")),
+            None => {
+                failed += 1;
+                stack_emit(app, format!("[fail] {name}: could not spawn (check command)"));
+            }
         }
     }
     if matched == 0 {
@@ -3185,14 +3212,17 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     } else {
         stack_emit(app, format!("Started {started} service(s)."));
     }
+    // Honest exit: a service that failed to come up must NOT surface as a green success (outcome.ts
+    // maps code!=0 → error toast). Skips (disabled / requires-missing / already-up) aren't failures.
+    let code = if failed > 0 { 1 } else { 0 };
     let _ = app.emit(
         "run-done",
         RunDone {
             component: stream_id::ENGINE.to_string(),
-            code: 0,
+            code,
         },
     );
-    0
+    code
 }
 
 /// Image name of a pid via `tasklist` (hidden), lowercased. None if not found. Guards the stop
@@ -3212,13 +3242,23 @@ fn pid_image_name(pid: u32) -> Option<String> {
 }
 
 fn is_ours_process(name: &str) -> bool {
-    name.starts_with("node") || name.starts_with("python") || name.starts_with("py")
+    // node/python = the actual service processes (hold the port); cmd = our `cmd /c` wrapper, which
+    // is the pid we track for kill_tree. All three are things we legitimately spawn.
+    name.starts_with("node")
+        || name.starts_with("python")
+        || name.starts_with("py")
+        || name.starts_with("cmd")
 }
 
 /// Native STOP: kill each target service by its tracked top-of-tree pid (persisted, so it survives an
 /// app restart), with a port→pid fallback (ownership-guarded) for anything we didn't spawn. kill_tree
 /// = taskkill /T so the whole npm→node tree dies and no window is orphaned.
-async fn native_stack_stop(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
+async fn native_stack_stop(
+    app: &AppHandle,
+    procs: &StackProcs,
+    only: Option<&str>,
+    emit_done: bool,
+) -> i32 {
     STACK_CANCEL.store(true, Ordering::SeqCst);
     if let Some(o) = only {
         if !stack_services()
@@ -3252,7 +3292,14 @@ async fn native_stack_stop(app: &AppHandle, procs: &StackProcs, only: Option<&st
         let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
         let mut killed = false;
         if let Some(pid) = tracked.get(&sid) {
-            if *pid != 0 && kill_tree(*pid).is_ok() {
+            // Guard the persisted pid: after a restart `tracked` comes from disk (stack-procs.json)
+            // and Windows may have reused it. Our tracked pid is always the `cmd /c` wrapper, so
+            // require the live image to still be ours before force-killing its whole tree.
+            // ponytail: residual = a reused pid that itself became cmd/node/python; narrow, accepted.
+            if *pid != 0
+                && pid_image_name(*pid).map(|n| is_ours_process(&n)).unwrap_or(false)
+                && kill_tree(*pid).is_ok()
+            {
                 killed = true;
             }
         }
@@ -3272,24 +3319,28 @@ async fn native_stack_stop(app: &AppHandle, procs: &StackProcs, only: Option<&st
         } else {
             stack_emit(app, format!("[ -- ] {name}: not running"));
         }
+        tracked.remove(&sid);
         procs
             .0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&sid);
     }
-    {
-        let m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
-        save_stack_procs(&m);
-    }
+    // Persist the remaining known pids (disk-minus-stopped), NOT just the in-memory map — a
+    // single-service stop after a restart must not wipe the OTHER services' persisted pids.
+    save_stack_procs(&tracked);
     stack_emit(app, format!("Stopped {stopped} service(s)."));
-    let _ = app.emit(
-        "run-done",
-        RunDone {
-            component: stream_id::ENGINE.to_string(),
-            code: 0,
-        },
-    );
+    // In a restart the start phase emits the final run-done; suppress the stop's to avoid a double
+    // run-done (double toast) on the ENGINE stream.
+    if emit_done {
+        let _ = app.emit(
+            "run-done",
+            RunDone {
+                component: stream_id::ENGINE.to_string(),
+                code: 0,
+            },
+        );
+    }
     0
 }
 
@@ -3322,7 +3373,7 @@ async fn run_stack(
         "stop" => {
             let slot = StackSlot::reserve_preempt(stack.inner());
             let code = if native {
-                native_stack_stop(&app, procs.inner(), o).await
+                native_stack_stop(&app, procs.inner(), o, true).await
             } else {
                 let args = match &only {
                     Some(id) => vec!["-Only".to_string(), id.clone()],
@@ -3352,7 +3403,7 @@ async fn run_stack(
         "restart" => {
             let slot = StackSlot::reserve(stack.inner())?;
             let code = if native {
-                native_stack_stop(&app, procs.inner(), o).await;
+                native_stack_stop(&app, procs.inner(), o, false).await;
                 native_stack_start(&app, procs.inner(), o).await
             } else {
                 let (stop_args, start_args) = match &only {
