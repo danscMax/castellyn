@@ -108,6 +108,8 @@ export default {
   phModelPlaceholder: 'provider/model',
   phCodexModelPlaceholder: 'model (default)',
   phCodexDefault: 'default profile',
+  codexNoProfiles: 'no profiles',
+  codexNoProfilesHint: 'Define [profiles.*] in ~/.codex/config.toml to pick one here',
   phOn: 'on',
   phIn: 'in',
   phWith: 'with',

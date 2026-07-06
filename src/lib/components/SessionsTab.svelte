@@ -157,7 +157,6 @@
       if (Array.isArray(recs)) recents = recs;
       const sr = JSON.parse(localStorage.getItem(SRKEY) ?? '{}');
       if (sr && typeof sr === 'object' && !Array.isArray(sr)) spaceRecipe = sr;
-      projectsRoot = localStorage.getItem(ROOT) ?? '';
       remoteRecent = JSON.parse(localStorage.getItem(RRKEY) ?? '[]');
       const c = Number(localStorage.getItem(CKEY));
       if (c >= 1 && c <= 3) columns = c;
@@ -1087,22 +1086,11 @@
     return spawn ? `${paneLabel(p)} · ${t('sessions.activeFor', { d: humanizeMs(Date.now() - spawn) })}` : paneLabel(p);
   }
 
-  // ─── Settings (⚙): projects root + default args + SSH servers — all in one place, no dialogs ───
-  const ROOT = 'cmh-projects-root';
-  let projectsRoot = $state('');
+  // ─── Settings (⚙): default args + SSH servers — all in one place, no dialogs ───
+  // The "browse starts in" root moved out of the launcher UI (owner: no duplicate folder inputs);
+  // FolderField still reads its last value from localStorage for the Browse dialog's start dir.
   function openSettings() {
     launcherOpen = true;
-  }
-  async function browseRoot() {
-    const d = await pickFolder(projectsRoot);
-    if (d) {
-      projectsRoot = d;
-      try {
-        localStorage.setItem(ROOT, d);
-      } catch {
-        /* ignore */
-      }
-    }
   }
   // Add-server form (inline in settings) — reuses the SSH host registry.
   let srvName = $state('');
@@ -1853,15 +1841,19 @@
         <span class="pw">{t('sessions.phModel')}</span>
         <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lCodexModel}
           placeholder={t('sessions.phCodexModelPlaceholder')} spellcheck="false" autocomplete="off" />
+        {#if !codexProfiles.length}
+          <span class="ph-note" title={t('sessions.codexNoProfilesHint')}>{t('sessions.codexNoProfiles')}</span>
+        {/if}
       {:else if lEnv === 'opencode'}
-        <!-- opencode model as provider/model — datalist offers the real catalog (fetched from the
-             providers) while staying free-form so an unlisted model can still be typed. -->
+        <!-- opencode model as provider/model — a themed Select of the real catalog (fetched from the
+             providers) when we have one; a free-form input as fallback so an unlisted model can be typed. -->
         <span class="pw">{t('sessions.phModel')}</span>
-        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel} list="opencode-models"
-          placeholder={opencodeModel || t('sessions.phModelPlaceholder')} spellcheck="false" autocomplete="off" />
-        <datalist id="opencode-models">
-          {#each opencodeModels as m (m)}<option value={m}></option>{/each}
-        </datalist>
+        {#if opencodeModels.length}
+          <div class="psel psel-wide"><Select bind:value={lOpencodeModel} options={opencodeModels} placeholder={opencodeModel || t('sessions.phModelPlaceholder')} /></div>
+        {:else}
+          <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel}
+            placeholder={opencodeModel || t('sessions.phModelPlaceholder')} spellcheck="false" autocomplete="off" />
+        {/if}
       {/if}
       <span class="pw">{t('sessions.phOn')}</span>
       <div class="psel"><Select value={lLoc} onChange={onLocChange} options={locOptions} placeholder={t('sessions.locThisPc')} /></div>
@@ -1908,16 +1900,10 @@
       </div>
     {/if}
 
-    <!-- Settings (⚙): projects root + default args + SSH servers — everything configurable, no dialogs -->
+    <!-- Settings (⚙): default args + SSH servers — everything configurable, no dialogs. The folder /
+         "browse starts in" root lives ONLY in the phrase now (owner: no duplicate folder inputs). -->
     {#if launcherOpen}
       <div class="settings">
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.projectsRootHint')}>{t('sessions.projectsRoot')}</span>
-          <input class="sw-input grow font-mono text-sw-xs" bind:value={projectsRoot}
-            placeholder={t('sessions.projectsRootPlaceholder')} spellcheck="false" autocomplete="off"
-            onchange={() => { try { localStorage.setItem(ROOT, projectsRoot); } catch { /* ignore */ } }} />
-          <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={browseRoot}>📁 {t('sessions.browse')}</button>
-        </div>
         <div class="set-row">
           <span class="set-k" title={t('sessions.defaultArgsHint')}>{t('sessions.defaultArgs')}</span>
           <input class="sw-input grow font-mono text-sw-xs" bind:value={defaultArgs}
@@ -2393,6 +2379,15 @@
   .phrase .pmodel {
     min-width: 150px;
     max-width: 220px;
+  }
+  .phrase .psel-wide {
+    min-width: 200px;
+  }
+  .phrase .ph-note {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    opacity: 0.85;
+    align-self: center;
   }
   .phrase .ssh-hint {
     flex-basis: 100%;

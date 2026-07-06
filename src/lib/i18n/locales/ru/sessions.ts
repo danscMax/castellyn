@@ -108,6 +108,8 @@ export default {
   phModelPlaceholder: 'провайдер/модель',
   phCodexModelPlaceholder: 'модель (по умолч.)',
   phCodexDefault: 'профиль по умолчанию',
+  codexNoProfiles: 'профилей нет',
+  codexNoProfilesHint: 'Добавь [profiles.*] в ~/.codex/config.toml, чтобы выбирать здесь',
   phOn: 'на',
   phIn: 'в папке',
   phWith: 'с',

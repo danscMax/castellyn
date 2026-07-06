@@ -108,6 +108,8 @@ export default {
   phModelPlaceholder: '提供方/模型',
   phCodexModelPlaceholder: '模型（默认）',
   phCodexDefault: '默认配置',
+  codexNoProfiles: '无配置',
+  codexNoProfilesHint: '在 ~/.codex/config.toml 添加 [profiles.*] 即可在此选择',
   phOn: '在',
   phIn: '于',
   phWith: '参数',
