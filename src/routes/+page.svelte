@@ -183,6 +183,10 @@
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
   let running = $state<string | null>(null);
+  // The LLM stack runs in its OWN backend concurrency domain (StackRun), so its busy state is
+  // tracked SEPARATELY from the global `running` — a stack op neither blocks nor is blocked by
+  // maintenance/config runs, and Stop is never gated (the backend preempts an in-flight start).
+  let stackRunning = $state<string | null>(null);
   let log = $state<string[]>([]);
   /** Cap the console buffer so a chatty/stuck script can't grow it without bound. */
   const MAX_LOG = 5000;
@@ -1407,7 +1411,9 @@
 
   // Start (-Router, incl. paid GLM) or stop (-All) the whole LLM stack via stack scripts.
   function onStack(action: 'start' | 'stop' | 'restart', only?: string) {
-    if (running) return;
+    // Stop is a teardown/recovery action — NEVER block it (the backend preempts an in-flight start).
+    // Only start/restart are rejected while a stack op is already running, on the stack's OWN state.
+    if (action !== 'stop' && stackRunning) return;
     const verb =
       action === 'start'
         ? t('page.stack_verb_start')
@@ -1415,9 +1421,15 @@
           ? t('page.stack_verb_restart')
           : t('page.stack_verb_stop');
     const go = () => {
-      running = 'engine';
+      stackRunning = action;
       log = [t('page.stack_log', { verb })];
-      runStack(action, only).catch(onSpawnErr);
+      // runStack resolves when the PS script finishes (backend awaits pump_and_wait); clear the
+      // stack-busy state then — decoupled from the global run-done handler.
+      runStack(action, only)
+        .catch(onSpawnErr)
+        .finally(() => {
+          stackRunning = null;
+        });
     };
     // Confirm only the destructive "stop the whole stack"; single-service stop is cheap to undo.
     if (action === 'stop' && !only) {
@@ -2546,6 +2558,7 @@
               {confirmDestructive}
               stack={stackData}
               {running}
+              {stackRunning}
               onEngine={onEngineAction}
               onStack={onStack}
               onProviderSet={onProviderSet}

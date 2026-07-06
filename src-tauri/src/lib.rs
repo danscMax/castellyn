@@ -539,6 +539,48 @@ impl Drop for RunSlot<'_> {
     }
 }
 
+// LLM-stack domain: start/stop/restart run in their OWN slot, independent of the global RunState — a
+// stack op neither blocks nor is blocked by maintenance/config/backup runs (those serialize on the
+// shared ~/.claude; the stack manages external processes, not config). Its own Mutex<Option<u32>>
+// holds the live stack-child pid so a Stop can PREEMPT (kill) an in-flight start — teardown is a
+// recovery action that must never be blocked (the single-slot design rejected Stop with
+// err.run_in_progress for the whole ~25s×service startup window).
+#[derive(Default)]
+struct StackRun(Mutex<Option<u32>>);
+
+struct StackSlot<'a>(&'a StackRun);
+impl<'a> StackSlot<'a> {
+    /// Claim the stack slot; Err if a stack op is already running (start/restart must not overlap).
+    fn reserve(s: &'a StackRun) -> Result<Self, String> {
+        let mut g = s.0.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_some() {
+            return Err(tr("err.run_in_progress", cur_lang()).into());
+        }
+        *g = Some(0);
+        Ok(StackSlot(s))
+    }
+    /// Claim the slot for a STOP, preempting any in-flight start (kill its tree first). Stop always
+    /// proceeds; stop-stack then tears down by port, so aborting a half-done start is safe.
+    fn reserve_preempt(s: &'a StackRun) -> Self {
+        let mut g = s.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(pid) = g.take() {
+            if pid != 0 {
+                let _ = kill_tree(pid);
+            }
+        }
+        *g = Some(0);
+        StackSlot(s)
+    }
+    fn set_pid(&self, pid: u32) {
+        *self.0 .0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
+    }
+}
+impl Drop for StackSlot<'_> {
+    fn drop(&mut self) {
+        *self.0 .0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 // Per-repo fork runs (path -> pid). Lets each fork update run concurrently and independently,
 // keyed by repo path, without the single RunState slot blocking the whole Forks tab.
 #[derive(Default)]
@@ -818,6 +860,51 @@ async fn spawn_pwsh_phase(
     };
     if let Some(pid) = child.id() {
         *state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
+    }
+    pump_and_wait(app.clone(), id.to_string(), child, "run-log", done_event).await
+}
+
+/// Stack-domain equivalent of spawn_pwsh_phase: run one pwsh script under an ALREADY-reserved
+/// StackSlot, streaming to "run-log"/`done_event`, recording the child pid on the slot so cancel_all
+/// and Stop's preempt can kill whichever phase is live. Kept separate from spawn_pwsh_phase so the
+/// stack's concurrency domain never touches the shared RunState hot path.
+async fn spawn_stack_phase(
+    app: &AppHandle,
+    slot: &StackSlot<'_>,
+    id: &str,
+    script: String,
+    args: Vec<String>,
+    done_event: &'static str,
+) -> i32 {
+    let full = pwsh_file_args(script, args);
+    let mut cmd = Command::new("pwsh");
+    for a in &full {
+        cmd.arg(a);
+    }
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.env("SCRIPTS_ROOT", scripts_root());
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = app.emit(
+                "run-log",
+                LogLine {
+                    component: id.to_string(),
+                    stream: "err".into(),
+                    line: trv(
+                        "err.spawn_failed",
+                        cur_lang(),
+                        &[("program", &"pwsh".to_string()), ("e", &e)],
+                    ),
+                },
+            );
+            return -1;
+        }
+    };
+    if let Some(pid) = child.id() {
+        slot.set_pid(pid);
     }
     pump_and_wait(app.clone(), id.to_string(), child, "run-log", done_event).await
 }
@@ -2827,7 +2914,7 @@ fn valid_stack_id(s: &str) -> bool {
 #[tauri::command]
 async fn run_stack(
     app: AppHandle,
-    state: State<'_, RunState>,
+    stack: State<'_, StackRun>,
     action: String,
     only: Option<String>,
 ) -> Result<i32, String> {
@@ -2837,68 +2924,61 @@ async fn run_stack(
             return Err(trv("err.invalid_service_id", cur_lang(), &[("id", &id)]));
         }
     }
+    let id = stream_id::ENGINE;
 
-    // Restart = stop then start under ONE run slot, with a single run-done at the end. The stop
-    // phase emits an event the UI ignores so it doesn't read as a completed run mid-way.
-    if action == "restart" {
-        let _slot = RunSlot::reserve(state.inner())?;
-        let (stop_args, start_args) = match &only {
-            Some(id) => (
-                vec!["-Only".to_string(), id.clone()],
-                vec!["-Only".to_string(), id.clone()],
-            ),
-            None => (vec!["-All".to_string()], vec!["-Router".to_string()]),
-        };
-        // Start even if stop failed — the goal is a running service.
-        // ponytail: a cancel during the stop phase still proceeds to start; fine for a restart.
-        let _ = spawn_pwsh_phase(
-            &app,
-            &state,
-            "engine",
-            abs(STACK_STOP_REL),
-            stop_args,
-            "run-restart-stop",
-        )
-        .await;
-        let code = spawn_pwsh_phase(
-            &app,
-            &state,
-            "engine",
-            abs(STACK_START_REL),
-            start_args,
-            "run-done",
-        )
-        .await;
-        drop(_slot); // release the run slot (also released on early return / panic above)
-        return Ok(code);
-    }
-
-    let (script, args) = match action.as_str() {
-        "start" => {
-            let script = abs(STACK_START_REL);
-            let args = match &only {
-                Some(id) => vec!["-Only".to_string(), id.clone()],
-                None => vec!["-Router".to_string()],
-            };
-            (script, args)
-        }
+    match action.as_str() {
+        // Stop PREEMPTS any in-flight start (kills its tree), then tears down by port. Recovery must
+        // never be blocked by a running start — that was the "can't stop while starting" bug.
         "stop" => {
-            let script = abs(STACK_STOP_REL);
+            let slot = StackSlot::reserve_preempt(stack.inner());
             let args = match &only {
                 Some(id) => vec!["-Only".to_string(), id.clone()],
                 None => vec!["-All".to_string()],
             };
-            (script, args)
+            let code =
+                spawn_stack_phase(&app, &slot, id, abs(STACK_STOP_REL), args, "run-done").await;
+            drop(slot);
+            Ok(code)
         }
-        _ => {
-            return Err(trv(
-                "err.unknown_stack_action",
-                cur_lang(),
-                &[("action", &action)],
-            ))
+        "start" => {
+            let slot = StackSlot::reserve(stack.inner())?;
+            let args = match &only {
+                Some(id) => vec!["-Only".to_string(), id.clone()],
+                None => vec!["-Router".to_string()],
+            };
+            let code =
+                spawn_stack_phase(&app, &slot, id, abs(STACK_START_REL), args, "run-done").await;
+            drop(slot);
+            Ok(code)
         }
-    };
-    spawn_streamed(app, state, stream_id::ENGINE.to_string(), script, args).await
+        // Restart = stop then start under ONE stack slot, single run-done at the end. The stop phase
+        // emits an event the UI ignores so it doesn't read as a completed run mid-way. A second
+        // restart/start while one runs is rejected (only Stop preempts).
+        "restart" => {
+            let slot = StackSlot::reserve(stack.inner())?;
+            let (stop_args, start_args) = match &only {
+                Some(id) => (
+                    vec!["-Only".to_string(), id.clone()],
+                    vec!["-Only".to_string(), id.clone()],
+                ),
+                None => (vec!["-All".to_string()], vec!["-Router".to_string()]),
+            };
+            // Start even if stop failed — the goal is a running service.
+            let _ =
+                spawn_stack_phase(&app, &slot, id, abs(STACK_STOP_REL), stop_args, "run-restart-stop")
+                    .await;
+            let code =
+                spawn_stack_phase(&app, &slot, id, abs(STACK_START_REL), start_args, "run-done")
+                    .await;
+            drop(slot);
+            Ok(code)
+        }
+        _ => Err(trv(
+            "err.unknown_stack_action",
+            cur_lang(),
+            &[("action", &action)],
+        )),
+    }
 }
 
 const STACK_PROCS_SCRIPT_REL: &str = "Castellyn\\tools\\stack\\Stack-Procs.ps1";
@@ -12060,12 +12140,20 @@ fn cancel_run(state: State<'_, RunState>) -> Result<(), String> {
 fn cancel_all(
     app: AppHandle,
     run: State<'_, RunState>,
+    stack: State<'_, StackRun>,
     forks: State<'_, ForkRuns>,
     sessions: State<'_, SessionState>,
 ) -> Result<(), String> {
-    // 1. The single-slot run (backup / profiles / sync / engine / component / single plugin op).
+    // 1. The single-slot run (backup / profiles / sync / component / single plugin op).
     let run_pid = { *run.0.lock().unwrap_or_else(|e| e.into_inner()) };
     if let Some(p) = run_pid {
+        if p != 0 {
+            let _ = kill_tree(p);
+        }
+    }
+    // 1b. The LLM-stack run (its own domain now) — kill whichever start/stop/restart phase is live.
+    let stack_pid = { *stack.0.lock().unwrap_or_else(|e| e.into_inner()) };
+    if let Some(p) = stack_pid {
         if p != 0 {
             let _ = kill_tree(p);
         }
@@ -13407,6 +13495,7 @@ pub fn run() {
                 .build(),
         )
         .manage(RunState::default())
+        .manage(StackRun::default())
         .manage(ForkRuns::default())
         .manage(SessionState::default())
         .manage(UsageCache::default())

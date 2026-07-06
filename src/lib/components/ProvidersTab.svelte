@@ -25,6 +25,7 @@
     providers,
     stack = null,
     running,
+    stackRunning = null,
     confirmDestructive = true,
     onEngine,
     onStack,
@@ -49,6 +50,9 @@
     providers: ProfileProvider[] | null;
     stack?: StackService[] | null;
     running: string | null;
+    /** LLM-stack busy state — its own concurrency domain, separate from `running`. Stop is never
+     *  gated by it (the backend preempts an in-flight start); only start/restart are. */
+    stackRunning?: string | null;
     /** R8: mirror the global "confirm destructive actions" toggle (settings #120). */
     confirmDestructive?: boolean;
     onEngine: (action: 'start' | 'stop', id: string) => void;
@@ -72,6 +76,10 @@
   } = $props();
 
   const busy = $derived(!!running);
+  // Stack start/restart gate on the stack's own busy; Stop is NEVER gated (backend preempts a
+  // running start) except against a stop already in flight (avoid double-fire).
+  const stackBusy = $derived(!!stackRunning);
+  const stopBusy = $derived(stackRunning === 'stop');
   const engineList = $derived(engines ?? []);
   const providerList = $derived(providers ?? []);
   const profileNames = $derived(providerList.map((p) => p.name));
@@ -355,9 +363,9 @@
           </span>
         </button>
         <div class="flex shrink-0 gap-sw-2">
-          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onStack?.('start')}
+          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start')}
             title={t('providers.stackStartTip')}>{t('providers.stackStartAll')}</button>
-          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onStack?.('stop')}
+          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop')}
             title={t('providers.stackStopTip')}>{t('providers.stackStopAll')}</button>
         </div>
       </div>
@@ -397,12 +405,12 @@
             </div>
             <div class="mt-auto flex flex-wrap gap-sw-2 border-t border-sw-border pt-sw-2">
               {#if s.running}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onStack?.('stop', s.id)}
+                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop', s.id)}
                   title={t('providers.stackStopOneTip', { name: s.name })}>{t('providers.stop')}</button>
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onStack?.('restart', s.id)}
+                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('restart', s.id)}
                   title={t('providers.stackRestartOneTip', { name: s.name })}>{t('providers.restart')}</button>
               {:else}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onStack?.('start', s.id)}
+                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start', s.id)}
                   title={t('providers.stackStartOneTip', { name: s.name })}>{t('providers.start')}</button>
               {/if}
               {#if s.dashboard}
