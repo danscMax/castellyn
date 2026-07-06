@@ -127,6 +127,8 @@
   const RRKEY = 'cmh-remote-recent'; // recently-used SSH remote start dirs (datalist for #19)
   const MLKEY = 'cmh-monitor-layout'; // saved "разнести" arrangement, offered for restore on launch
   let savedLayoutExists = $state(false); // is there a saved monitor layout to restore / forget (#13)
+  let savedLayoutSummary = $state(''); // one-line spec of the saved monitor layout (tool@profile · folder)
+  let layoutBannerDismissed = $state(false); // hide the inline monitor-restore banner once acted on
   let lastFolders = $state<Record<string, string>>({});
   // Default launch args, seeded into the phrase's args field for Claude/opencode.
   let defaultArgs = $state('');
@@ -244,24 +246,19 @@
         pushToast({ kind: 'error', title: t('sessions.monitorOpenFailed') });
       })
     );
-    // Offer to restore the last monitor arrangement (the user's "restore on launch" choice). A toast
-    // with a one-click action — non-aggressive: we don't auto-spawn a grid of terminals every start.
+    // Note a saved per-monitor arrangement so the launcher can offer to restore it as an INLINE banner
+    // next to the in-grid session restore. (Was a floating bottom-right toast: it covered the launcher
+    // buttons behind it AND read as the same thing as the in-grid restore — two confusingly-similar
+    // "Восстановить" prompts. Inline + distinctly labelled fixes both — owner report 2026-07-06.)
     try {
       const saved = localStorage.getItem(MLKEY);
       savedLayoutExists = !!(saved && saved !== '{}');
       if (savedLayoutExists) {
-        let detail = '';
         try {
-          detail = layoutSummary(JSON.parse(saved!));
+          savedLayoutSummary = layoutSummary(JSON.parse(saved!));
         } catch {
-          /* ignore — show the prompt without the spec list */
+          savedLayoutSummary = '';
         }
-        pushToast({
-          kind: 'info',
-          title: t('sessions.restoreLayoutPrompt'),
-          detail,
-          action: { label: t('sessions.restoreLayoutAction'), onClick: restoreLayout }
-        });
       }
     } catch {
       /* ignore */
@@ -2074,12 +2071,23 @@
     <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-text-muted)">{t('sessions.globalNearNote', { used: globalCount, max: SESSION_LIMIT })}</p>
   {/if}
 
-  <!-- Restore the previous run's session set (claude panes resume their conversation) -->
+  <!-- Restore the previous run's session set IN-GRID (claude panes resume their conversation) -->
   {#if restorable.length}
     <div class="restorebar">
       <span class="text-sw-xs">{t('sessions.restoreOffer', { n: restorable.length })}</span>
       <button class="sw-btn sw-btn-primary text-sw-xs" onclick={restoreLast}>{t('sessions.restoreDo')}</button>
       <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (restorable = [])}>{t('sessions.restoreDismiss')}</button>
+    </div>
+  {/if}
+
+  <!-- Restore the previous per-MONITOR arrangement (detached windows) — distinct from the in-grid
+       restore above (icon + "по мониторам") so the two aren't confused, and INLINE so it never covers
+       the launcher buttons the way the old floating toast did. -->
+  {#if savedLayoutExists && !layoutBannerDismissed}
+    <div class="restorebar">
+      <span class="text-sw-xs">🖥 {t('sessions.restoreLayoutPrompt')}{#if savedLayoutSummary} · <span class="text-sw-text-muted">{savedLayoutSummary}</span>{/if}</span>
+      <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => { layoutBannerDismissed = true; void restoreLayout(); }}>{t('sessions.restoreLayoutAction')}</button>
+      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={forgetLayout}>{t('sessions.forgetLayout')}</button>
     </div>
   {/if}
 

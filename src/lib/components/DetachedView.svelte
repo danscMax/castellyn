@@ -28,16 +28,32 @@
 
   const cols = $derived(Math.max(1, Math.min(3, Math.ceil(Math.sqrt(panes.length)))));
 
+  // Live session id per pane (paneKey → id), captured from TerminalPane's onIdChange. A pane RESTORED
+  // from a saved monitor layout carries NO spec sessionId (it spawns fresh here), so without this its
+  // "return to main" stayed disabled — the trapped-on-a-monitor bug (owner report 2026-07-06).
+  let liveIds = $state<Record<string, string>>({});
+  function setLiveId(key: string, id: string | null) {
+    if (id) {
+      liveIds = { ...liveIds, [key]: id };
+    } else {
+      const copy = { ...liveIds };
+      delete copy[key];
+      liveIds = copy;
+    }
+  }
   function closePane(key: string) {
     panes = panes.filter((p) => p._key !== key);
+    setLiveId(key, null);
     if (!panes.length) win.close();
   }
   function returnPane(p: DetachPane & { _key: string }) {
-    if (!p.sessionId) return;
+    // Prefer the LIVE id (freshly spawned on restore); fall back to the spec id (panes moved here).
+    const id = liveIds[p._key] ?? p.sessionId;
+    if (!id) return;
     // Hand this LIVE session back to the main window (it re-attaches as the owner); our pane then
     // unmounts → detaches its own channel (markMoved → no kill). The session never restarts.
-    emit('pane:add', { target: 'main', pane: { ...p, owns: true } });
-    markMoved(p.sessionId);
+    emit('pane:add', { target: 'main', pane: { ...p, sessionId: id, owns: true } });
+    markMoved(id);
     closePane(p._key);
   }
   function closeWin() {
@@ -64,8 +80,9 @@
               ownsSession={p.owns ?? true}
               displayName={p.title}
               paneKey={p._key}
+              onIdChange={setLiveId}
               onClose={() => closePane(p._key)}
-              onReturnToMain={p.sessionId ? () => returnPane(p) : undefined}
+              onReturnToMain={(liveIds[p._key] ?? p.sessionId) ? () => returnPane(p) : undefined}
             />
           </div>
         {/each}

@@ -55,6 +55,10 @@
     flex-direction: column;
     gap: 8px;
     max-width: min(380px, 90vw);
+    /* The container spans the gaps between toasts; without this it would swallow clicks on the
+       controls behind it (owner report: bottom-right toasts covered launcher buttons). Only the
+       toasts + dismiss-all opt back into pointer events. */
+    pointer-events: none;
     /* A burst of sticky error toasts can't grow off-screen / out of reach — the stack scrolls. */
     max-height: calc(100vh - 32px);
     overflow-y: auto;
@@ -71,6 +75,7 @@
     background: var(--sw-bg-secondary);
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
     animation: slidein 0.16s ease;
+    pointer-events: auto;
   }
   .toast.success { border-left-color: var(--sw-success); }
   .toast.info { border-left-color: #38bdf8; }
@@ -103,6 +108,7 @@
   .acts:empty { display: none; }
   .dismiss-all {
     align-self: flex-end;
+    pointer-events: auto;
     padding: 2px 10px;
     font-size: var(--sw-text-xs);
     color: var(--sw-text-secondary);
