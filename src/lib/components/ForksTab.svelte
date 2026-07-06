@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { confFiles, type ForkStatus, type ForkAction, type GithubRepo } from '$lib/ipc';
+  import { confFiles, pickFolder, readForkConfig, writeForkConfig, type ForkConfig, type ForkStatus, type ForkAction, type GithubRepo } from '$lib/ipc';
   import { forkMode, t, plural, pRepo, pConflict } from '$lib/i18n';
   import { relTime, formatAbsTime } from '$lib/relativeTime';
   import { statusTextClass } from '$lib/statusColor';
   import ForkRepoCard from './ForkRepoCard.svelte';
   import EmptyState from './EmptyState.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
-  import { GitFork, ArrowUpDown } from '@lucide/svelte';
+  import { GitFork, ArrowUpDown, FolderPlus, X } from '@lucide/svelte';
+  import { onMount } from 'svelte';
 
   let {
     status,
@@ -37,6 +38,52 @@
     cloningRepo?: string | null;
     profiles?: string[];
   } = $props();
+
+  // --- Fork discovery config (de-hardcode): user-editable roots/paths/ownPaths, durable in %APPDATA%.
+  let cfgOpen = $state(false);
+  let forkCfg = $state<ForkConfig | null>(null);
+  let cfgSaving = $state(false);
+  let cfgDirty = $state(false);
+  onMount(async () => {
+    try {
+      forkCfg = await readForkConfig();
+    } catch {
+      forkCfg = { roots: [], paths: [], ownPaths: [] };
+    }
+  });
+  async function addFolder(kind: 'roots' | 'paths' | 'ownPaths') {
+    if (!forkCfg) return;
+    const picked = await pickFolder();
+    if (!picked) return;
+    if (forkCfg[kind].includes(picked)) return; // no dupes
+    forkCfg[kind] = [...forkCfg[kind], picked];
+    cfgDirty = true;
+  }
+  function removeFolder(kind: 'roots' | 'paths' | 'ownPaths', value: string) {
+    if (!forkCfg) return;
+    forkCfg[kind] = forkCfg[kind].filter((v) => v !== value);
+    cfgDirty = true;
+  }
+  async function saveForkCfg() {
+    if (!forkCfg) return;
+    cfgSaving = true;
+    try {
+      await writeForkConfig(forkCfg);
+      cfgDirty = false;
+      onAction('check'); // re-scan with the new config so the cards reflect it
+    } finally {
+      cfgSaving = false;
+    }
+  }
+  const cfgGroups = $derived(
+    forkCfg
+      ? ([
+          { kind: 'roots' as const, label: t('forks.cfgRoots'), hint: t('forks.cfgRootsHint'), items: forkCfg.roots },
+          { kind: 'paths' as const, label: t('forks.cfgPaths'), hint: t('forks.cfgPathsHint'), items: forkCfg.paths },
+          { kind: 'ownPaths' as const, label: t('forks.cfgOwn'), hint: t('forks.cfgOwnHint'), items: forkCfg.ownPaths }
+        ])
+      : []
+  );
 
   const anyRunning = $derived(!!running);
   // Per-repo action buttons must NOT be disabled by an unrelated global run (sync/rtk/plugins): the
@@ -104,6 +151,12 @@
       ? list.sort((a, b) => (b.behindBy ?? 0) - (a.behindBy ?? 0) || a.Name.localeCompare(b.Name))
       : list.sort((a, b) => a.Name.localeCompare(b.Name));
   });
+  // A repo the scanner found under a root but that has no GitHub parent and isn't declared own
+  // (Skipped='not-a-fork') is un-actionable — collapse these out of the main grid so they stop
+  // crowding the real cards. From the group you can reclassify (add to ownPaths / drop the root).
+  const actionableRepos = $derived(sortedRepos.filter((r) => r.Skipped !== 'not-a-fork'));
+  const notForks = $derived(sortedRepos.filter((r) => r.Skipped === 'not-a-fork'));
+  let nfOpen = $state(false);
   const filteredGithubOnly = $derived(
     // Not-cloned repos have no local status, so hide them while a status filter is active.
     statusFilter
@@ -212,6 +265,59 @@
     </div>
   </header>
 
+  <!-- De-hardcode: which folders/repos are tracked is user config, editable here (durable in
+       %APPDATA%), not baked in. "Scan a folder" = add it as a root; the next check discovers repos
+       under it and classifies fork/own/not-a-fork. -->
+  {#if forkCfg}
+    <section class="mb-sw-4">
+      <button
+        class="mb-sw-2 flex items-center gap-sw-2 text-sw-sm font-semibold text-sw-text-secondary hover:text-sw-text"
+        onclick={() => (cfgOpen = !cfgOpen)}
+        title={t('forks.cfgTip')}
+      >
+        <span class="text-sw-text-muted">{cfgOpen ? '▾' : '▸'}</span>
+        {t('forks.cfgHeading')}
+      </button>
+      {#if cfgOpen}
+        <div class="sw-card flex flex-col gap-sw-4">
+          {#each cfgGroups as g (g.kind)}
+            <div>
+              <div class="mb-sw-1 flex items-center justify-between gap-sw-2">
+                <div class="min-w-0">
+                  <span class="text-sw-sm font-medium">{g.label}</span>
+                  <span class="ml-sw-2 text-sw-xs text-sw-text-muted">{g.hint}</span>
+                </div>
+                <button class="sw-btn sw-btn-ghost mini shrink-0" onclick={() => addFolder(g.kind)} title={t('forks.cfgAddTip')}>
+                  <FolderPlus size={13} aria-hidden="true" /> {t('forks.cfgAdd')}
+                </button>
+              </div>
+              {#if g.items.length}
+                <div class="flex flex-col gap-sw-1">
+                  {#each g.items as item (item)}
+                    <div class="flex items-center gap-sw-2 rounded-sw-sm bg-sw-bg-secondary px-sw-2 py-1">
+                      <span class="min-w-0 flex-1 truncate font-mono text-sw-xs" title={item}>{item}</span>
+                      <button class="text-sw-text-muted hover:text-sw-danger" onclick={() => removeFolder(g.kind, item)} title={t('forks.cfgRemoveTip')} aria-label={t('forks.cfgRemoveTip')}>
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <p class="text-sw-xs text-sw-text-muted">{t('forks.cfgEmpty')}</p>
+              {/if}
+            </div>
+          {/each}
+          <div class="flex items-center gap-sw-3">
+            <button class="sw-btn sw-btn-primary" disabled={!cfgDirty || cfgSaving} onclick={saveForkCfg} title={t('forks.cfgSaveTip')}>
+              {cfgSaving ? t('common.busy') : t('forks.cfgSave')}
+            </button>
+            {#if cfgDirty}<span class="text-sw-xs status-warn">{t('forks.cfgUnsaved')}</span>{/if}
+          </div>
+        </div>
+      {/if}
+    </section>
+  {/if}
+
   {#if summary}
     <div class="sw-card mb-sw-4 flex flex-wrap items-center gap-sw-6">
       {#each kpis as k (k.label)}
@@ -259,7 +365,7 @@
       </button>
     </div>
     <div class="card-grid">
-      {#each sortedRepos as repo (repo.Path)}
+      {#each actionableRepos as repo (repo.Path)}
         <div data-highlight-id={repo.Name ? `repo:${repo.Name}` : undefined}>
         <ForkRepoCard
           {repo}
@@ -287,6 +393,37 @@
     </div>
   {:else}
     <EmptyState icon={GitFork} title={t('forks.emptyTitle')} description={t('forks.emptyHint')} />
+  {/if}
+
+  {#if notForks.length}
+    <section class="mt-sw-6">
+      <button
+        class="mb-sw-2 flex items-center gap-sw-2 text-sw-sm font-semibold text-sw-text-secondary hover:text-sw-text"
+        onclick={() => (nfOpen = !nfOpen)}
+        title={t('forks.notForksTip')}
+      >
+        <span class="text-sw-text-muted">{nfOpen ? '▾' : '▸'}</span>
+        {t('forks.notForksHeading', { n: notForks.length })}
+      </button>
+      {#if nfOpen}
+        <div class="card-grid">
+          {#each notForks as repo (repo.Path)}
+            <div data-highlight-id={repo.Name ? `repo:${repo.Name}` : undefined}>
+              <ForkRepoCard
+                {repo}
+                anyRunning={forkSweepRunning}
+                run={forkRuns[repo.Path]}
+                onAction={(a, p, l) => onAction(a, p, l)}
+                onCancel={() => onCancelFork?.(repo.Path)}
+                {onOpenSession}
+                {profiles}
+                refreshing={running === 'forks'}
+              />
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
   {/if}
 
   {#if githubOnly.length}

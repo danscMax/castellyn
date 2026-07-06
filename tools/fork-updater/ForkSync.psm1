@@ -456,8 +456,10 @@ function Get-ActionHint {
 # ─────────────────────────────────────────────────────────────────────────────
 
 function Get-ForkSyncConfig {
-    param([string]$Root, [string[]]$Roots, [string[]]$Paths, [int]$FetchTimeoutSec, [int]$GhTimeoutSec)
-    $cfgFile = Join-Path $Root 'repos.json'
+    param([string]$Root, [string[]]$Roots, [string[]]$Paths, [int]$FetchTimeoutSec, [int]$GhTimeoutSec, [string]$ConfigPath)
+    # Durable config path (Castellyn writes %APPDATA%\castellyn\forks.json) wins over the vendored
+    # repos.json next to this module — so a user's fork config isn't clobbered on a tool update.
+    $cfgFile = if ($ConfigPath -and (Test-Path -LiteralPath $ConfigPath)) { $ConfigPath } else { Join-Path $Root 'repos.json' }
     $cfg = $null
     if (Test-Path -LiteralPath $cfgFile) {
         try { $cfg = Get-Content -Raw -LiteralPath $cfgFile | ConvertFrom-Json }
@@ -976,7 +978,9 @@ function Invoke-ForkSync {
         # Strict single-repo mode: process ONLY this path (ignore roots/own config) and write the
         # result to -OutFile. Lets Castellyn run repos concurrently (per-repo lock + per-repo JSON).
         [string]$Single,
-        [string]$OutFile
+        [string]$OutFile,
+        # Durable fork config (Castellyn %APPDATA%\castellyn\forks.json); overrides vendored repos.json.
+        [string]$ConfigPath
     )
     $start = Get-Date
     $log = Initialize-Logging -Root $Root -Prefix 'fork-sync'
@@ -995,7 +999,7 @@ function Invoke-ForkSync {
     if ($ghAvailable) { Write-Status 'gh авторизован — статусы PR будут точными.' 'OK' }
     else { Write-Status 'gh недоступен/без авторизации — роли по эвристике, статусы PR = unknown.' 'WARN' }
 
-    $cfg = Get-ForkSyncConfig -Root $Root -Roots $Roots -Paths $Paths -FetchTimeoutSec $FetchTimeoutSec -GhTimeoutSec $GhTimeoutSec
+    $cfg = Get-ForkSyncConfig -Root $Root -Roots $Roots -Paths $Paths -FetchTimeoutSec $FetchTimeoutSec -GhTimeoutSec $GhTimeoutSec -ConfigPath $ConfigPath
     $repos = Find-ManagedRepos -Roots $cfg.Roots -Paths $cfg.Paths
     $ownRepos = @(Find-ManagedRepos -Paths $cfg.OwnPaths | Where-Object { $_ -notin $repos })
     if ($Single) {

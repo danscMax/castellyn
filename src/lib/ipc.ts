@@ -48,6 +48,18 @@ export const cancelForkRepo = (path: string) => invoke('cancel_fork_repo', { pat
 // Fresh state of one repo after a -Single run (for merging into the list without a full rescan).
 export const readForkRepoStatus = (path: string) => invoke<ForkRepo | null>('read_fork_repo_status', { path });
 
+// User-editable fork discovery config (durable %APPDATA%\castellyn\forks.json). roots = parent dirs
+// scanned for .git repos; paths = explicit fork dirs; ownPaths = your own (non-fork) repos.
+export type ForkConfig = {
+  roots: string[];
+  paths: string[];
+  ownPaths: string[];
+  fetchTimeoutSec?: number;
+  ghTimeoutSec?: number;
+};
+export const readForkConfig = () => invoke<ForkConfig>('read_fork_config');
+export const writeForkConfig = (config: ForkConfig) => invoke('write_fork_config', { config });
+
 export type ForkBranch = {
   name: string;
   prNumber: number | null;

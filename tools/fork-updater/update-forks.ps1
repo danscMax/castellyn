@@ -30,7 +30,8 @@ param(
     [switch]$DryRun,           # with an action flag: print the plan, change nothing
     [switch]$Yes,              # skip confirmations (for scripting / the skill)
     [string]$Single,          # strict single-repo mode (process ONLY this path) — concurrent-safe
-    [string]$OutFile          # write the status JSON here instead of the shared fork-sync.last.json
+    [string]$OutFile,         # write the status JSON here instead of the shared fork-sync.last.json
+    [string]$ConfigPath       # durable fork config (Castellyn %APPDATA%\castellyn\forks.json)
 )
 
 chcp 65001 | Out-Null
@@ -55,7 +56,7 @@ try {
         -Apply:$Apply -FfMain:$FfMain -DeleteMerged:$DeleteMerged -NormalizeRemotes:$NormalizeRemotes `
         -Rebase:$Rebase -SyncWipLocal:$SyncWipLocal -DeleteWip:$DeleteWip -Prune:$Prune `
         -PushRebased:$PushRebased -DryRun:$DryRun -Yes:$Yes `
-        -Single $Single -OutFile $OutFile
+        -Single $Single -OutFile $OutFile -ConfigPath $ConfigPath
 
     exit ([int]$code)
 }

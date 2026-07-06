@@ -1048,6 +1048,83 @@ fn fork_repo_out_file(path: &str) -> Option<String> {
     ))
 }
 
+/// User-editable fork discovery config, surfaced in the Forks tab. Mirrors the JSON the fork-sync
+/// script reads (`roots`/`paths`/`ownPaths`/`fetchTimeoutSec`/`ghTimeoutSec`).
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ForkConfig {
+    #[serde(default)]
+    roots: Vec<String>,
+    #[serde(default)]
+    paths: Vec<String>,
+    #[serde(default)]
+    own_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fetch_timeout_sec: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gh_timeout_sec: Option<u32>,
+}
+
+/// Durable fork config location — kept in `%APPDATA%\castellyn` (like config.json), NOT in the
+/// vendored `tools/fork-updater/repos.json`, so a tool update can't clobber the user's fork setup.
+fn fork_config_path() -> Option<String> {
+    std::env::var("APPDATA")
+        .ok()
+        .map(|a| format!("{a}\\castellyn\\forks.json"))
+}
+
+/// The vendored `repos.json` next to the forks script — read once to seed the durable copy on migration.
+fn fork_vendored_config_path() -> Option<String> {
+    let comp = raw_components().into_iter().find(|c| c.id == "forks")?;
+    let script = abs_with_fallback(&comp.script_rel, FORKS_SCRIPT_FALLBACK);
+    let dir = std::path::Path::new(&script).parent()?.to_string_lossy().to_string();
+    Some(format!("{dir}\\repos.json"))
+}
+
+/// Read the fork discovery config: durable `%APPDATA%\castellyn\forks.json` first; on first run, seed
+/// it from the vendored `repos.json`; else defaults. Never errors — a bad file yields defaults.
+#[tauri::command]
+fn read_fork_config() -> ForkConfig {
+    if let Some(p) = fork_config_path() {
+        if let Ok(Some(v)) = read_json_opt(&p, "forks.json") {
+            if let Ok(cfg) = serde_json::from_value(v) {
+                return cfg;
+            }
+        }
+    }
+    // Migrate-seed from the vendored repos.json so an existing setup carries over.
+    if let Some(vp) = fork_vendored_config_path() {
+        if let Ok(Some(v)) = read_json_opt(&vp, "repos.json") {
+            if let Ok(cfg) = serde_json::from_value::<ForkConfig>(v) {
+                let _ = write_fork_config_inner(&cfg); // best-effort seed of the durable copy
+                return cfg;
+            }
+        }
+    }
+    ForkConfig::default()
+}
+
+fn write_fork_config_inner(config: &ForkConfig) -> Result<(), String> {
+    let p = fork_config_path().ok_or_else(|| "no APPDATA".to_string())?;
+    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    write_json_atomic(&p, &json).map_err(|e| e.to_string())
+}
+
+/// Persist the fork discovery config to the durable path. Subsequent fork runs read it via -ConfigPath.
+#[tauri::command]
+fn write_fork_config(config: ForkConfig) -> Result<(), String> {
+    write_fork_config_inner(&config)
+}
+
+/// `-ConfigPath <durable forks.json>` when it exists, so the fork script reads the user's UI-edited
+/// config. Absent (never edited) → empty, and the script falls back to its vendored repos.json.
+fn fork_config_args() -> Vec<String> {
+    match fork_config_path() {
+        Some(p) if std::path::Path::new(&p).exists() => vec!["-ConfigPath".into(), p],
+        _ => Vec::new(),
+    }
+}
+
 /// Run a Forks-tab action. `path` (a repo path) scopes the action to one repo via -Paths;
 /// omit it for the global read actions (check / plan).
 #[tauri::command]
@@ -1084,6 +1161,7 @@ async fn run_forks(
         args.push("-GhTimeoutSec".into());
         args.push(t.to_string());
     }
+    args.extend(fork_config_args());
     let script = abs_with_fallback(&comp.script_rel, FORKS_SCRIPT_FALLBACK);
     // Claim the global slot (Drop clears it even if this future is dropped mid-await), then bail if any
     // per-repo run is active (would `git fetch` the same repo concurrently). Order: the flag is set first
@@ -1144,6 +1222,7 @@ async fn run_fork_repo(
         full.push("-GhTimeoutSec".into());
         full.push(t.to_string());
     }
+    full.extend(fork_config_args());
     let mut cmd = Command::new("pwsh");
     for a in &pwsh_file_args(script, full) {
         cmd.arg(a);
@@ -13176,6 +13255,8 @@ pub fn run() {
             run_component,
             run_forks,
             run_fork_repo,
+            read_fork_config,
+            write_fork_config,
             cancel_fork_repo,
             read_fork_repo_status,
             list_backups,
