@@ -214,7 +214,7 @@
     { key: 'desc', label: t('plugins.skillColDesc'), width: '240px' },
     { key: 'contents', label: t('plugins.colContents'), width: '110px' },
     { key: 'status', label: t('plugins.colStatus'), sortable: true, align: 'center', width: '74px', interactive: true },
-    { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '90px', interactive: true }
+    { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '124px', interactive: true }
   ]);
   function pluginSort(p: PluginInfo, key: string): string | number {
     if (key === 'name') return split(p.id).name.toLowerCase();
@@ -229,7 +229,7 @@
     { key: 'source', label: t('plugins.colSource'), sortable: true, width: '150px' },
     { key: 'version', label: t('plugins.colVersion'), sortable: true, width: '90px' },
     { key: 'desc', label: t('plugins.skillColDesc'), grow: true },
-    { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '110px', interactive: true }
+    { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '128px', interactive: true }
   ]);
   const SRANK: Record<string, number> = { own: 0, default: 1, plugin: 2 };
   function skillSort(s: SkillInfo, key: string): string | number {
