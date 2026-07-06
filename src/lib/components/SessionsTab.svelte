@@ -459,6 +459,25 @@
       pushToast({ kind: 'error', title: String(e) });
     }
   }
+  // Nudge to enable the Agent-statuses hook when it's off but there are live LOCAL claude panes —
+  // the only ones affected (remote claude / codex / opencode are hookless by nature and keep their
+  // PTY heartbeat). Without the hook a local claude pane reports `unknown` (neutral dot), so this
+  // surfaces the one-click fix. Dismissible + persisted; auto-hides once the hook is on.
+  const NUDGE_KEY = 'cmh-status-nudge-dismissed';
+  let statusNudgeDismissed = $state(false);
+  onMount(() => {
+    statusNudgeDismissed = localStorage.getItem(NUDGE_KEY) === '1';
+  });
+  const showStatusNudge = $derived(
+    statusHookState != null &&
+      !statusHookOn &&
+      !statusNudgeDismissed &&
+      panes.some((p) => p.tool === 'claude' && !p.sshTarget)
+  );
+  function dismissStatusNudge() {
+    statusNudgeDismissed = true;
+    localStorage.setItem(NUDGE_KEY, '1');
+  }
   // Sound / OS-toast preferences for status transitions (the backend reads them from config).
   let statusSounds = $state(true);
   let statusNotify = $state(true);
@@ -1798,6 +1817,19 @@
     </div>
   </header>
 
+  {#if showStatusNudge}
+    <!-- Nudge: the Agent-statuses hook is off, so live LOCAL claude panes show a neutral dot
+         instead of working/idle (their status can't be inferred from PTY noise). One-click enable,
+         or dismiss (persisted). Auto-hides once the hook is on or no local claude pane remains. -->
+    <div class="status-nudge" role="note">
+      <span class="nudge-msg">💡 {t('sessions.statusNudge')}</span>
+      <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => toggleStatusHook(true)}>
+        {t('sessions.statusNudgeEnable')}
+      </button>
+      <button class="nudge-x" onclick={dismissStatusNudge} title={t('common.close')} aria-label={t('common.close')}>×</button>
+    </div>
+  {/if}
+
   <!-- Launcher C (V9+V3): split "＋" — the main zone instantly spawns one more agent per the ACTIVE
        project's recipe (label shows what will run; empty project → the full form). The chevron opens
        the memory menu: recent recipes + favorites (moved here from bar chips) + "custom launch…". -->
@@ -2340,6 +2372,37 @@
   }
   .ss-done {
     color: var(--sw-status-done);
+  }
+  /* Nudge strip: enable the Agent-statuses hook — shown only when it's off and a live local claude
+     pane exists (which otherwise shows a neutral 'unknown' dot instead of working/idle). */
+  .status-nudge {
+    display: flex;
+    align-items: center;
+    gap: var(--sw-space-3);
+    margin-bottom: var(--sw-space-4);
+    padding: var(--sw-space-2) var(--sw-space-3);
+    border: 1px solid var(--sw-border);
+    border-left: 3px solid var(--sw-status-warn);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-subtle);
+    font-size: var(--sw-text-xs);
+  }
+  .nudge-msg {
+    flex: 1 1 auto;
+    color: var(--sw-text-secondary);
+  }
+  .nudge-x {
+    flex: 0 0 auto;
+    padding: 0 6px;
+    border: 0;
+    background: transparent;
+    color: var(--sw-text-muted);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .nudge-x:hover {
+    color: var(--sw-text-secondary);
   }
   .launcher {
     display: flex;

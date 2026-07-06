@@ -23,6 +23,8 @@ export default {
   statusHookCoverage: 'hook in {wired}/{total} profiles',
   statusHookOnToast: 'Agent statuses enabled in all profiles',
   statusHookOffToast: 'Agent statuses disabled',
+  statusNudge: 'Agent statuses are off — the Claude dot stays neutral. Enable them for live status.',
+  statusNudgeEnable: 'Enable',
   statusSound: 'sound',
   statusSoundHint: 'System sound on "needs a decision" and background agent completion',
   statusToast: 'notifications',

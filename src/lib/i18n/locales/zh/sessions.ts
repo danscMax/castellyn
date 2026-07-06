@@ -23,6 +23,8 @@ export default {
   statusHookCoverage: '钩子覆盖 {wired}/{total} 个配置',
   statusHookOnToast: '已在所有配置中启用代理状态',
   statusHookOffToast: '已禁用代理状态',
+  statusNudge: '代理状态已关闭 — Claude 圆点为中性。启用以获得实时状态。',
+  statusNudgeEnable: '启用',
   statusSound: '声音',
   statusSoundHint: '代理「等待决定」或后台完成时播放系统声音',
   statusToast: '通知',

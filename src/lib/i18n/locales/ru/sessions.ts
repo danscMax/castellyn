@@ -23,6 +23,8 @@ export default {
   statusHookCoverage: 'хук в {wired}/{total} профилях',
   statusHookOnToast: 'Статусы агентов включены во всех профилях',
   statusHookOffToast: 'Статусы агентов отключены',
+  statusNudge: 'Статусы агентов выключены — точка Claude нейтральна. Включите для живого статуса.',
+  statusNudgeEnable: 'Включить',
   statusSound: 'звук',
   statusSoundHint: 'Системный звук при «ждёт решения» и завершении работы агента в фоне',
   statusToast: 'уведомления',
