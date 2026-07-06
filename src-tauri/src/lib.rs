@@ -123,9 +123,9 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     settings_dir: Option<String>,
-    /// Opt-in: manage the LLM stack NATIVELY (Castellyn spawns/tracks/stops each service itself,
-    /// hidden, PID-tracked) instead of the PS launcher's detached `cmd /k` windows. None/false =
-    /// the scripts (default), so native ships dark until the owner smokes it live.
+    /// Manage the LLM stack NATIVELY (Castellyn spawns/tracks/stops each service itself, hidden,
+    /// PID-tracked) — now the DEFAULT (None/true). Set false to opt back into the legacy PS launcher
+    /// scripts (`start-stack.ps1`/`stop-stack.ps1`), kept as a fallback + for external callers.
     #[serde(
         rename = "stackNative",
         default,
@@ -2994,7 +2994,9 @@ fn spawn_service_native(svc: &serde_json::Value) -> Option<u32> {
         return None;
     }
     let mut cmd = std::process::Command::new("cmd");
-    cmd.args(["/c", &command]);
+    // chcp 65001 so a service's non-ASCII output lands as UTF-8 in stack-logs\<id>.log (not mojibake),
+    // mirroring the launcher's per-window `chcp 65001` (start-stack.ps1).
+    cmd.args(["/c", &format!("chcp 65001>nul & {command}")]);
     cmd.current_dir(&dir);
     cmd.env("SCRIPTS_ROOT", scripts_root());
     if let Some(env) = svc.get("env").and_then(|e| e.as_object()) {
@@ -3021,16 +3023,44 @@ fn spawn_service_native(svc: &serde_json::Value) -> Option<u32> {
     cmd.spawn().ok().map(|c| c.id())
 }
 
-/// Wait until a service's port is listening (up to ~25s), the native equivalent of the launcher's
-/// Wait-Ready. Port-only for v1 (a listening port is a solid "came up" signal); health-path probing
-/// can layer on later.
+/// Native equivalent of the launcher's Wait-Ready: wait for the TCP port to listen, THEN — if the
+/// service declares a `health` path — until any HTTP response on it (even 4xx proves it's alive).
+/// One shared ~25s deadline for both, like start-stack.ps1. A bound port whose app isn't serving yet
+/// must NOT read as "up" (that was the v1 port-only gap). The blocking health GET runs off the async
+/// worker via spawn_blocking.
 async fn native_wait_ready(svc: &serde_json::Value) -> bool {
     let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     if port == 0 {
         return true;
     }
-    for _ in 0..50 {
-        if probe_ports(&[port]).first().copied().unwrap_or(false) {
+    let health = svc
+        .get("health")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+    // 1) port listen
+    let mut listening = false;
+    while std::time::Instant::now() < deadline {
+        if port_listening(port) {
+            listening = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    if !listening {
+        return false;
+    }
+    if health.is_empty() {
+        return true;
+    }
+    // 2) HTTP health probe (any response = alive), same deadline. http_health_ok is blocking (ureq).
+    while std::time::Instant::now() < deadline {
+        let h = health.clone();
+        let ok = tokio::task::spawn_blocking(move || http_health_ok(port, &h))
+            .await
+            .unwrap_or(false);
+        if ok {
             return true;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -3054,7 +3084,17 @@ fn stack_emit(app: &AppHandle, line: String) {
 /// -Router start-all). Aborts early if a Stop set STACK_CANCEL.
 async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
     STACK_CANCEL.store(false, Ordering::SeqCst);
+    // A -Only id that isn't in the manifest otherwise looks just like "nothing started".
+    if let Some(o) = only {
+        if !stack_services()
+            .iter()
+            .any(|s| s.get("id").and_then(|x| x.as_str()) == Some(o))
+        {
+            stack_emit(app, format!("[warn] unknown service id: {o}"));
+        }
+    }
     let mut started = 0;
+    let mut matched = 0;
     for svc in stack_services() {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             stack_emit(app, "[cancel] stop requested — aborting start".into());
@@ -3076,8 +3116,35 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
         if !target {
             continue;
         }
+        matched += 1;
         if !enabled {
             stack_emit(app, format!("[skip] {name}: disabled"));
+            continue;
+        }
+        // dir must exist (a distinct skip from a spawn failure).
+        let dir = expand_placeholders(svc.get("dir").and_then(|x| x.as_str()).unwrap_or(""));
+        if dir.is_empty() || !std::path::Path::new(&dir).is_dir() {
+            stack_emit(app, format!("[skip] {name}: dir not found → {dir}"));
+            continue;
+        }
+        // requires: auth/config files that must exist before launch (deepseek-auth.json, accounts.json).
+        // Missing → clean skip, not a spawn that dies and then blocks native_wait_ready for 25s.
+        let missing: Vec<String> = svc
+            .get("requires")
+            .and_then(|r| r.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .filter(|req| !std::path::Path::new(&dir).join(req).exists())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !missing.is_empty() {
+            stack_emit(
+                app,
+                format!("[skip] {name}: missing {} (authorize first)", missing.join(", ")),
+            );
             continue;
         }
         if port != 0 && probe_ports(&[port]).first().copied().unwrap_or(false) {
@@ -3095,14 +3162,29 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                 if native_wait_ready(&svc).await {
                     started += 1;
                     stack_emit(app, format!("[ ok ] {name}"));
+                    // Auto-open the dashboard for services that declare it (gateway). Reuses the
+                    // opener command (scheme-guarded), not a console/Start-Process.
+                    if svc.get("openDashboard").and_then(|x| x.as_bool()).unwrap_or(false) {
+                        if let Some(url) = svc
+                            .get("dashboard")
+                            .and_then(|x| x.as_str())
+                            .filter(|u| !u.is_empty())
+                        {
+                            let _ = open_url(app.clone(), url.to_string());
+                        }
+                    }
                 } else {
                     stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
                 }
             }
-            None => stack_emit(app, format!("[fail] {name}: could not spawn (check dir / command)")),
+            None => stack_emit(app, format!("[fail] {name}: could not spawn (check command)")),
         }
     }
-    stack_emit(app, format!("Started {started} service(s)."));
+    if matched == 0 {
+        stack_emit(app, "Nothing to start (check the service id / enabled flags).".into());
+    } else {
+        stack_emit(app, format!("Started {started} service(s)."));
+    }
     let _ = app.emit(
         "run-done",
         RunDone {
@@ -3113,11 +3195,39 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     0
 }
 
+/// Image name of a pid via `tasklist` (hidden), lowercased. None if not found. Guards the stop
+/// port→pid fallback so we only kill our own service processes (node/python), never a foreign app
+/// that merely happens to hold a manifest port. Mirrors stop-stack.ps1's `$ours` name check.
+fn pid_image_name(pid: u32) -> Option<String> {
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    // CSV: "image.exe","1234",...  → the first quoted field on a data line.
+    let line = text.lines().find(|l| l.starts_with('"'))?;
+    let name = line.trim_start_matches('"').split('"').next()?;
+    Some(name.to_ascii_lowercase())
+}
+
+fn is_ours_process(name: &str) -> bool {
+    name.starts_with("node") || name.starts_with("python") || name.starts_with("py")
+}
+
 /// Native STOP: kill each target service by its tracked top-of-tree pid (persisted, so it survives an
-/// app restart), with a port→pid fallback for anything we didn't spawn. kill_tree = taskkill /T so the
-/// whole npm→node tree dies and no window is orphaned.
+/// app restart), with a port→pid fallback (ownership-guarded) for anything we didn't spawn. kill_tree
+/// = taskkill /T so the whole npm→node tree dies and no window is orphaned.
 async fn native_stack_stop(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
     STACK_CANCEL.store(true, Ordering::SeqCst);
+    if let Some(o) = only {
+        if !stack_services()
+            .iter()
+            .any(|s| s.get("id").and_then(|x| x.as_str()) == Some(o))
+        {
+            stack_emit(app, format!("[warn] unknown service id: {o}"));
+        }
+    }
     let mut tracked = load_stack_procs();
     {
         let m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -3146,15 +3256,21 @@ async fn native_stack_stop(app: &AppHandle, procs: &StackProcs, only: Option<&st
                 killed = true;
             }
         }
+        // Port fallback (service started outside the app / stale pid): only kill a holder that IS one
+        // of our service processes (node/python) — never a foreign app that holds a manifest port.
         if port != 0 {
             if let Some(pid) = by_port.get(&port) {
-                let _ = kill_tree(*pid);
-                killed = true;
+                if pid_image_name(*pid).map(|n| is_ours_process(&n)).unwrap_or(false) {
+                    let _ = kill_tree(*pid);
+                    killed = true;
+                }
             }
         }
         if killed {
             stopped += 1;
             stack_emit(app, format!("[stop] {name}"));
+        } else {
+            stack_emit(app, format!("[ -- ] {name}: not running"));
         }
         procs
             .0
@@ -3195,9 +3311,9 @@ async fn run_stack(
         }
     }
     let id = stream_id::ENGINE;
-    // Opt-in native supervisor vs the PS launcher scripts (default). Both run under the same StackRun
-    // slot so start/stop concurrency + Stop's preempt behave identically.
-    let native = read_config_file().stack_native.unwrap_or(false);
+    // Native supervisor (DEFAULT) vs the legacy PS launcher scripts (opt-out via stackNative=false).
+    // Both run under the same StackRun slot so start/stop concurrency + Stop's preempt are identical.
+    let native = read_config_file().stack_native.unwrap_or(true);
     let o = only.as_deref();
 
     match action.as_str() {

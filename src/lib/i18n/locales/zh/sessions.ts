@@ -117,7 +117,7 @@ export default {
   stackGwDown: '网关未运行——请启动堆栈',
   stackCheck: '检查',
   stackStart: '启动堆栈',
-  stackStartTip: '运行 start-stack.ps1（网关+后端）',
+  stackStartTip: '启动栈（网关+后端）',
   stackStarted: '堆栈启动中…',
   stackStartFail: '启动堆栈失败',
   stackDashboard: '仪表板',

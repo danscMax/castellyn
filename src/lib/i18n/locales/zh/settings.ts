@@ -60,7 +60,7 @@ export default {
   closeToTrayDesc: '✕ 按钮将窗口最小化到托盘。关闭后，✕ 将直接退出应用。',
   closeToTrayTip: '窗口关闭按钮的行为',
   stackNative: '原生堆栈管理',
-  stackNativeDesc: '实验性：Castellyn 自行启动/停止堆栈服务（无控制台窗口，可靠停止）。关闭 = PowerShell 脚本。',
+  stackNativeDesc: 'Castellyn 自行启动/停止堆栈服务（无控制台窗口，可靠停止）— 默认开启。关闭 = 回退到旧版 PowerShell 脚本。',
   stackNativeTip: '实验性 — 长期使用前请先实测启动/停止',
   statusBar: '标题栏中的会话状态',
   statusBarDesc: '在标题栏显示紧凑条：实时会话数量以及最接近 Anthropic 用量上限的配置。',

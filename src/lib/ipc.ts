@@ -989,8 +989,8 @@ export type HubConfig = {
   scriptsRoot?: string | null;
   startHidden?: boolean;
   closeToTray?: boolean;
-  // Opt-in: manage the LLM stack natively (Castellyn spawns/tracks/stops services) vs the PS
-  // launcher scripts. Absent/false = scripts (default). See stackNative in SettingsTab.
+  // Manage the LLM stack natively (Castellyn spawns/tracks/stops services) — now the DEFAULT
+  // (absent/true). false = fall back to the legacy PS launcher scripts. See stackNative in SettingsTab.
   stackNative?: boolean;
   fetchTimeoutSec?: number | null;
   ghTimeoutSec?: number | null;

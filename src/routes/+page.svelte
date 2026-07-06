@@ -1409,7 +1409,8 @@
     if (active === 'providers' && !opencodeData) reloadOpencode();
   });
 
-  // Start (-Router, incl. paid GLM) or stop (-All) the whole LLM stack via stack scripts.
+  // Start / stop / restart the whole LLM stack (start includes the paid GLM router). The backend
+  // picks the native supervisor (default) or the legacy PS scripts per config.stackNative.
   function onStack(action: 'start' | 'stop' | 'restart', only?: string) {
     // Stop is a teardown/recovery action — NEVER block it (the backend preempts an in-flight start).
     // Only start/restart are rejected while a stack op is already running, on the stack's OWN state.

@@ -117,7 +117,7 @@ export default {
   stackGwDown: 'Gateway is down — start the stack',
   stackCheck: 'Check',
   stackStart: 'Start stack',
-  stackStartTip: 'Run start-stack.ps1 (gateway + backends)',
+  stackStartTip: 'Start the stack (gateway + backends)',
   stackStarted: 'Stack starting…',
   stackStartFail: 'Failed to start the stack',
   stackDashboard: 'Dashboard',

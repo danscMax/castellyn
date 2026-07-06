@@ -117,7 +117,7 @@ export default {
   stackGwDown: 'Шлюз недоступен — запусти стэк',
   stackCheck: 'Проверить',
   stackStart: 'Запустить стэк',
-  stackStartTip: 'Запустить start-stack.ps1 (шлюз + бэкенды)',
+  stackStartTip: 'Запустить стек (шлюз + бэкенды)',
   stackStarted: 'Стэк запускается…',
   stackStartFail: 'Не удалось запустить стэк',
   stackDashboard: 'Дешборд',

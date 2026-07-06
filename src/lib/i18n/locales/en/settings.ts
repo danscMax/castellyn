@@ -60,7 +60,7 @@ export default {
   closeToTrayDesc: 'The ✕ button hides the window to the tray. Turn off to make ✕ quit the app.',
   closeToTrayTip: 'Behavior of the window close button',
   stackNative: 'Native stack management',
-  stackNativeDesc: 'Experimental: Castellyn starts/stops the stack services itself (no console windows, reliable Stop). Off = PowerShell scripts.',
+  stackNativeDesc: 'Castellyn starts/stops the stack services itself (no console windows, reliable Stop) — on by default. Off = fall back to the legacy PowerShell scripts.',
   stackNativeTip: 'Experimental — smoke start/stop live before relying on it',
   statusBar: 'Session status in title bar',
   statusBarDesc: 'Show a compact strip in the title bar with live session counts and the profile closest to an Anthropic usage limit.',
