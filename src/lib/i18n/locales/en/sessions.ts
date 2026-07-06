@@ -106,6 +106,7 @@ export default {
   phProfile: 'profile',
   phModel: 'model',
   phModelPlaceholder: 'provider/model',
+  phCodexModelPlaceholder: 'model (default)',
   phCodexDefault: 'default profile',
   phOn: 'on',
   phIn: 'in',

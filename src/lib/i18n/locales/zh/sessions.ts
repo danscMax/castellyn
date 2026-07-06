@@ -106,6 +106,7 @@ export default {
   phProfile: '配置',
   phModel: '模型',
   phModelPlaceholder: '提供方/模型',
+  phCodexModelPlaceholder: '模型（默认）',
   phCodexDefault: '默认配置',
   phOn: '在',
   phIn: '于',

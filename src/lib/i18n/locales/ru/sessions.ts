@@ -106,6 +106,7 @@ export default {
   phProfile: 'профиль',
   phModel: 'модель',
   phModelPlaceholder: 'провайдер/модель',
+  phCodexModelPlaceholder: 'модель (по умолч.)',
   phCodexDefault: 'профиль по умолчанию',
   phOn: 'на',
   phIn: 'в папке',

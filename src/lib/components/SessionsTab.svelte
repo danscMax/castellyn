@@ -1218,22 +1218,26 @@
   // tool's own default. The selection is composed into the launch args at spawn time (composeArgs),
   // so the whole recents/favorites machinery round-trips it via `args` with no new recipe field.
   let lCodexProfile = $state('');
+  let lCodexModel = $state(''); // codex --model override (empty = the profile's / config default)
   let lOpencodeModel = $state('');
   let opencodeModel = $state(''); // opencode's active model, shown as the picker placeholder
-  function identityFlag(env: Env): string {
-    if (env === 'codex' && lCodexProfile.trim()) return `--profile ${lCodexProfile.trim()}`;
-    if (env === 'opencode' && lOpencodeModel.trim()) return `--model ${lOpencodeModel.trim()}`;
-    return '';
-  }
-  // Compose the identity flag with the free-text args, skipping it if the user already typed the same
-  // flag by hand (no double --profile/--model).
+  const PROFILE_RE = /(^|\s)(--profile|-p)(\s|=)/;
+  const MODEL_RE = /(^|\s)(--model|-m)(\s|=)/;
+  // Compose the identity selection (codex --profile/--model, opencode --model) into the free-text
+  // args, skipping any flag the user already typed by hand (no doubling). Prepended so the flags read
+  // first. This is the single place the picker turns into launch args.
   function composeArgs(env: Env, args: string): string {
-    const a = args.trim();
-    const flag = identityFlag(env);
-    if (!flag) return a;
-    const dup = env === 'codex' ? /(^|\s)(--profile|-p)(\s|=)/.test(a) : /(^|\s)(--model|-m)(\s|=)/.test(a);
-    if (dup) return a;
-    return a ? `${flag} ${a}` : flag;
+    let a = args.trim();
+    const add = (flag: string, re: RegExp) => {
+      if (flag && !re.test(a)) a = a ? `${flag} ${a}` : flag;
+    };
+    if (env === 'codex') {
+      add(lCodexModel.trim() && `--model ${lCodexModel.trim()}`, MODEL_RE);
+      add(lCodexProfile.trim() && `--profile ${lCodexProfile.trim()}`, PROFILE_RE);
+    } else if (env === 'opencode') {
+      add(lOpencodeModel.trim() && `--model ${lOpencodeModel.trim()}`, MODEL_RE);
+    }
+    return a;
   }
   // Switching harness re-seeds the args field (unless the user already edited it) so a leftover Claude
   // flag doesn't leak into codex/opencode — and can't get pinned into a favorite mid-switch.
@@ -1833,10 +1837,16 @@
       {#if lEnv === 'claude'}
         <span class="pw">{t('sessions.phProfile')}</span>
         <div class="psel"><Select bind:value={lProfile} options={profiles} placeholder={t('sessions.dlgProfile')} /></div>
-      {:else if lEnv === 'codex' && codexProfiles.length}
-        <!-- Codex config.toml profiles as a first-class picker (parity with claude's profile dropdown). -->
-        <span class="pw">{t('sessions.phProfile')}</span>
-        <div class="psel"><Select bind:value={lCodexProfile} options={codexProfiles} placeholder={t('sessions.phCodexDefault')} /></div>
+      {:else if lEnv === 'codex'}
+        <!-- Codex identity: config.toml profile (when any exist) + a --model override, so the launch
+             model is explicit instead of "whatever codex defaulted to". -->
+        {#if codexProfiles.length}
+          <span class="pw">{t('sessions.phProfile')}</span>
+          <div class="psel"><Select bind:value={lCodexProfile} options={codexProfiles} placeholder={t('sessions.phCodexDefault')} /></div>
+        {/if}
+        <span class="pw">{t('sessions.phModel')}</span>
+        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lCodexModel}
+          placeholder={t('sessions.phCodexModelPlaceholder')} spellcheck="false" autocomplete="off" />
       {:else if lEnv === 'opencode'}
         <!-- opencode model as provider/model (no catalog exposed → free-form, seeded placeholder = active). -->
         <span class="pw">{t('sessions.phModel')}</span>
