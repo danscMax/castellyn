@@ -22,8 +22,14 @@ use tauri::{Emitter, Manager};
 const POLL_MS: u64 = 500;
 /// Right after spawn nothing meaningful has happened yet — report `unknown`.
 const STARTUP_GRACE_MS: u64 = 3_000;
-/// No PTY output for this long → not actively working.
-const ACTIVITY_IDLE_MS: u64 = 4_000;
+/// No PTY output for this long → not actively working. This governs the hookless activity branch,
+/// which is the PRIMARY (only) turn signal for codex/opencode and remote claude. It was 4s, but real
+/// turns go quiet well past 4s (deep thinking, a long tool/MCP/network call) — the same false-"done"
+/// that WORKING_SELFHEAL_MS was raised to fix for hook-claude (live-smoke 2026-07-03). Claude's 4s was
+/// safe only because a Stop hook corrects it; codex/opencode have no such correction, so 4s fired a
+/// false completion on every slightly-slow turn. 15s survives normal pauses; truly-precise done/blocked
+/// for these agents needs their own signals (Codex `notify` / opencode plugin) — a separate follow-up.
+const ACTIVITY_IDLE_MS: u64 = 15_000;
 /// A hook-reported `working` self-heals to idle only after this long of silence — the fallback for a
 /// turn that ended WITHOUT a Stop hook (Esc-interrupt / crashed hook). Far longer than
 /// ACTIVITY_IDLE_MS: real turns go quiet well past 4s (deep thinking, a long tool/MCP call, a network
@@ -319,7 +325,8 @@ fn compute(t: &Track, now: u64) -> &'static str {
         // the next UserPromptSubmit hook reports working.
         Some("idle") => "idle",
         // No hook authority (codex/opencode, remote claude, or claude before its first
-        // event): PTY activity decides.
+        // event): PTY activity decides. A turn stays `working` through normal think/tool pauses
+        // (ACTIVITY_IDLE_MS = 15s) so a hookless agent doesn't false-flip to done mid-turn.
         _ => {
             if now.saturating_sub(t.spawned_at) < STARTUP_GRACE_MS {
                 "unknown"
@@ -526,6 +533,12 @@ mod tests {
         t.last_output
             .store(now + STARTUP_GRACE_MS + 1_000, Ordering::Relaxed);
         assert_eq!(compute(&t, now + STARTUP_GRACE_MS + 2_000), "working");
+        // A short think/tool pause (5s < ACTIVITY_IDLE_MS) must NOT false-flip to idle — the codex/
+        // opencode false-"done" fix. (Was 4s → this asserted idle here; now it stays working.)
+        assert_eq!(
+            compute(&t, t.last_output.load(Ordering::Relaxed) + 5_000),
+            "working"
+        );
         assert_eq!(
             compute(
                 &t,
@@ -556,7 +569,7 @@ mod tests {
         t.last_output.store(now + 10_000, Ordering::Relaxed);
         assert_eq!(compute(&t, now + 10_100), "idle");
         // Hook-working self-heals to idle only after the LONG backstop (Esc interrupt fires no Stop
-        // hook). A short 4s gap is still an active turn — flipping it fired a false "done".
+        // hook). A sub-backstop gap is still an active turn — flipping it fired a false "done".
         t.hook_state = Some("working".into());
         assert_eq!(
             compute(&t, t.last_output.load(Ordering::Relaxed) + ACTIVITY_IDLE_MS + 1),
