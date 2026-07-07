@@ -37,7 +37,7 @@
 
   // up = HTTP-healthy or (port-only) just listening; degraded = listening but health failed;
   // down = port closed. A closed port is usually a deliberately-stopped backend, NOT a fault —
-  // only the gateway (the critical hop) being down is treated as an alarm.
+  // only a critical front being down is treated as an alarm.
   function statusOf(s: StackHealth): 'up' | 'degraded' | 'down' {
     if (!s.portOpen) return 'down';
     if (s.healthy === false) return 'degraded';
@@ -51,10 +51,10 @@
     down: statusFillVar('down'),
     off: statusFillVar('off')
   } as const;
-  // Stopped non-gateway backends are neutral grey; a dead gateway / sick service keep alarm colours.
+  // A stopped non-critical backend is neutral grey; a dead critical front / sick service keep alarm colours.
   function dotColor(s: StackHealth): string {
     const st = statusOf(s);
-    if (st === 'down') return s.id === 'gateway' ? dot.down : dot.off;
+    if (st === 'down') return s.critical ? dot.down : dot.off;
     return dot[st];
   }
 
@@ -63,14 +63,14 @@
   const enabled = $derived(items.filter((i) => i.enabled));
   const ups = $derived(enabled.filter((i) => statusOf(i) === 'up').length);
   const total = $derived(enabled.length);
-  const gateway = $derived(items.find((i) => i.id === 'gateway'));
+  const criticals = $derived(enabled.filter((i) => i.critical));
   const anySick = $derived(enabled.some((i) => statusOf(i) === 'degraded'));
   // ok=all up · degraded=a service is sick (port open, /health fails) · stopped=some backends are
-  // just off (normal) · down=gateway unreachable (the only real outage).
+  // just off (normal) · down=a critical front is unreachable (the only real outage).
   const overall = $derived<'ok' | 'degraded' | 'stopped' | 'down'>(
     total === 0
       ? 'down'
-      : gateway && statusOf(gateway) !== 'up'
+      : criticals.some((c) => statusOf(c) !== 'up')
         ? 'down'
         : anySick
           ? 'degraded'

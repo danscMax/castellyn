@@ -3702,6 +3702,9 @@ pub(crate) struct StackHealth {
     pub(crate) port_open: bool,
     /// HTTP health endpoint returned 2xx. None when the service has no `health` path (port-only).
     pub(crate) healthy: Option<bool>,
+    /// This service is the client-facing front — its outage is the overall alarm (data-driven,
+    /// replaces the old hardcoded `id == "gateway"`). From stack.json `critical` (default false).
+    pub(crate) critical: bool,
 }
 
 /// Real health of llm-stack services: a TCP port probe plus — when `health` is set in stack.json —
@@ -3725,6 +3728,7 @@ pub(crate) fn read_stack_health_blocking() -> Vec<StackHealth> {
         port: u16,
         enabled: bool,
         health: String,
+        critical: bool,
     }
     let rows: Vec<Row> = stack_services()
         .iter()
@@ -3735,6 +3739,7 @@ pub(crate) fn read_stack_health_blocking() -> Vec<StackHealth> {
             port: e.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16,
             enabled: e.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true),
             health: s(e, "health"),
+            critical: e.get("critical").and_then(|x| x.as_bool()).unwrap_or(false),
         })
         .collect();
     // Probe all services concurrently — bounded by the slowest single probe, like read_stack.
@@ -3770,6 +3775,7 @@ pub(crate) fn read_stack_health_blocking() -> Vec<StackHealth> {
             enabled: r.enabled,
             port_open: open,
             healthy,
+            critical: r.critical,
         })
         .collect()
 }

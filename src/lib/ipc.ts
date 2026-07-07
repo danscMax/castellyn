@@ -364,6 +364,7 @@ export type StackHealth = {
   enabled: boolean;
   portOpen: boolean; // TCP accepts a connection
   healthy: boolean | null; // HTTP 2xx; null = port-only (no health endpoint)
+  critical: boolean; // client-facing front — its outage drives the overall 'down' alarm
 };
 export const readStackHealth = () => invoke<StackHealth[]>('read_stack_health');
 
