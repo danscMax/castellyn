@@ -274,8 +274,8 @@ const handlers: Record<string, (args: any) => any> = {
     { id: 'ccr', name: 'claude-code-router', group: 'router', port: 3456, protocol: 'anthropic', dashboard: '', dir: 'E:\\Scripts\\llm-stack\\ccr', enabled: true, running: true }
   ]),
   read_stack_health: () => ([
-    { id: 'gateway', name: 'freellmapi gateway', group: 'core', port: 8787, enabled: true, portOpen: true, healthy: true },
-    { id: 'ccr', name: 'claude-code-router', group: 'router', port: 3456, enabled: true, portOpen: true, healthy: null }
+    { id: 'gateway', name: 'freellmapi gateway', group: 'core', port: 8787, enabled: true, portOpen: true, healthy: true, critical: true },
+    { id: 'ccr', name: 'claude-code-router', group: 'router', port: 3456, enabled: true, portOpen: true, healthy: null, critical: false }
   ]),
   read_stack_procs: () => ([{ port: 8787, pid: 18244, uptimeSec: 13620 }, { port: 3456, pid: 9012, uptimeSec: 13580 }]),
   read_providers: () => ([
