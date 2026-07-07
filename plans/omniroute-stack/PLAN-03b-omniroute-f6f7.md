@@ -115,7 +115,9 @@ Needs a running, configured OmniRoute:
 1. `npm i -g omniroute`; `omniroute serve --no-open --no-tray` on real DATA_DIR; change `CHANGEME`.
 2. Pin the real unauthorized-2xx health route → stack.json `omniroute.health` (+ `healthTimeoutSec`
    if slow). Closes the wedge risk (DESIGN §10).
-3. Add `env` DATA_DIR var (exact name confirmed live), set `enabled:true` + `dependsOn:[backends]`.
+3. Add `env` DATA_DIR var (exact name confirmed live), set `enabled:true` + `dependsOn:[backends]`
+   + `teardownOnFailure:true` (opt-in supervisor rollback; A3 decoupled it from the health-`critical`
+   flag so only the front rolls the stack back on its own start failure).
 4. `omniroute providers add/keys add/nodes add` for 16 key-providers + local engines; disable
    provider-retry for unstable upstreams, timeout > worst-case.
 5. Verify `/v1/responses`; set `OMNIROUTE_API_KEY`; surface the Codex→OmniRoute UI trigger; smoke.

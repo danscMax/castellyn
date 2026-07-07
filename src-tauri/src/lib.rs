@@ -3192,15 +3192,19 @@ fn order_services(services: &[serde_json::Value]) -> Vec<serde_json::Value> {
 }
 
 /// Whether a failed service should trigger a rollback of everything this run already started.
-/// Trivial today (mirrors the `critical` flag verbatim) but named/typed so the call sites read as
-/// intent and the gate has a real unit test independent of the async start loop.
-fn should_teardown(failed_is_critical: bool) -> bool {
-    failed_is_critical
+/// Trivial today (mirrors the `teardownOnFailure` flag verbatim) but named/typed so the call sites
+/// read as intent and the gate has a real unit test independent of the async start loop.
+/// Deliberately NOT keyed on `critical`: `critical` drives the health-card alarm (a display concern),
+/// whereas teardown is a lifecycle concern — a service can be the health-critical front yet still
+/// want its backends left running on its own failure. Only the OmniRoute front opts into teardown
+/// (set in the Part B live session); no shipped service sets it, so this path is inert today.
+fn should_teardown(failed_wants_teardown: bool) -> bool {
+    failed_wants_teardown
 }
 
 /// Kills and unregisters every pid `native_stack_start` already spawned this run, then logs the
-/// rollback. Called when a `critical` service fails to come up — leaves the stack exactly as it
-/// was before this Start, instead of a half-started backend/router pair.
+/// rollback. Called when a `teardownOnFailure:true` service fails to come up — leaves the stack
+/// exactly as it was before this Start, instead of a half-started backend/router pair.
 fn teardown_started(
     app: &AppHandle,
     procs: &StackProcs,
@@ -3221,7 +3225,7 @@ fn teardown_started(
     stack_emit(
         app,
         format!(
-            "[teardown] critical {failed_name} failed — rolled back {} service(s)",
+            "[teardown] {failed_name} failed — rolled back {} service(s)",
             started_pids.len()
         ),
     );
@@ -3229,8 +3233,8 @@ fn teardown_started(
 
 /// Native START: spawn each target enabled service (idempotent — skip an already-listening port),
 /// track its pid, wait until it's up. `only` = one service; else the core+router groups (the PS
-/// -Router start-all). Aborts early if a Stop set STACK_CANCEL. A `critical:true` service that
-/// fails to come up rolls back every service THIS run already started (kill + unregister pid) —
+/// -Router start-all). Aborts early if a Stop set STACK_CANCEL. A `teardownOnFailure:true` service
+/// that fails to come up rolls back every service THIS run already started (kill + unregister pid) —
 /// a half-started stack (e.g. a router up with no backend behind it) is worse than none.
 async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
     STACK_CANCEL.store(false, Ordering::SeqCst);
@@ -3246,8 +3250,9 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     let mut started = 0;
     let mut matched = 0;
     let mut failed = 0;
-    // pids this run actually spawned — rolled back in full if a critical service then fails.
+    // pids this run actually spawned — rolled back in full if a teardownOnFailure service then fails.
     let mut started_pids: Vec<(String, u32)> = Vec::new();
+    let mut teardown_fired = false;
     for svc in order_services(&stack_services()) {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             stack_emit(app, "[cancel] stop requested — aborting start".into());
@@ -3322,9 +3327,10 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                     Readiness::Down => {
                         failed += 1;
                         stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
-                        let is_critical = svc.get("critical").and_then(|x| x.as_bool()).unwrap_or(false);
-                        if should_teardown(is_critical) {
+                        let wants_teardown = svc.get("teardownOnFailure").and_then(|x| x.as_bool()).unwrap_or(false);
+                        if should_teardown(wants_teardown) {
                             teardown_started(app, procs, &name, &started_pids);
+                            teardown_fired = true;
                             break;
                         }
                     }
@@ -3352,9 +3358,10 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
             None => {
                 failed += 1;
                 stack_emit(app, format!("[fail] {name}: could not spawn (check command)"));
-                let is_critical = svc.get("critical").and_then(|x| x.as_bool()).unwrap_or(false);
-                if should_teardown(is_critical) {
+                let wants_teardown = svc.get("teardownOnFailure").and_then(|x| x.as_bool()).unwrap_or(false);
+                if should_teardown(wants_teardown) {
                     teardown_started(app, procs, &name, &started_pids);
+                    teardown_fired = true;
                     break;
                 }
             }
@@ -3362,6 +3369,9 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     }
     if matched == 0 {
         stack_emit(app, "Nothing to start (check the service id / enabled flags).".into());
+    } else if teardown_fired {
+        // Don't claim "Started N" — those N were just rolled back. The [teardown] line already said what.
+        stack_emit(app, "Stack rolled back — a teardown-on-failure service did not come up.".into());
     } else {
         stack_emit(app, format!("Started {started} service(s)."));
     }
@@ -14536,7 +14546,7 @@ mod tests {
     }
 
     #[test]
-    fn should_teardown_mirrors_critical_flag() {
+    fn should_teardown_mirrors_flag() {
         assert!(should_teardown(true));
         assert!(!should_teardown(false));
     }
