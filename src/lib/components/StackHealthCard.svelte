@@ -3,6 +3,7 @@
   import { t } from '$lib/i18n';
   import { statusFillVar } from '$lib/statusColor';
   import { RefreshCw } from '@lucide/svelte';
+  import { listen } from '@tauri-apps/api/event';
 
   // onStart lets a stopped service be brought up straight from the health list (id → start).
   let { onStart, busy = false }: { onStart?: (id: string) => void; busy?: boolean } = $props();
@@ -24,6 +25,14 @@
   }
   $effect(() => {
     load();
+    // Live updates from the backend health-poll loop — no manual refresh needed.
+    const un = listen<StackHealth[]>('stack-health', (e) => {
+      items = e.payload;
+      loadedOnce = true;
+    });
+    return () => {
+      un.then((f) => f());
+    };
   });
 
   // up = HTTP-healthy or (port-only) just listening; degraded = listening but health failed;
