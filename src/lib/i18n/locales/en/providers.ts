@@ -12,6 +12,7 @@ export default {
   enginesDesc: 'Process control for the same services shown in “LLM stack” above: start/stop each one and bind it to profiles.',
   running: 'running',
   stopped: 'stopped',
+  svcDisabled: 'disabled',
   portListening: 'Port is listening',
   portNotResponding: 'Port not responding',
   protoAnthropicTitle: 'Anthropic-compatible — can bind to a profile directly',

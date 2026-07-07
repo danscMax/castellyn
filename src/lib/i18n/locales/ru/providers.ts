@@ -12,6 +12,7 @@ export default {
   enginesDesc: 'Управление процессами тех же сервисов, что в «LLM-стеке» выше: запуск/остановка по одному и привязка к профилям.',
   running: 'работает',
   stopped: 'остановлен',
+  svcDisabled: 'отключён',
   portListening: 'Порт слушается',
   portNotResponding: 'Порт не отвечает',
   protoAnthropicTitle: 'Anthropic-совместим — можно вешать на профиль напрямую',

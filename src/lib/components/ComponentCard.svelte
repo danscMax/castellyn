@@ -2,8 +2,11 @@
   import type { Component } from '$lib/ipc';
   import { glossaryText } from '$lib/glossary';
   import { t, pUpdate, plural } from '$lib/i18n';
-  import { relTime, formatAbsTime } from '$lib/relativeTime';
+  import { relTime, formatAbsTime, parseTsMs } from '$lib/relativeTime';
   import { countOf } from '$lib/envelope';
+
+  // A run older than this reads as stale — the "last run" value is flagged, not silently trusted.
+  const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 
   let {
     comp,
@@ -40,6 +43,12 @@
 
   const fmtTime = (ts?: string) => formatAbsTime(ts);
 
+  // Flag a run whose timestamp is older than STALE_MS so "last run" doesn't read as fresh.
+  let isStale = $derived.by(() => {
+    const ms = parseTsMs(status?.timestamp);
+    return !Number.isNaN(ms) && Date.now() - ms > STALE_MS;
+  });
+
   // countOf() now imported from $lib/envelope (shared with outcome.ts + UpdatesTab).
 
   // Coarse health from the unified envelope.
@@ -47,6 +56,8 @@
     if (comp.lastJson === null) return { label: t('updates.healthNoStatus'), cls: 'badge-muted' };
     const s = status;
     if (!s) return { label: t('updates.healthNoData'), cls: 'badge-muted' };
+    // A status file that couldn't be parsed (even after .bak recovery) — distinct from "never ran".
+    if (s.status === 'corrupt') return { label: t('updates.statusCorrupt'), cls: 'badge-warn' };
     const changed = countOf(s, 'changed');
     const failed = countOf(s, 'failed');
     const st = s.status as string | undefined;
@@ -108,7 +119,11 @@
     <dl class="space-y-1 text-sw-sm text-sw-text-secondary">
       <div class="flex justify-between">
         <dt>{t('updates.lastRun')}</dt>
-        <dd class="text-sw-text" title={fmtTime(status?.timestamp)}>{relTime(status?.timestamp) || fmtTime(status?.timestamp)}</dd>
+        {#if isStale}
+          <dd class="status-warn" title={t('updates.staleOldest', { time: relTime(status?.timestamp) })}>{relTime(status?.timestamp) || fmtTime(status?.timestamp)}</dd>
+        {:else}
+          <dd class="text-sw-text" title={fmtTime(status?.timestamp)}>{relTime(status?.timestamp) || fmtTime(status?.timestamp)}</dd>
+        {/if}
       </div>
       {#if durationText}
         <div class="flex justify-between">
@@ -117,6 +132,10 @@
         </div>
       {/if}
     </dl>
+  {/if}
+
+  {#if comp.id !== 'forks' && typeof status?.summary === 'string' && status.summary}
+    <p class="truncate text-sw-xs text-sw-text-muted" title={status.summary}>{status.summary}</p>
   {/if}
 
   {#if forkSummary}

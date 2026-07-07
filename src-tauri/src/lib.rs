@@ -523,10 +523,18 @@ fn read_json_or_recover(
     }
 }
 
-/// Read and parse a *.last.json status file. Returns null if it doesn't exist yet.
+/// Read and parse a *.last.json status file. Returns null if it doesn't exist yet. A present but
+/// unparseable file (after the .bak recovery attempt) errors with the frozen "corrupt: " prefix so
+/// the UI can show "статус повреждён" instead of the misleading "нет данных" (wargaming A2 MED-3).
 #[tauri::command]
 fn read_status(path: String) -> Result<Option<serde_json::Value>, String> {
-    read_json_opt(&path, &path)
+    read_json_or_recover(&path, &path).map_err(|e| {
+        if std::path::Path::new(&path).exists() {
+            format!("corrupt: {e}")
+        } else {
+            e
+        }
+    })
 }
 
 // Tracks the PID of the currently-running child (Some(0) = reserved/starting).

@@ -373,7 +373,7 @@
       <div class="card-grid">
         {#each stackList as s (s.id)}
           {@const hc = health['stack:' + s.id]}
-          <div class="sw-card flex flex-col gap-sw-2">
+          <div class="sw-card flex flex-col gap-sw-2" class:opacity-60={!s.enabled}>
             <div class="flex items-start justify-between gap-sw-2">
               <div class="min-w-0">
                 <h3 class="truncate font-medium" title={s.name}>{s.name}</h3>
@@ -394,24 +394,30 @@
                 {/if}
               </div>
               <div class="flex shrink-0 flex-col items-end gap-1">
-                <span class="badge {s.running ? 'badge-ok' : 'badge-muted'}"
-                  title={s.running ? t('providers.portListening') : t('providers.portNotResponding')}>
-                  {s.running ? t('providers.running') : t('providers.stopped')}
-                </span>
+                {#if s.enabled}
+                  <span class="badge {s.running ? 'badge-ok' : 'badge-muted'}"
+                    title={s.running ? t('providers.portListening') : t('providers.portNotResponding')}>
+                    {s.running ? t('providers.running') : t('providers.stopped')}
+                  </span>
+                {:else}
+                  <span class="badge badge-muted" title={t('providers.svcDisabled')}>{t('providers.svcDisabled')}</span>
+                {/if}
                 {#if s.group === 'router'}
                   <span class="badge badge-muted" title={t('providers.stackPaidTip')}>💲 {t('providers.stackPaid')}</span>
                 {/if}
               </div>
             </div>
             <div class="mt-auto flex flex-wrap gap-sw-2 border-t border-sw-border pt-sw-2">
-              {#if s.running}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop', s.id)}
-                  title={t('providers.stackStopOneTip', { name: s.name })}>{t('providers.stop')}</button>
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('restart', s.id)}
-                  title={t('providers.stackRestartOneTip', { name: s.name })}>{t('providers.restart')}</button>
-              {:else}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start', s.id)}
-                  title={t('providers.stackStartOneTip', { name: s.name })}>{t('providers.start')}</button>
+              {#if s.enabled}
+                {#if s.running}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop', s.id)}
+                    title={t('providers.stackStopOneTip', { name: s.name })}>{t('providers.stop')}</button>
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('restart', s.id)}
+                    title={t('providers.stackRestartOneTip', { name: s.name })}>{t('providers.restart')}</button>
+                {:else}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start', s.id)}
+                    title={t('providers.stackStartOneTip', { name: s.name })}>{t('providers.start')}</button>
+                {/if}
               {/if}
               {#if s.dashboard}
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!s.running} onclick={() => onOpenUrl(s.dashboard)}

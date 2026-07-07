@@ -12,6 +12,7 @@ export default {
   enginesDesc: '对上方「LLM 栈」中相同服务的进程控制：逐个启动/停止并绑定到配置。',
   running: '运行中',
   stopped: '已停止',
+  svcDisabled: '已禁用',
   portListening: '端口正在监听',
   portNotResponding: '端口无响应',
   protoAnthropicTitle: 'Anthropic 兼容 — 可直接绑定到配置',

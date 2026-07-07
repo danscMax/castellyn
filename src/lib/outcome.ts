@@ -82,6 +82,9 @@ export function deriveOutcome(input: DeriveInput): Outcome {
   const changed = countOf(status, 'changed');
   const failed = countOf(status, 'failed');
   const st = status?.status as string | undefined;
+  // The script's own one-line summary, when it wrote one — preferred over generic fallback detail.
+  const summaryStr =
+    typeof status?.summary === 'string' && status.summary ? status.summary : undefined;
 
   if (st === 'error' || failed > 0) {
     return {
@@ -90,6 +93,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
         failed > 0
           ? t('page.out_failed_count', { name, failed })
           : t('page.out_failed_problems', { name }),
+      detail: summaryStr,
       action: { kind: 'log', label: t('page.toast_open_log') }
     };
   }
@@ -97,7 +101,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
   // R1: `held` (updates deliberately pinned/held back) is neither an error nor "up to date" —
   // without this branch it fell through to the success toast and contradicted the card badge.
   if (st === 'held') {
-    return { kind: 'info', title: t('page.out_held', { name }), detail: durationText(status) };
+    return { kind: 'info', title: t('page.out_held', { name }), detail: summaryStr ?? durationText(status) };
   }
 
   if (mode === 'apply') {
@@ -112,7 +116,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
         changed > 0
           ? t('page.out_changes_count', { name, changed })
           : t('page.out_changes_any', { name }),
-      detail: t('page.out_changes_detail')
+      detail: summaryStr ?? t('page.out_changes_detail')
     };
   }
 

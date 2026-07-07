@@ -312,7 +312,7 @@
       const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
       const focused = paneKey != null && activeKey === paneKey && visible;
       const next: AgentPaneState =
-        state === 'idle' && (prev === 'working' || prev === 'blocked') && !focused
+        state === 'idle' && (prev === 'working' || prev === 'blocked') && !focused && e.payload.hookIdle === true
           ? 'done'
           : (state as AgentPaneState);
       agentStates = { ...agentStates, [id]: next };

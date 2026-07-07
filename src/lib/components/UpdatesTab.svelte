@@ -3,6 +3,10 @@
   import ComponentCard from './ComponentCard.svelte';
   import { t } from '$lib/i18n';
   import { countOf } from '$lib/envelope';
+  import { relTime } from '$lib/relativeTime';
+
+  // A check older than this reads as stale — surfaced (not hidden) so "current" doesn't mean "fresh".
+  const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 
   let {
     components,
@@ -58,6 +62,14 @@
     if (!ts.length) return null;
     return ageStr((Date.now() - Math.max(...ts)) / 3_600_000);
   });
+  // Oldest component check — the roll-up flags it when it exceeds STALE_MS (lastChecked stays max).
+  const oldest = $derived.by(() => {
+    const ts = Object.values(statuses)
+      .map((s: any) => Date.parse(s?.timestamp ?? ''))
+      .filter(Number.isFinite);
+    return ts.length ? Math.min(...ts) : null;
+  });
+  const oldestStale = $derived(oldest != null && Date.now() - oldest > STALE_MS);
 </script>
 
 <div class="p-sw-6">
@@ -73,12 +85,17 @@
     <span class="badge {avail.length || errors.length ? 'badge-warn' : 'badge-ok'}">
       {errors.length
         ? t('updates.groupErrors', { count: errors.length })
-        : t('updates.groupHasUpdate', { count: avail.length })}
+        : avail.length
+          ? t('updates.groupHasUpdate', { count: avail.length })
+          : t('updates.groupAllClear')}
     </span>
     {#if running === 'all' && allProgress}
       <span class="text-sw-sm text-sw-text-secondary">⏳ {t('updates.updatingNow', { step: allProgress })}</span>
     {:else if lastChecked}
       <span class="text-sw-sm text-sw-text-muted">{t('updates.summaryChecked', { time: lastChecked })}</span>
+    {/if}
+    {#if oldestStale && oldest != null}
+      <span class="text-sw-sm status-warn">{t('updates.staleOldest', { time: relTime(new Date(oldest).toISOString()) })}</span>
     {/if}
     {#if allComp}
       <span class="ml-auto flex flex-wrap gap-sw-2">

@@ -308,8 +308,10 @@
     if (!c.lastJson) return;
     try {
       statuses[c.id] = await readStatus(c.lastJson);
-    } catch {
-      statuses[c.id] = null;
+    } catch (e) {
+      // A parse failure (even after .bak recovery) surfaces as a distinct `corrupt` status, not
+      // "never ran" — the backend prefixes such errors with `corrupt:` (contract-frozen).
+      statuses[c.id] = String(e).startsWith('corrupt:') ? ({ status: 'corrupt' } as any) : null;
     }
   }
 

@@ -221,8 +221,8 @@ struct StatusEvent {
     #[serde(skip)]
     exited: bool,
     /// The hook reported `idle` (a real Stop) at this emit — gates the completion toast so a
-    /// hookless activity-lull can't fire a false "finished" (live-smoke 2026-07-03). Backend-only.
-    #[serde(skip)]
+    /// hookless activity-lull can't fire a false "finished" (live-smoke 2026-07-03). Serialized
+    /// (`hookIdle`) so the frontend gates its visual "done" the same way as the toast.
     hook_idle: bool,
 }
 
