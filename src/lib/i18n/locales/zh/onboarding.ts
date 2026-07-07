@@ -22,6 +22,8 @@ export default {
   scriptsLabel: 'Scripts 根目录',
   scriptsPlaceholder: '例如：E:\\Scripts',
   scriptsNeeded: '请选择一个文件夹以继续。',
+  noScriptsBtn: '我没有这些脚本——不使用它们继续',
+  noScriptsNote: '没有维护脚本，无法创建配置档和检查更新。你可以稍后在“设置 → SCRIPTS_ROOT”中进行配置。',
 
   // Step 3 — profile
   profileTitle: '设置配置档案',

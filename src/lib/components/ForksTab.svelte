@@ -5,6 +5,7 @@
   import { statusTextClass } from '$lib/statusColor';
   import ForkRepoCard from './ForkRepoCard.svelte';
   import EmptyState from './EmptyState.svelte';
+  import NoScriptsBanner from './NoScriptsBanner.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
   import { GitFork, ArrowUpDown, FolderPlus, X } from '@lucide/svelte';
   import { onMount } from 'svelte';
@@ -22,7 +23,8 @@
     onOpenSession,
     onClone,
     cloningRepo = null,
-    profiles = []
+    profiles = [],
+    scriptsAvail = true
   }: {
     status: ForkStatus | null | undefined;
     githubRepos?: GithubRepo[];
@@ -37,6 +39,7 @@
     onClone?: (repo: GithubRepo) => void;
     cloningRepo?: string | null;
     profiles?: string[];
+    scriptsAvail?: boolean;
   } = $props();
 
   // --- Fork discovery config (de-hardcode): user-editable roots/paths/ownPaths, durable in %APPDATA%.
@@ -229,6 +232,7 @@
 </script>
 
 <div class="p-sw-6">
+  {#if !scriptsAvail}<NoScriptsBanner />{/if}
   <header class="mb-sw-4 flex flex-wrap items-start justify-between gap-sw-4">
     <div>
       <h1 class="text-lg font-semibold">{t('forks.title')}</h1>

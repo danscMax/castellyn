@@ -6,7 +6,7 @@
   import ModalShell from './ModalShell.svelte';
   import FolderField from './FolderField.svelte';
   import { t } from '$lib/i18n';
-  import { readConfig, writeConfig, appPaths } from '$lib/ipc';
+  import { readConfig, writeConfig, appPaths, scriptsAvailable } from '$lib/ipc';
   import type { ProfileMgmtArgs } from '$lib/ipc';
 
   let {
@@ -36,6 +36,9 @@
   // Step 2 — Scripts root. Seed from the live config on open; persist via the same path SettingsTab uses.
   let scriptsRoot = $state('');
   let scriptsSaved = $state(false);
+  // OSS first-run: null = unknown, false = maintenance scripts absent (or user said "I have none") →
+  // profile-create + "check all" can't run, so those actions render disabled with a hint.
+  let scriptsPresent = $state<boolean | null>(null);
   let seeded = false;
   $effect(() => {
     if (open && !seeded) {
@@ -45,9 +48,21 @@
           if (c.scriptsRoot) scriptsRoot = c.scriptsRoot;
         })
         .catch(() => {});
+      scriptsAvailable()
+        .then((v) => (scriptsPresent = v))
+        .catch(() => {});
     }
-    if (!open) seeded = false;
+    if (!open) {
+      seeded = false;
+      scriptsPresent = null;
+    }
   });
+  // The scripts step's "I don't have these scripts" escape: skip ahead and remember the absence so
+  // the profile + check-all actions downstream disable themselves.
+  function skipScripts() {
+    scriptsPresent = false;
+    if (stepIdx < TOTAL - 1) stepIdx += 1;
+  }
   // A typed/picked path is "unsaved" until persisted — re-arm the save hint when it changes.
   $effect(() => {
     void scriptsRoot;
@@ -124,6 +139,7 @@
           <span class="dlg-hint">{t('onboarding.scriptsNeeded')}</span>
         {/if}
       </div>
+      <button class="ob-link" onclick={skipScripts}>{t('onboarding.noScriptsBtn')}</button>
     {:else if stepIdx === 2}
       <h3 class="dlg-h">{t('onboarding.profileTitle')}</h3>
       <p class="ob-body">{t('onboarding.profileBody')}</p>
@@ -142,11 +158,13 @@
             spellcheck="false"
             autocomplete="off"
           />
-          <button class="sw-btn sw-btn-primary" disabled={!nameValid || busy} onclick={createProfile}>
+          <button class="sw-btn sw-btn-primary" disabled={!nameValid || busy || scriptsPresent === false} onclick={createProfile}>
             {t('common.add')}
           </button>
         </div>
-        {#if profName && !nameValid}
+        {#if scriptsPresent === false}
+          <span class="dlg-hint">{t('onboarding.noScriptsNote')}</span>
+        {:else if profName && !nameValid}
           <span class="dlg-warn">{t('profiles.dlgNameError')}</span>
         {/if}
       </div>
@@ -154,7 +172,7 @@
       <p class="ob-hint">{t('onboarding.profileSkipHint')}</p>
     {:else}
       <h3 class="dlg-h">{t('onboarding.doneTitle')}</h3>
-      <p class="ob-body">{t('onboarding.doneBody')}</p>
+      <p class="ob-body">{scriptsPresent === false ? t('onboarding.noScriptsNote') : t('onboarding.doneBody')}</p>
     {/if}
 
     <div class="ob-foot">
@@ -165,6 +183,8 @@
         {/if}
         {#if stepIdx < TOTAL - 1}
           <button class="sw-btn sw-btn-primary" disabled={!canNext} onclick={next}>{t('onboarding.next')}</button>
+        {:else if scriptsPresent === false}
+          <button class="sw-btn sw-btn-primary" onclick={() => finish(false)}>{t('onboarding.doneJustFinish')}</button>
         {:else}
           <button class="sw-btn sw-btn-ghost" onclick={() => finish(false)}>{t('onboarding.doneJustFinish')}</button>
           <button class="sw-btn sw-btn-primary" onclick={() => finish(true)}>{t('onboarding.doneRunCheck')}</button>

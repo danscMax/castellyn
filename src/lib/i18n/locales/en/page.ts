@@ -343,9 +343,15 @@ export default {
   notifEmpty: 'No notifications',
   notifDismissAll: 'Clear history',
 
+  // OSS first-run: shown on script-backed tabs when the maintenance scripts aren't present.
+  no_scripts_banner_title: 'Maintenance scripts not found',
+  no_scripts_banner_body:
+    'This tab drives the PowerShell maintenance scripts — the owner-tooling part. Point at the folder that holds them in Settings → SCRIPTS_ROOT to enable it.',
+
   // Onboarding: new-machine deployment checklist
   onb_title: 'Stack deployment',
   onb_subtitle: 'Idempotent new-machine checklist — every step is safe to re-run.',
+  onb_step_prereq_pwsh: 'PowerShell 7 (pwsh)',
   onb_step_prereq_git: 'git',
   onb_step_prereq_node: 'Node.js',
   onb_step_prereq_claude: 'Claude CLI',

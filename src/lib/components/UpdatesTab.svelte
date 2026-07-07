@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from '$lib/ipc';
   import ComponentCard from './ComponentCard.svelte';
+  import NoScriptsBanner from './NoScriptsBanner.svelte';
   import { t } from '$lib/i18n';
   import { countOf } from '$lib/envelope';
   import { relTime } from '$lib/relativeTime';
@@ -15,7 +16,8 @@
     allProgress = null,
     onCheck,
     onApply,
-    onOpenTab
+    onOpenTab,
+    scriptsAvail = true
   }: {
     components: Component[];
     statuses: Record<string, any>;
@@ -24,6 +26,7 @@
     onCheck: (id: string) => void;
     onApply: (comp: Component) => void;
     onOpenTab?: (id: string) => void;
+    scriptsAvail?: boolean;
   } = $props();
 
   // Redesign 2B: a roll-up header + sections by REAL state, so the wall of equal cards
@@ -73,6 +76,7 @@
 </script>
 
 <div class="p-sw-6">
+  {#if !scriptsAvail}<NoScriptsBanner />{/if}
   <header class="mb-sw-4">
     <h1 class="text-lg font-semibold">{t('updates.title')}</h1>
     <p class="text-sw-sm text-sw-text-secondary">

@@ -22,6 +22,8 @@ export default {
   scriptsLabel: 'Scripts root',
   scriptsPlaceholder: 'e.g. E:\\Scripts',
   scriptsNeeded: 'Pick a folder to continue.',
+  noScriptsBtn: "I don't have these scripts — continue without them",
+  noScriptsNote: 'Without the maintenance scripts, creating a profile and checking for updates are unavailable. You can set them up later in Settings → SCRIPTS_ROOT.',
 
   // Step 3 — profile
   profileTitle: 'Set up a profile',

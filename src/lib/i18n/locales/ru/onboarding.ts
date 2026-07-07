@@ -22,6 +22,8 @@ export default {
   scriptsLabel: 'Папка Scripts',
   scriptsPlaceholder: 'например: E:\\Scripts',
   scriptsNeeded: 'Выберите папку, чтобы продолжить.',
+  noScriptsBtn: 'У меня нет этих скриптов — продолжить без них',
+  noScriptsNote: 'Без скриптов обслуживания создание профиля и проверка обновлений недоступны. Их можно настроить позже в Настройках → SCRIPTS_ROOT.',
 
   // Step 3 — profile
   profileTitle: 'Настройте профиль',

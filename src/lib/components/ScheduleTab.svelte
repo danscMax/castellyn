@@ -2,6 +2,7 @@
   import type { SchedulesStatus, ScheduleAction } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
+  import NoScriptsBanner from './NoScriptsBanner.svelte';
   import { formatAbsTime } from '$lib/relativeTime';
   import { Clock } from '@lucide/svelte';
 
@@ -9,12 +10,14 @@
     data,
     running,
     onAction,
-    onRefresh
+    onRefresh,
+    scriptsAvail = true
   }: {
     data: SchedulesStatus | null;
     running: string | null;
     onAction: (action: ScheduleAction, id: string, time?: string) => void;
     onRefresh: () => void;
+    scriptsAvail?: boolean;
   } = $props();
 
   const busy = $derived(!!running);
@@ -30,6 +33,7 @@
 </script>
 
 <div class="p-sw-6">
+  {#if !scriptsAvail}<NoScriptsBanner />{/if}
   <header class="mb-sw-4 flex items-start justify-between gap-sw-4">
     <div>
       <h1 class="text-lg font-semibold">{t('schedule.title')}</h1>

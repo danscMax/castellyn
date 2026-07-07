@@ -338,9 +338,15 @@ export default {
   notifEmpty: '没有通知',
   notifDismissAll: '清空历史',
 
+  // OSS first-run: shown on script-backed tabs when the maintenance scripts aren't present.
+  no_scripts_banner_title: '未找到维护脚本',
+  no_scripts_banner_body:
+    '此标签页驱动 PowerShell 维护脚本——属于所有者工具部分。在“设置 → SCRIPTS_ROOT”中指向存放它们的文件夹即可启用。',
+
   // Onboarding: new-machine deployment checklist
   onb_title: '部署技术栈',
   onb_subtitle: '幂等的新机器检查清单——每一步都可以安全地重新运行。',
+  onb_step_prereq_pwsh: 'PowerShell 7 (pwsh)',
   onb_step_prereq_git: 'git',
   onb_step_prereq_node: 'Node.js',
   onb_step_prereq_claude: 'Claude CLI',

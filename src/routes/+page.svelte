@@ -86,6 +86,7 @@
     cancelRun,
     cancelAll,
     readConfig,
+    scriptsAvailable,
     type Component,
     type ForkAction,
     type GithubRepo,
@@ -265,6 +266,9 @@
   let pluginSyncData = $state<PluginSyncStatus | null>(null);
   let extensionsLoaded = $state(false);
   let loadError = $state<string | null>(null);
+  // OSS first-run: are the maintenance scripts present under SCRIPTS_ROOT? Default true so an
+  // owner setup never flashes the "no scripts" banner before the backend answers.
+  let scriptsAvail = $state(true);
   // OU-04 first-run onboarding wizard. Shown once when a fresh user has neither a configured
   // Scripts root NOR any profiles. Dismissal persists in localStorage (the app's existing
   // UI-state store) — not HubConfig, since the typed write_config round-trip would drop an
@@ -2162,6 +2166,9 @@
         if (s && schedulesData == null) schedulesData = s;
       })
       .catch(() => {});
+    scriptsAvailable()
+      .then((v) => (scriptsAvail = v))
+      .catch(() => {});
     // First-run onboarding: decide once, after config + profiles are known.
     maybeShowOnboarding();
 
@@ -2532,11 +2539,11 @@
           onOpen={(id) => (active = id)} onRefresh={reloadHome} onReloadDrift={reloadStackDrift}
           onReloadGc={reloadGc} onGcDelete={onGcDelete} onAction={onHomeAction} />
       {:else if active === 'updates'}
-        <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} />
+        <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} {scriptsAvail} />
       {:else if active === 'forks'}
-        <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} />
+        <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
       {:else if active === 'backup'}
-        <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} />
+        <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} {scriptsAvail} />
       {:else if active === 'mcp'}
         <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy}
           onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra} />
@@ -2550,11 +2557,11 @@
       {:else if active === 'sync'}
         <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}
           driftData={driftData} conflictCount={profilesData?.syncConflicts?.count ?? 0}
-          onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} />
+          onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} {scriptsAvail} />
       {:else if active === 'analytics'}
         <AnalyticsTab onOpenProviders={() => (active = 'providers')} />
       {:else if active === 'schedule'}
-        <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} />
+        <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} {scriptsAvail} />
       {:else if active === 'settings'}
         <SettingsTab {theme} onSetTheme={setTheme} {density} {fullWidth} onSetDensity={setDensity} onSetFullWidth={setFullWidth} {confirmDestructive} onSetConfirmDestructive={setConfirmDestructive} onOpenOnboarding={openOnboarding} />
       {:else if active !== 'sessions' && !PERSIST_TABS.includes(active)}

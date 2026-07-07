@@ -1037,6 +1037,9 @@ export const writeConfig = (config: HubConfig) => invoke('write_config', { confi
 // Mirror the UI locale into the backend (errors/run-log/tray localize + persist to config).
 export const setLanguage = (lang: string) => invoke('set_language', { lang });
 export const appPaths = () => invoke<AppPaths>('app_paths');
+// OSS first-run: does the SCRIPTS_ROOT maintenance-manifest path exist on disk? false → the tab
+// banners explain that the script-backed tooling is the owner part (default true, never flashes).
+export const scriptsAvailable = () => invoke<boolean>('scripts_available');
 // F13: freellmapi gateway URL from stack.json — replace hardcoded localhost:13001.
 export const gatewayBaseUrl = () => invoke<string | null>('gateway_base_url');
 // OmniRoute single-front base URL (Ф4). null until the `omniroute` entry exists in stack.json.

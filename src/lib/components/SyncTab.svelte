@@ -1,6 +1,7 @@
 <script lang="ts">
   import { openPath, readDriftDiff, type SyncStatus, type SyncItem, type ConfigDriftStatus, type ConfigDriftAction, type DriftDiff } from '$lib/ipc';
   import SectionHeader from './SectionHeader.svelte';
+  import NoScriptsBanner from './NoScriptsBanner.svelte';
   import Toggle from './Toggle.svelte';
   import { t, pConflict } from '$lib/i18n';
   import { relTime } from '$lib/relativeTime';
@@ -14,7 +15,8 @@
     driftData = null,
     conflictCount = 0,
     onDriftApply,
-    onCleanConflicts
+    onCleanConflicts,
+    scriptsAvail = true
   }: {
     data: SyncStatus | null;
     running: string | null;
@@ -24,6 +26,7 @@
     conflictCount?: number;
     onDriftApply?: (action: ConfigDriftAction) => void;
     onCleanConflicts?: () => void;
+    scriptsAvail?: boolean;
   } = $props();
 
   const busy = $derived(!!running);
@@ -111,6 +114,7 @@
 </script>
 
 <div class="p-sw-6">
+  {#if !scriptsAvail}<NoScriptsBanner />{/if}
   <header class="mb-sw-4 flex items-start justify-between gap-sw-4">
     <div>
       <h1 class="text-lg font-semibold">{t('sync.title')}</h1>

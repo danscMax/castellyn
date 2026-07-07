@@ -385,6 +385,18 @@ fn manifest_text() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|_| MANIFEST_FALLBACK.to_string())
 }
 
+/// True when the on-disk maintenance manifest exists — i.e. the owner's SCRIPTS_ROOT tooling is
+/// present. A fresh OSS user without it falls back to MANIFEST_FALLBACK; the UI uses this to explain
+/// that the script-backed tabs are the owner-tooling part rather than flashing empty/erroring tabs.
+#[tauri::command]
+fn scripts_available() -> bool {
+    let path = format!(
+        "{}\\Castellyn\\manifest\\maintenance-manifest.json",
+        scripts_root()
+    );
+    std::path::Path::new(&path).exists()
+}
+
 #[derive(Deserialize, Clone)]
 struct RawManifest {
     components: Vec<RawComponent>,
@@ -786,6 +798,18 @@ async fn spawn_streamed_io(
     spawn_streamed_prog(app, state, id, "pwsh".to_string(), full, stdin_payload).await
 }
 
+/// Localized "failed to launch {program}" text, plus an install hint when the missing program is
+/// pwsh — a fresh Windows without PowerShell 7 is the common first-run block, so point the user at
+/// the installer instead of a bare OS error.
+fn spawn_err_text(program: &str, e: &str) -> String {
+    let lang = cur_lang();
+    let mut msg = trv("err.spawn_failed", lang, &[("program", &program), ("e", &e)]);
+    if program == "pwsh" {
+        msg.push_str(tr("err.pwsh_missing", lang));
+    }
+    msg
+}
+
 /// Core single-slot streamed runner: run `program args`, stream stdout/stderr to the console log,
 /// wait for exit. Optionally feeds `stdin_payload` (secrets go here, never argv). Exports the
 /// resolved SCRIPTS_ROOT so a child's {{SCRIPTS_ROOT}} expansion matches the backend's.
@@ -821,11 +845,7 @@ async fn spawn_streamed_prog(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            return Err(trv(
-                "err.spawn_failed",
-                cur_lang(),
-                &[("program", &program), ("e", &e)],
-            ));
+            return Err(spawn_err_text(&program, &e.to_string()));
         }
     };
 
@@ -889,13 +909,12 @@ async fn spawn_pwsh_phase(
         Err(e) => {
             // L1: surface the spawn failure like spawn_streamed_prog's sibling path (err.spawn_failed).
             // A bulk Repair-All spawn failure was previously silent (`Err(_) => return -1`).
-            let program = "pwsh";
             let _ = app.emit(
                 "run-log",
                 LogLine {
                     component: id.to_string(),
                     stream: "err".into(),
-                    line: trv("err.spawn_failed", cur_lang(), &[("program", &program), ("e", &e)]),
+                    line: spawn_err_text("pwsh", &e.to_string()),
                 },
             );
             return -1;
@@ -936,11 +955,7 @@ async fn spawn_stack_phase(
                 LogLine {
                     component: id.to_string(),
                     stream: "err".into(),
-                    line: trv(
-                        "err.spawn_failed",
-                        cur_lang(),
-                        &[("program", &"pwsh".to_string()), ("e", &e)],
-                    ),
+                    line: spawn_err_text("pwsh", &e.to_string()),
                 },
             );
             return -1;
@@ -4563,7 +4578,18 @@ struct ProfileProvider {
     has_token: bool,
 }
 
-/// Profile names from config\profiles.json (fallback to the built-in list).
+/// Parse a profile name out of a `.claude-<name>` home-directory name: the suffix, when it is a
+/// valid profile name. `.claude`, non-`.claude-` dirs, and invalid suffixes → None.
+fn profile_name_from_dir(dir_name: &str) -> Option<String> {
+    dir_name
+        .strip_prefix(".claude-")
+        .filter(|s| valid_profile_name(s))
+        .map(String::from)
+}
+
+/// Profile names from config\profiles.json. Fallback (fresh OSS user with no profiles.json) scans
+/// %USERPROFILE% for `.claude-<name>` dirs and returns those — NEVER the owner's hardcoded
+/// PROFILE_NAMES, which would phantom-list profiles the user never created. Empty → empty Vec.
 fn profile_names() -> Vec<String> {
     if let Ok(c) = std::fs::read_to_string(abs(PROFILES_CONFIG_REL)) {
         if let Ok(v) = parse_json_bom(&c) {
@@ -4578,7 +4604,16 @@ fn profile_names() -> Vec<String> {
             }
         }
     }
-    PROFILE_NAMES.iter().map(|s| s.to_string()).collect()
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let mut names: Vec<String> = std::fs::read_dir(&home)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| profile_name_from_dir(&e.file_name().to_string_lossy()))
+        .collect();
+    names.sort();
+    names
 }
 
 /// One profile's provider + proxy, parsed from its settings.json `env`. The token VALUE is never
@@ -11258,7 +11293,8 @@ fn onboarding_scan() -> Vec<OnbStep> {
     let lang = cur_lang();
     let mut out: Vec<OnbStep> = Vec::new();
     // Prerequisites: PATH-resolvable CLIs (exe_on_path — no process spawns).
-    for (id, name) in [("prereq_git", "git"), ("prereq_node", "node"), ("prereq_claude", "claude")] {
+    // prereq_pwsh FIRST: pwsh is what every maintenance script is spawned with — it gates the rest.
+    for (id, name) in [("prereq_pwsh", "pwsh"), ("prereq_git", "git"), ("prereq_node", "node"), ("prereq_claude", "claude")] {
         out.push(match exe_on_path(name) {
             Some(p) => onb(id, "ok", p.to_string_lossy().into_owned(), None),
             None => onb(id, "todo", trv("onb.not_on_path", lang, &[("name", &name)]), None),
@@ -14352,6 +14388,7 @@ pub fn run() {
         .manage(UsageCache::default())
         .invoke_handler(tauri::generate_handler![
             list_components,
+            scripts_available,
             read_status,
             run_component,
             run_forks,
@@ -14892,6 +14929,18 @@ mod tests {
             assert_eq!(ids.iter().filter(|i| **i == want).count(), 1, "{want}");
         }
         assert!(steps.iter().all(|s| ["ok", "todo", "blocked", "unknown"].contains(&s.state.as_str())));
+    }
+
+    #[test]
+    fn profile_name_from_dir_parses_suffix() {
+        assert_eq!(profile_name_from_dir(".claude-cc2").as_deref(), Some("cc2"));
+        assert_eq!(profile_name_from_dir(".claude-ccmy").as_deref(), Some("ccmy"));
+        // No suffix / wrong prefix / invalid suffix → None.
+        assert_eq!(profile_name_from_dir(".claude"), None);
+        assert_eq!(profile_name_from_dir(".claude-"), None); // empty suffix
+        assert_eq!(profile_name_from_dir(".config"), None);
+        assert_eq!(profile_name_from_dir("claude-cc2"), None); // no leading dot
+        assert_eq!(profile_name_from_dir(".claude-bad/name"), None); // path separator rejected
     }
 
     #[test]

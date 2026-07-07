@@ -5,6 +5,7 @@
   import RestoreDialog from './RestoreDialog.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import EmptyState from './EmptyState.svelte';
+  import NoScriptsBanner from './NoScriptsBanner.svelte';
   import { Archive } from '@lucide/svelte';
   import SectionHeader from './SectionHeader.svelte';
   import { t } from '$lib/i18n';
@@ -18,7 +19,8 @@
     profiles = [],
     confirmDestructive = true,
     onAction,
-    onRefresh
+    onRefresh,
+    scriptsAvail = true
   }: {
     data: BackupList | null;
     running: string | null;
@@ -28,6 +30,7 @@
     confirmDestructive?: boolean;
     onAction: (action: BackupAction, opts?: RestoreOpts) => void;
     onRefresh?: () => void;
+    scriptsAvail?: boolean;
   } = $props();
 
   // F9: weekly-archive ops (zip files, not snapshot folders) — direct IPC, not BackupAction.
@@ -161,6 +164,7 @@
 </script>
 
 <div class="p-sw-6">
+  {#if !scriptsAvail}<NoScriptsBanner />{/if}
   <header class="mb-sw-4 flex items-start justify-between gap-sw-4">
     <div>
       <h1 class="text-lg font-semibold">{t('backup.title')}</h1>

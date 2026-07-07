@@ -76,6 +76,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     // ── command errors (surface as toasts) ───────────────────────────────────
     ("err.run_in_progress", ["Уже идёт другой прогон — дождись завершения или отмени.", "Another run is in progress — wait for it to finish or cancel.", "已有任务在运行 — 请等待其完成或取消。"]),
     ("err.spawn_failed", ["не удалось запустить {program}: {e}", "failed to launch {program}: {e}", "无法启动 {program}: {e}"]),
+    ("err.pwsh_missing", [" — установите PowerShell 7: https://aka.ms/powershell", " — install PowerShell 7: https://aka.ms/powershell", " — 请安装 PowerShell 7: https://aka.ms/powershell"]),
     ("err.unknown_component", ["неизвестный компонент {id}", "unknown component {id}", "未知组件 {id}"]),
     ("err.component_no_apply", ["компонент {name} не поддерживает применение", "component {name} does not support apply", "组件 {name} 不支持应用"]),
     ("err.forks_missing", ["компонент forks не найден в манифесте", "forks component not found in the manifest", "清单中未找到 forks 组件"]),

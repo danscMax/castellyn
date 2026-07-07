@@ -343,9 +343,15 @@ export default {
   notifEmpty: 'Нет уведомлений',
   notifDismissAll: 'Очистить историю',
 
+  // OSS first-run: shown on script-backed tabs when the maintenance scripts aren't present.
+  no_scripts_banner_title: 'Скрипты обслуживания не найдены',
+  no_scripts_banner_body:
+    'Эта вкладка управляет PowerShell-скриптами обслуживания — это владельческая часть тулинга. Укажите папку с ними в Настройках → SCRIPTS_ROOT, чтобы включить её.',
+
   // Onboarding: new-machine deployment checklist
   onb_title: 'Развёртывание стека',
   onb_subtitle: 'Идемпотентный чек-лист новой машины — каждый шаг можно перезапускать.',
+  onb_step_prereq_pwsh: 'PowerShell 7 (pwsh)',
   onb_step_prereq_git: 'git',
   onb_step_prereq_node: 'Node.js',
   onb_step_prereq_claude: 'Claude CLI',
