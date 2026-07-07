@@ -16,6 +16,7 @@ export default {
   limitModeSwitch: 'switch profile',
   switchedProfile: 'Limit: {name} moved to profile “{profile}”',
   sumBlocked: '{n} blocked',
+  sumLimited: '{n} limited',
   sumWorking: '{n} working',
   sumDone: '{n} done',
   statusHook: 'Agent statuses',

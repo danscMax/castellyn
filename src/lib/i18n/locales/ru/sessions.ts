@@ -16,6 +16,7 @@ export default {
   limitModeSwitch: 'сменить профиль',
   switchedProfile: 'Лимит: {name} перенесён на профиль «{profile}»',
   sumBlocked: '{n} ждёт',
+  sumLimited: '{n} на лимите',
   sumWorking: '{n} работает',
   sumDone: '{n} готово',
   statusHook: 'Статусы агентов',

@@ -289,6 +289,8 @@ export default {
   toast_op_error: '{name}: ошибка (код {code})',
   toast_op_error_detail: 'Подробности — в логе выполнения.',
   toast_open_log: 'Открыть лог',
+  toast_stack_down_title: 'Сервис стека упал',
+  toast_stack_down_detail: 'Сервис «{name}» остановился неожиданно.',
   toast_generic_error: 'Что-то пошло не так',
 
   // Misc

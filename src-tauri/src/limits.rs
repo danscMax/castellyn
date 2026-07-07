@@ -148,6 +148,17 @@ fn beep_crit() {
     }
 }
 
+/// Softer warning chime for the 85% threshold (the info/asterisk sound, quieter than the crit
+/// exclamation). No OS toast at 85 — sound only, so the user isn't nagged with a popup mid-work.
+fn beep_warn() {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Diagnostics::Debug::MessageBeep;
+        use windows::Win32::UI::WindowsAndMessaging::MB_ICONASTERISK;
+        let _ = MessageBeep(MB_ICONASTERISK);
+    }
+}
+
 /// Emit the alert (UI toast for either level) and, at 99%, ring + OS-notify — each gated by the same
 /// config toggles as agent-status. The percentage is rounded for display only.
 fn fire_alert(app: &AppHandle, profile: &str, window: &str, level: u8, util: f64, reset: Option<&str>) {
@@ -161,6 +172,13 @@ fn fire_alert(app: &AppHandle, profile: &str, window: &str, level: u8, util: f64
             resets_at: reset.map(str::to_string),
         },
     );
+    if (85..99).contains(&level) {
+        // 85%: a quiet heads-up chime only, gated on sounds — no toast (see beep_warn).
+        if crate::read_config_file().status_sounds.unwrap_or(true) {
+            beep_warn();
+        }
+        return;
+    }
     if level < 99 {
         return;
     }

@@ -2,10 +2,27 @@
 //! pushes the full list to the UI, and flags services that transition to down (once per transition).
 
 use std::collections::HashSet;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const POLL_SECS: u64 = 30;
+/// How long after WE stop a service its down-transition stays suppressed (matches the contract).
+const EXPECTED_TTL: Duration = Duration::from_secs(180);
+
+/// Count of enabled services down as of the last poll — read by the tray tooltip.
+static STACK_DOWN_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Down-service count from the most recent poll (0 before the first tick).
+pub(crate) fn down_count() -> usize {
+    STACK_DOWN_COUNT.load(Ordering::Relaxed)
+}
+
+/// Whether a newly-down service should be suppressed: it was marked expected-down within the TTL.
+/// Pure so the suppression window is unit-testable without threads or a live poll.
+fn suppressed(marked: Option<Instant>, now: Instant, ttl: Duration) -> bool {
+    marked.map(|t| now.duration_since(t) < ttl).unwrap_or(false)
+}
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -51,13 +68,26 @@ pub fn start(app: AppHandle) {
                 .map(|h| (h.id.clone(), !h.port_open || h.healthy == Some(false)))
                 .collect();
             let fired = newly_down(&mut prev_down, &curr);
+            STACK_DOWN_COUNT.store(curr.iter().filter(|(_, down)| *down).count(), Ordering::Relaxed);
             // Push the full list every tick so the UI updates live without a manual refresh.
             let _ = app.emit("stack-health", &health);
+            let now = Instant::now();
             for id in fired {
+                // A service WE just stopped (within the TTL) is expected down — stay silent (it's
+                // still in the stack-health list emit above). An unexpected death still alerts.
+                if suppressed(crate::expected_down_at(&id), now, EXPECTED_TTL) {
+                    continue;
+                }
                 if let Some(h) = health.iter().find(|h| h.id == id) {
                     let _ = app.emit("stack-service-down", ServiceDown { id: h.id.clone(), name: h.name.clone() });
+                    crate::notify_important(
+                        &app,
+                        crate::i18n::tr("notify.stack_down_title", crate::cur_lang()),
+                        &crate::i18n::trv("notify.stack_down_body", crate::cur_lang(), &[("name", &h.name)]),
+                    );
                 }
             }
+            crate::update_tray_tooltip(&app);
         }
     });
 }
@@ -81,5 +111,19 @@ mod tests {
         assert_eq!(newly_down(&mut prev, &up(&[("gateway", true), ("qwen", false)])), vec!["gateway"]);
         // A second service drops in the same tick → only the newly-down one.
         assert_eq!(newly_down(&mut prev, &up(&[("gateway", true), ("qwen", true)])), vec!["qwen"]);
+    }
+
+    #[test]
+    fn suppressed_only_within_ttl() {
+        let now = Instant::now();
+        let ttl = Duration::from_secs(180);
+        // Never marked → always alerts.
+        assert!(!suppressed(None, now, ttl));
+        // Marked just now → suppressed.
+        assert!(suppressed(Some(now), now, ttl));
+        // Marked 100s ago → still inside the 180s window → suppressed.
+        assert!(suppressed(now.checked_sub(Duration::from_secs(100)), now, ttl));
+        // Marked 200s ago → stale (unexpected death) → alerts.
+        assert!(!suppressed(now.checked_sub(Duration::from_secs(200)), now, ttl));
     }
 }

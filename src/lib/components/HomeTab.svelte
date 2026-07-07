@@ -169,13 +169,14 @@
       // agentSummary already feeds the sidebar badge — same source, same sessions.sum* keys.
       const parts = [
         agentSummary.blocked > 0 ? t('sessions.sumBlocked', { n: agentSummary.blocked }) : '',
+        agentSummary.limited > 0 ? t('sessions.sumLimited', { n: agentSummary.limited }) : '',
         agentSummary.working > 0 ? t('sessions.sumWorking', { n: agentSummary.working }) : '',
         agentSummary.done > 0 ? t('sessions.sumDone', { n: agentSummary.done }) : ''
       ].filter(Boolean).join(' · ');
       out.push({
         key: 'sessions', tab: 'sessions', title: t('page.home_sessions'),
         value: parts || t('page.home_sessionsActive', { n: sessionCount }),
-        level: agentSummary.blocked > 0 ? 'bad' : sessionCount > 0 ? 'ok' : 'muted'
+        level: agentSummary.blocked > 0 ? 'bad' : agentSummary.limited > 0 ? 'warn' : sessionCount > 0 ? 'ok' : 'muted'
       });
     }
 

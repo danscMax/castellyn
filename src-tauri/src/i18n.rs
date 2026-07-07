@@ -58,6 +58,17 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("limits.crit_title",    ["Лимит почти исчерпан", "Usage limit almost reached", "用量即将达到上限"]),
     ("limits.crit_body",     ["{profile}: {window} на {pct}% — лимит почти исчерпан", "{profile}: {window} at {pct}% — usage limit almost reached", "{profile}: {window} 已用 {pct}% — 即将达到上限"]),
 
+    // ── background attention notifications (fire when the window is hidden/unfocused) ─────────
+    ("notify.stack_down_title",     ["Сервис стека упал", "Stack service down", "技术栈服务已宕机"]),
+    ("notify.stack_down_body",      ["{name} перестал отвечать", "{name} stopped responding", "{name} 已停止响应"]),
+    ("notify.run_failed_title",     ["Прогон завершился ошибкой", "Run failed", "运行失败"]),
+    ("notify.run_failed_body",      ["{component}: прогон завершился с ошибкой", "{component}: the run finished with an error", "{component}: 运行以错误结束"]),
+    ("notify.schedule_failed_title", ["Запланированная задача провалилась", "Scheduled task failed", "计划任务失败"]),
+    ("notify.schedule_failed_body", ["{name}: последний запуск завершился ошибкой", "{name}: the last run failed", "{name}: 上次运行失败"]),
+    ("notify.limited_title",        ["Агент упёрся в лимит", "Agent hit its usage limit", "代理已达用量上限"]),
+    ("notify.limited_body",         ["{label}: сессия остановлена до сброса окна лимита", "{label}: the session is paused until the limit window resets", "{label}: 会话已暂停，直至限额窗口重置"]),
+    ("tray.tooltip_attention",      ["Внимание — ждут: {blocked}, лимит: {limited}, упало: {down}", "Attention — waiting: {blocked}, limited: {limited}, down: {down}", "注意 — 等待: {blocked}, 限额: {limited}, 宕机: {down}"]),
+
     // ── config write (touched by language-preserving write_config) ───────────
     ("err.no_appdata",    ["APPDATA не найден", "APPDATA not found", "未找到 APPDATA"]),
     ("err.write_config",  ["запись config: {e}", "writing config: {e}", "写入 config: {e}"]),

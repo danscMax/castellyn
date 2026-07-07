@@ -289,6 +289,8 @@ export default {
   toast_op_error: '{name}: error (code {code})',
   toast_op_error_detail: 'See the run log for details.',
   toast_open_log: 'Open log',
+  toast_stack_down_title: 'Stack service went down',
+  toast_stack_down_detail: 'Service “{name}” stopped unexpectedly.',
   toast_generic_error: 'Something went wrong',
 
   // Misc

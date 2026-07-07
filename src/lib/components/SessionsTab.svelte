@@ -421,12 +421,13 @@
   }
   // Roll the counts up for the header chips + the sidebar badge (+page reads the store).
   const statusCounts = $derived.by(() => {
-    const c = { blocked: 0, working: 0, done: 0 };
+    const c = { blocked: 0, working: 0, done: 0, limited: 0 };
     for (const id of Object.values(sessionIds)) {
       const s = agentStates[id];
       if (s === 'blocked') c.blocked++;
       else if (s === 'working') c.working++;
       else if (s === 'done') c.done++;
+      else if (s === 'limited') c.limited++;
     }
     return c;
   });
@@ -434,6 +435,7 @@
     agentSummary.blocked = statusCounts.blocked;
     agentSummary.working = statusCounts.working;
     agentSummary.done = statusCounts.done;
+    agentSummary.limited = statusCounts.limited;
   });
 
   // Agent-status lifecycle hook (Sessions ⚙ settings): wired into every claude profile.

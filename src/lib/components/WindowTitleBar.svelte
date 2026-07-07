@@ -21,7 +21,7 @@
   const showStrip = $derived(
     uiPrefs.loaded &&
       uiPrefs.showSessionStatusBar &&
-      (sessLive > 0 || agentSummary.done > 0 || peak != null)
+      (sessLive > 0 || agentSummary.done > 0 || agentSummary.limited > 0 || peak != null)
   );
   const peakClass = $derived(
     !peak ? '' : peak.pct >= 99 ? 'strip-err' : peak.pct >= 85 ? 'strip-warn' : ''
@@ -105,6 +105,9 @@
       {/if}
       {#if agentSummary.blocked}
         <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-block" data-tauri-drag-region></span>{agentSummary.blocked}</span>
+      {/if}
+      {#if agentSummary.limited}
+        <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-lim" data-tauri-drag-region></span>{agentSummary.limited}</span>
       {/if}
       {#if peak}
         <span class="ss-item ss-peak" data-tauri-drag-region title={t('titlebar.stripPeak', { profile: peak.profile })}>
@@ -271,6 +274,8 @@
   }
   .ss-work { background: var(--sw-ok, #22c55e); }
   .ss-block { background: var(--sw-warn, #f59e0b); }
+  /* Same steady red as TerminalPane's `.dot.limited` — "stopped on quota". */
+  .ss-lim { background: var(--sw-status-down, #ef4444); }
   .titlebar.inactive .sess-strip { opacity: 0.6; }
   .controls {
     display: flex;

@@ -59,12 +59,14 @@ export function pluginsAttention(updateCount: number): Attention | null {
 }
 
 /**
- * Sessions: agents waiting for input, or finished-but-unseen. #10: use the SAME herdr palette the
- * pane already uses (blocked = danger/red "waiting for you", done = teal "finished, unseen") so one
- * fact is one colour across the sidebar and the tab — previously the sidebar showed warn/info.
+ * Sessions: agents waiting for input, hit-the-limit, or finished-but-unseen. #10: use the SAME herdr
+ * palette the pane already uses (blocked = danger/red "waiting for you", done = teal "finished,
+ * unseen") so one fact is one colour across the sidebar and the tab. `limited` (a pane that hit the
+ * 5h quota and is waiting) sits between them as a warn — actionable, but not a hard block.
  */
-export function sessionsAttention(s: { blocked: number; done: number }): Attention | null {
+export function sessionsAttention(s: { blocked: number; done: number; limited: number }): Attention | null {
   if (s.blocked > 0) return { level: 'danger', count: s.blocked };
+  if (s.limited > 0) return { level: 'warn', count: s.limited };
   if (s.done > 0) return { level: 'done', count: s.done };
   return null;
 }

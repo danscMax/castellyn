@@ -81,6 +81,7 @@
     pluginSyncSet,
     runPluginSync,
     readSchedules,
+    readSchedulesCached,
     runSchedule,
     cancelRun,
     cancelAll,
@@ -2152,6 +2153,13 @@
     await reloadProfiles();
     reloadMcp();
     reloadPluginUpdates();
+    // Seed schedules from the on-disk envelope (file-only, no pwsh) so Home's task rollup shows from
+    // launch. The Schedule tab's lazy full read (which queries pwsh) still refreshes it on first open.
+    readSchedulesCached()
+      .then((s) => {
+        if (s && schedulesData == null) schedulesData = s;
+      })
+      .catch(() => {});
     // First-run onboarding: decide once, after config + profiles are known.
     maybeShowOnboarding();
 
@@ -2189,6 +2197,19 @@
     // into limitsStore so the Analytics "Claude usage" panel and the title-bar strip read live data.
     unlisten.push(
       await listen<LimitsStatusEvent>('limits-status', (e) => pushLimits(e.payload))
+    );
+    // A stack service the supervisor did NOT stop on purpose went down — surface it as an error toast
+    // that jumps to Providers (where the stack lives). The backend suppresses expected-down services.
+    unlisten.push(
+      await listen<{ id: string; name: string }>('stack-service-down', (e) => {
+        const name = e.payload.name || e.payload.id;
+        pushToast({
+          kind: 'error',
+          title: t('page.toast_stack_down_title'),
+          detail: t('page.toast_stack_down_detail', { name }),
+          action: { label: t('common.open'), onClick: () => (active = 'providers') }
+        });
+      })
     );
     unlisten.push(
       await listen<{ component: string; code: number }>('run-done', async (e) => {

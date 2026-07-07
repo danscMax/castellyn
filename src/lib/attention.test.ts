@@ -89,8 +89,17 @@ describe('attention', () => {
   });
 
   it('sessions: blocked=danger, done=teal, none otherwise (#10 herdr palette)', () => {
-    expect(sessionsAttention({ blocked: 2, done: 1 })).toEqual({ level: 'danger', count: 2 });
-    expect(sessionsAttention({ blocked: 0, done: 3 })).toEqual({ level: 'done', count: 3 });
-    expect(sessionsAttention({ blocked: 0, done: 0 })).toBeNull();
+    expect(sessionsAttention({ blocked: 2, done: 1, limited: 0 })).toEqual({ level: 'danger', count: 2 });
+    expect(sessionsAttention({ blocked: 0, done: 3, limited: 0 })).toEqual({ level: 'done', count: 3 });
+    expect(sessionsAttention({ blocked: 0, done: 0, limited: 0 })).toBeNull();
+  });
+
+  it('sessions: limited=warn between blocked and done', () => {
+    // limited alone → warn.
+    expect(sessionsAttention({ blocked: 0, done: 0, limited: 2 })).toEqual({ level: 'warn', count: 2 });
+    // limited outranks done.
+    expect(sessionsAttention({ blocked: 0, done: 4, limited: 1 })).toEqual({ level: 'warn', count: 1 });
+    // blocked outranks limited.
+    expect(sessionsAttention({ blocked: 3, done: 0, limited: 5 })).toEqual({ level: 'danger', count: 3 });
   });
 });

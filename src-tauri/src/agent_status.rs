@@ -253,6 +253,9 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
         return;
     }
     let to_blocked = ev.state == "blocked" && ev.prev.as_deref() != Some("blocked");
+    // A pane hitting its usage limit is attention-worthy the same way as blocked: it's stalled on
+    // quota until the window resets. Same focus-gate + attention beep, its own toast text.
+    let to_limited = ev.state == "limited" && ev.prev.as_deref() != Some("limited");
     // "Finished" toast only on a REAL end-of-turn = the Stop hook fired (hook_idle). An activity-lull
     // idle just greys the dot; it must NOT claim "done". This applies to codex/opencode too: they have
     // no hook, so their idle is pure PTY-silence — clicking into the pane (cursor repaint) or any
@@ -262,7 +265,7 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     let completed = ev.state == "idle"
         && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"))
         && ev.hook_idle;
-    if !to_blocked && !completed {
+    if !to_blocked && !completed && !to_limited {
         return;
     }
     if app
@@ -275,12 +278,14 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     let cfg = crate::read_config_file();
     let lang = crate::cur_lang();
     if cfg.status_sounds.unwrap_or(true) {
-        beep(to_blocked);
+        beep(to_blocked || to_limited);
     }
     if cfg.status_notify.unwrap_or(true) {
         use tauri_plugin_notification::NotificationExt;
         let (tk, bk) = if to_blocked {
             ("status.blocked_title", "status.blocked_body")
+        } else if to_limited {
+            ("notify.limited_title", "notify.limited_body")
         } else {
             ("status.done_title", "status.done_body")
         };
@@ -389,6 +394,22 @@ fn apply_hook_report(v: &serde_json::Value, t: &mut Track) {
 }
 
 /// Start the poll thread. Called once from `setup()`.
+/// (blocked, limited) counts across live panes, from each track's last-emitted state. Cheap
+/// snapshot for the tray tooltip — no recompute, just reads what the poll already published.
+pub(crate) fn attention_counts() -> (usize, usize) {
+    let map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut blocked = 0;
+    let mut limited = 0;
+    for t in map.values() {
+        match t.last_emitted.as_deref() {
+            Some("blocked") => blocked += 1,
+            Some("limited") => limited += 1,
+            _ => {}
+        }
+    }
+    (blocked, limited)
+}
+
 pub fn start(app: tauri::AppHandle) {
     // Prune week-old hook files (claude session ids in them feed session restore, so we
     // keep recent ones across app restarts).
@@ -470,9 +491,14 @@ pub fn start(app: tauri::AppHandle) {
                 !t.exited // exited sessions emit their final idle above, then drop
             });
         }
+        let changed = !events.is_empty();
         for ev in events {
             notify_transition(&app, &ev);
             let _ = app.emit("agent-status", ev);
+        }
+        // Only when a state actually changed — the tooltip's attention line reads these counts.
+        if changed {
+            crate::update_tray_tooltip(&app);
         }
     });
 }

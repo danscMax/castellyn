@@ -20,6 +20,7 @@ use tokio::process::Command;
 mod agent_status;
 mod limits;
 mod stack_health;
+mod schedules_watch;
 mod i18n;
 use i18n::{tr, trv, Lang};
 
@@ -833,8 +834,24 @@ async fn spawn_streamed_prog(
         }
     }
 
+    let component = id.clone();
+    let app_n = app.clone();
     let code = pump_and_wait(app, id, child, "run-log", "run-done").await;
     drop(slot); // release the single run slot (also happens on any early return / panic above)
+    // A failed maintenance run (RunState domain — NOT the stack phases, which have their own
+    // suppression) is worth a toast when the user isn't already looking at the app.
+    if code != 0
+        && !app_n
+            .webview_windows()
+            .values()
+            .any(|w| w.is_focused().unwrap_or(false))
+    {
+        notify_important(
+            &app_n,
+            tr("notify.run_failed_title", cur_lang()),
+            &trv("notify.run_failed_body", cur_lang(), &[("component", &component)]),
+        );
+    }
     Ok(code)
 }
 
@@ -3457,6 +3474,9 @@ async fn native_stack_stop(
                 continue;
             }
         }
+        // We are intentionally taking this service down — suppress the health poll's "down" alert
+        // for the TTL window (covers stop-one, stop-all, and the restart stop phase, all via here).
+        mark_expected_down(&sid);
         let name = svc
             .get("name")
             .and_then(|x| x.as_str())
@@ -3549,6 +3569,10 @@ async fn run_stack(
             let code = if native {
                 native_stack_stop(&app, procs.inner(), o, true).await
             } else {
+                // Script path stops too: suppress the health poll's "down" alert for these ids,
+                // same as the native path does per-service (review-w1 M1 — a deliberate Stop in
+                // fallback mode must not OS-notify "service down").
+                mark_expected_down_scope(o);
                 let args = match &only {
                     Some(id) => vec!["-Only".to_string(), id.clone()],
                     None => vec!["-All".to_string()],
@@ -3580,6 +3604,9 @@ async fn run_stack(
                 native_stack_stop(&app, procs.inner(), o, false).await;
                 native_stack_start(&app, procs.inner(), o).await
             } else {
+                // The script restart's stop phase takes services down on purpose — suppress the
+                // health poll's alert exactly like the plain stop branch above.
+                mark_expected_down_scope(o);
                 let (stop_args, start_args) = match &only {
                     Some(id) => (
                         vec!["-Only".to_string(), id.clone()],
@@ -7452,7 +7479,19 @@ async fn read_schedules() -> Result<Option<serde_json::Value>, String> {
         .output();
     // Best-effort refresh, bounded — if the query hangs, fall through and read the last JSON anyway.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(30), fut).await;
+    read_schedules_cached_inner()
+}
+
+/// File-only read of schedules.last.json (no pwsh refresh). Shared by the cached command and the
+/// schedules watcher; same shape/errors as read_schedules minus the query.
+pub(crate) fn read_schedules_cached_inner() -> Result<Option<serde_json::Value>, String> {
     read_json_opt(abs(SCHEDULES_JSON_REL), "schedules")
+}
+
+/// Read schedules.last.json without the pwsh query — for a fast HomeTab seed on mount.
+#[tauri::command]
+async fn read_schedules_cached() -> Result<Option<serde_json::Value>, String> {
+    read_schedules_cached_inner()
 }
 
 /// Known schedule actions (whitelist mirrors the ScheduleTab UI + Schedule-Hub.ps1).
@@ -13035,24 +13074,90 @@ fn toggle_window(app: &AppHandle) {
     }
 }
 
-/// Reflect the number of open session panes in the tray tooltip.
+/// Service ids we intentionally stopped, with the instant of the stop. The stack-health poll
+/// consults this so a service WE just took down doesn't fire a spurious "service down" alert.
+/// Entries older than STACK_EXPECTED_TTL are stale (an unexpected death) and no longer suppress.
+pub(crate) static STACK_EXPECTED_DOWN: std::sync::OnceLock<Mutex<HashMap<String, std::time::Instant>>> =
+    std::sync::OnceLock::new();
+
+/// Mark a service id as expected-down as of now. Called from every native stop path.
+pub(crate) fn mark_expected_down(id: &str) {
+    STACK_EXPECTED_DOWN
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id.to_string(), std::time::Instant::now());
+}
+
+/// Mark one service (or, with None, every configured service) expected-down — the script stop
+/// path can't enumerate per-process like the native one, so it suppresses by scope.
+pub(crate) fn mark_expected_down_scope(only: Option<&str>) {
+    match only {
+        Some(id) => mark_expected_down(id),
+        None => {
+            for svc in stack_services() {
+                if let Some(sid) = svc.get("id").and_then(|x| x.as_str()) {
+                    mark_expected_down(sid);
+                }
+            }
+        }
+    }
+}
+
+/// When (if ever) `id` was last marked expected-down. The stack-health poll pairs this with the TTL.
+pub(crate) fn expected_down_at(id: &str) -> Option<std::time::Instant> {
+    STACK_EXPECTED_DOWN
+        .get()?
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .copied()
+}
+
+/// OS-notify (Windows toast) for a genuinely important background event, for NEW callers (stack
+/// down, run failed, schedule failed). No-op unless status_notify is on (default true). A failed
+/// `.show()` is logged, never propagated — a monitor thread must not die on a toast error.
+pub(crate) fn notify_important(app: &AppHandle, title: &str, body: &str) {
+    if !read_config_file().status_notify.unwrap_or(true) {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        eprintln!("notify_important: {e}");
+    }
+}
+
+/// Reflect open session panes + any aggregate attention (agents waiting / limited, stack down) in
+/// the tray tooltip. Called on session changes and from the health/agent poll threads so a
+/// minimized user sees trouble on hover.
 // ponytail: tooltip count, not a drawn overlay badge — add image-gen only if a visual badge is requested.
-fn update_tray_tooltip(app: &AppHandle) {
+pub(crate) fn update_tray_tooltip(app: &AppHandle) {
     let n = app
         .state::<SessionState>()
         .0
         .lock()
         .map(|m| m.len())
         .unwrap_or(0);
-    let label = if n == 0 {
+    let lang = cur_lang();
+    let mut label = if n == 0 {
         "Castellyn".to_string()
     } else {
-        trv(
-            "tray.tooltip_sessions",
-            cur_lang(),
-            &[("n", &n.to_string())],
-        )
+        trv("tray.tooltip_sessions", lang, &[("n", &n.to_string())])
     };
+    let (blocked, limited) = agent_status::attention_counts();
+    let down = stack_health::down_count();
+    if blocked + limited + down > 0 {
+        label.push('\n');
+        label.push_str(&trv(
+            "tray.tooltip_attention",
+            lang,
+            &[
+                ("blocked", &blocked.to_string()),
+                ("limited", &limited.to_string()),
+                ("down", &down.to_string()),
+            ],
+        ));
+    }
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_tooltip(Some(&label));
     }
@@ -14368,6 +14473,7 @@ read_opencode_models,
             agent_status_hook_set,
             delete_skill,
             read_schedules,
+            read_schedules_cached,
             run_schedule,
             read_config,
             write_config,
@@ -14413,6 +14519,9 @@ read_opencode_models,
             // Background llm-stack liveness poll (every 30s): pushes stack-health + flags
             // transition-to-down so post-startup death is seen without a manual refresh.
             stack_health::start(app.handle().clone());
+            // Background schedules watcher (every 5 min, file-only): OS-notify when a scheduled
+            // maintenance task transitions to failed, so a failed nightly job isn't missed.
+            schedules_watch::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();
             let cfg = read_config_file();

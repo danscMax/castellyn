@@ -284,6 +284,8 @@ export default {
   toast_op_error: '{name}：错误（代码 {code}）',
   toast_op_error_detail: '详情见运行日志。',
   toast_open_log: '打开日志',
+  toast_stack_down_title: '堆栈服务已停止',
+  toast_stack_down_detail: '服务「{name}」意外停止。',
   toast_generic_error: '出错了',
 
   // Misc

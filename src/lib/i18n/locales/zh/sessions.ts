@@ -16,6 +16,7 @@ export default {
   limitModeSwitch: '切换配置',
   switchedProfile: '上限：{name} 已迁移到配置「{profile}」',
   sumBlocked: '{n} 个等待',
+  sumLimited: '{n} 个受限',
   sumWorking: '{n} 个工作中',
   sumDone: '{n} 个完成',
   statusHook: '代理状态',

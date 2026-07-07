@@ -789,6 +789,9 @@ export type SchedulesStatus = { generatedAt?: string; tasks?: ScheduleTask[] };
 export type ScheduleAction = 'enable' | 'disable' | 'run' | 'create' | 'delete';
 
 export const readSchedules = () => invoke<SchedulesStatus | null>('read_schedules');
+// File-only read of the last schedules envelope (no pwsh query) — seeds HomeTab's task rollup on
+// mount so schedule health shows from launch, before the Schedule tab's lazy full read runs.
+export const readSchedulesCached = () => invoke<SchedulesStatus | null>('read_schedules_cached');
 export const runSchedule = (action: ScheduleAction, id: string, time?: string) =>
   invoke<number>('run_schedule', { action, id, time: time ?? null });
 
