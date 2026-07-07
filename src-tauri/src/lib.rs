@@ -5916,6 +5916,18 @@ fn gateway_base_url() -> Option<String> {
     Some(format!("http://localhost:{port}"))
 }
 
+/// OmniRoute front base URL from the `omniroute` service port in stack.json. None if absent.
+/// Parallel to `gateway_base_url` (freellmapi :13001) and deliberately distinct: `gateway` feeds
+/// freellmapi-backend registration + Codex-freellmapi; `omniroute` feeds the single client front.
+#[tauri::command]
+fn omniroute_base_url() -> Option<String> {
+    let port = stack_services()
+        .iter()
+        .find(|e| e.get("id").and_then(|x| x.as_str()) == Some("omniroute"))
+        .and_then(|e| e.get("port").and_then(|x| x.as_u64()))?;
+    Some(format!("http://localhost:{port}"))
+}
+
 /// Native port of Connect-CustomProvider.ps1: register a custom OpenAI-compatible provider in the
 /// freellmapi gateway. Authenticates with the saved session `token`, else logs in via
 /// `/api/auth/login` (email+password), then POSTs `/api/keys/custom`. Returns the exit code; streams
@@ -14136,6 +14148,7 @@ read_opencode_models,
             import_config,
             app_paths,
             gateway_base_url,
+            omniroute_base_url,
             canonical_skills_dir,
             global_session_count,
             quit_app,
@@ -14252,6 +14265,13 @@ read_opencode_models,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omniroute_base_url_resolves_from_stack_json() {
+        // The `omniroute` entry (Ф4) must be present and expose port 20128.
+        let url = super::omniroute_base_url().expect("omniroute entry present in stack.json");
+        assert_eq!(url, "http://localhost:20128");
+    }
 
     #[test]
     fn stop_aborts_only_on_stop_all() {

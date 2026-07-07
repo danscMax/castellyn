@@ -1030,6 +1030,8 @@ export const setLanguage = (lang: string) => invoke('set_language', { lang });
 export const appPaths = () => invoke<AppPaths>('app_paths');
 // F13: freellmapi gateway URL from stack.json — replace hardcoded localhost:13001.
 export const gatewayBaseUrl = () => invoke<string | null>('gateway_base_url');
+// OmniRoute single-front base URL (Ф4). null until the `omniroute` entry exists in stack.json.
+export const omnirouteBaseUrl = () => invoke<string | null>('omniroute_base_url');
 // F24: canonical `~/.claude/skills` path, resolved through symlinks.
 export const canonicalSkillsDir = () => invoke<string>('canonical_skills_dir');
 // F16/F19: live PTY session count across all windows (the global SESSION_LIMIT pool).
