@@ -63,10 +63,10 @@ OpenCode/Codex ─ OpenAI baseURL   =http://localhost:20128/v1 ─┼─► Omni
 - **Ф2. Слой per-account health** (см. §5, п.2) — ридеры по портам движков + OmniRoute SQLite.
 - **Ф3. Attention+toast** (§5 п.3) + «нужна ре-авторизация» с deep-link.
 - **Ф3.5. Supervisor hardening (portfolio-аудит 2026-07-06) — ПРЕРЕКВИЗИТ к единому фронту.** `stackNative` уже дефолт (`unwrap_or(true)`) и несмокан, а аудит нашёл 5 багов, помеченных «fix BEFORE enabling» → они уже в дефолтном пути и при едином фронте бьют сильнее: **CAST-2** старт рапортует `code:0` даже если сервис не поднялся (false-green; пробросить реальный exit через `native_stack_start`→`run_stack`) — стартовый близнец Ф1-фикса; **CAST-1** двойной `run-done` при restart; **CAST-3** single-stop ставит глобальный `STACK_CANCEL`, гася full-start (только при `only=None` / per-id set); **CAST-4** port-kill после успешного pid-kill (гейт `if !killed`); **CAST-5** `STACK_CANCEL` не проверяется в цикле `native_wait_ready`. + **`readyTimeoutSec` на сервис в stack.json** (llm-stack-2), читаемый И нативным `native_wait_ready` (не только PS-лаунчером) — нужно OmniRoute (движки cold-start >25с). + `glm-router` `ROUTER_SECRET` (llm-stack-1), раз держим его fallback'ом.
-- **Ф4. Развести перегруженный `id 'gateway'`:** добавить отдельный `id 'omniroute'` в stack.json (port 20128, env DATA_DIR, health, реальный dir); client-target сайты → на `omniroute`, backend-сайты freellmapi → остаются на `gateway`.
-- **Ф5. Фронт — критичный:** заменить хардкод `id==='gateway'` в `StackHealthCard` на data-driven поле `critical/role:"front"` в `StackHealth` → мёртвый OmniRoute роняет общий баннер в down.
-- **Ф6. OpenAI-клиенты:** разблокировать арм `("direct","openai")` (`lib.rs:6086`) → OpenCode/Codex на `:20128/v1` как конфиг. Claude Code — без кода.
-- **Ф7. Проводка провайдеров в OmniRoute:** зарегистрировать каждый движок (Qwen/DeepSeek/GLM-Kimi/g0i) отдельным custom OpenAI-провайдером; перенести 16 key-based провайдеров с ключами; **у OmniRoute отключить provider-level retry для нестабильных upstream'ов**, таймаут выше worst-case; добавить dependsOn/after (фронт спавнится после upstream'ов ≥PortUp) + teardown-on-partial-failure.
+- **Ф4. ✅ СДЕЛАНО (Plan 3):** развели перегруженный `id 'gateway'` — добавлен параллельный `omniroute_base_url()` + запись `id 'omniroute'` в stack.json (`enabled:false`, port 20128, `critical:true`); `gateway_base_url()`=:13001 нетронут (аддитивно).
+- **Ф5. ✅ СДЕЛАНО (Plan 3):** хардкод `id==='gateway'` в `StackHealthCard` заменён на data-driven `critical` в `StackHealth`; `gateway` помечен `critical:true` (регрессии ноль).
+- **Ф6. ⚠ РЕВИЗИЯ (Plan 3b) — премисса была неточной, см. §13.** «Разблокировать арм `("direct","openai")`» СНЯТО как обсолетное: арм таргетит Claude-профиль, а не OpenCode/Codex; Claude идёт через `direct/anthropic` на :20128, OpenCode уже умеет любой base_url. Реальная дыра — **только Codex** (`patch_codex_gateway` был захардкожен на freellmapi:13001). ✅ Код-часть сделана в Plan 3b: `patch_codex_provider(...)` параметризован + `run_codex_omniroute` (за живым `/v1/responses`-чеком). Проводка Claude/OpenCode — ноль кода (§13).
+- **Ф7. ✅ Код-сеамы сделаны (Plan 3b), живое отложено:** `order_services()` (dependsOn топо-сорт, фронт после upstream'ов) + teardown-on-critical-failure (kill_tree только своего run'а) + конфигурируемый `healthTimeoutSec` — всё юнит-тестировано, opt-in через manifest-поля (инертно без них). **Живое (владелец):** `omniroute providers add/keys add` для движков + 16 key-провайдеров, отключить provider-retry для нестабильных upstream'ов, таймаут > worst-case, реальный health-роут + DATA_DIR-env + `enabled:true` + `dependsOn`.
 - **Ф8. Опт-ин авто-рестарт** фронта (backoff+cap) — по D1.
 - **Ф9. Консолидация форк-апдейта (D6):** generic `fork-updater` каноном; `sync-freellmapi.cmd` убрать; `Update-FreeLLMAPI.ps1` → build+restart; запушить `wip-local` (бэкап для 2-го дева).
 - **Ф10. zcode (D5):** git-клон приватного репо + `Update-Zcode.ps1` + перенос `data/`+`.env`; пока не готово — `enabled:false`.
@@ -131,3 +131,21 @@ OmniRoute установлен глобально (`npm i -g omniroute`, v3.8.45
 Castellyn — нативный ШЕЛЛ/оркестратор, не замена. Ретайрится только ПЕРЕСЕЧЕНИЕ:
 - **llm-stack ОСТАЁТСЯ:** `stack.json` = канонический реестр сервисов, который читает нативный супервизор (и аудит его расширяет — `readyTimeoutSec`); `glm-router/` (fallback Anthropic); `extension/` (DeepSeek-креды). Ретайрятся только PS-лаунчеры `start/stop-stack.ps1` (нативный супервизор — дефолт; но их держат 3 внешних потребителя).
 - **fork-updater ОСТАЁТСЯ и становится КАНОНОМ** (D6) — самостоятельный движок с тест-сьютом; Castellyn лишь вызывает `update-forks.ps1`. Ретайрится `sync-freellmapi.cmd`. (Сперва свести две расходящиеся копии — см. §9.)
+
+## 13. Клиенты → OmniRoute (Ф6-ревизия, заземлено 2026-07-07)
+
+Как каждый клиент указывается на единый фронт `:20128`. Исходная формулировка Ф6 («разблокировать
+арм `direct/openai`, чтобы OpenCode/Codex били в :20128») оказалась неточной: арм `connect_my_provider`
+`("direct","openai")` таргетит **Claude-профиль** (`targetProfile`), а не OpenCode/Codex. Заземлённая карта:
+
+| Клиент | Как указать на :20128 | Код |
+|--------|------------------------|-----|
+| **Claude Code** | my-provider `protocol=anthropic`, `baseUrl=http://localhost:20128/v1`, `connectVia=direct` → бинд профиля существующим армом `("direct","anthropic")` (`ANTHROPIC_BASE_URL`). OmniRoute сам делает Anthropic-трансляцию. | **ноль** |
+| **OpenCode** | добавить OmniRoute движком/my-provider → «Connect to OpenCode» (`run_opencode_provider`/`run_opencode_providers`, `lib.rs:6910`/`8673`). Уже умеет любой OpenAI base_url. | **ноль** |
+| **Codex** | `run_codex_omniroute` (Plan 3b A1) — обобщённый `patch_codex_provider` пишет `[model_providers.omniroute]`+`[profiles.omniroute]`. | **новый (сделан)** |
+
+⚠ **Codex-жёсткое ограничение:** Codex говорит ТОЛЬКО Responses wire API (WireApi без `chat` с 2026-02),
+поэтому `:20128/v1` обязан отдавать `/v1/responses` shim — иначе регистрация пройдёт, но запросы молча
+падают. Живой чек `/v1/responses` + установка `OMNIROUTE_API_KEY` (из `omniroute keys`) + UI-триггер
+«Deploy Codex→OmniRoute» — это Part B (живой сеанс), не Part A. «Разблокировку арма `direct/openai`»
+под этой топологией НЕ делаем (Claude покрыт anthropic-армом).
