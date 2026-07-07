@@ -36,8 +36,30 @@
   // opts back into the full render on demand (a legitimate 5000-node log dump is a rare click).
   const LOG_WINDOW = 500;
   let showAll = $state(false);
-  const view = $derived(showAll || log.length <= LOG_WINDOW ? log : log.slice(-LOG_WINDOW));
+  let filter = $state('');
+  const windowed = $derived(showAll || log.length <= LOG_WINDOW ? log : log.slice(-LOG_WINDOW));
+  const view = $derived(
+    filter ? windowed.filter((l) => l.toLowerCase().includes(filter.toLowerCase())) : windowed
+  );
   const hiddenCount = $derived(showAll ? 0 : Math.max(0, log.length - LOG_WINDOW));
+
+  // Smart autoscroll: only pin to the bottom when the user is already there; if they've scrolled up
+  // to read, hold position and raise a "▾ new lines" pill instead of yanking them back. `atBottom`
+  // is a plain (non-reactive) flag on purpose — reading it inside the autoscroll effect must NOT make
+  // the effect re-run on every scroll, only on new log lines.
+  let atBottom = true;
+  let hasNewLines = $state(false);
+  function onLogScroll() {
+    if (!logEl) return;
+    atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+    if (atBottom) hasNewLines = false;
+  }
+  function scrollToBottom() {
+    if (!logEl) return;
+    logEl.scrollTop = logEl.scrollHeight;
+    atBottom = true;
+    hasNewLines = false;
+  }
 
   async function copyLog() {
     if (await copyText(log.join('\n'))) {
@@ -71,11 +93,16 @@
   // rapid batched appends coalesce into one scroll per frame instead of thrashing layout (item 7).
   $effect(() => {
     log.length;
-    if (logEl && !collapsed)
-      requestAnimationFrame(() => {
-        // The element can unmount (tab switch / collapse) before the frame fires — re-guard the ref.
-        if (logEl && !collapsed) logEl.scrollTop = logEl.scrollHeight;
-      });
+    if (logEl && !collapsed) {
+      if (atBottom) {
+        requestAnimationFrame(() => {
+          // The element can unmount (tab switch / collapse) before the frame fires — re-guard the ref.
+          if (logEl && !collapsed) logEl.scrollTop = logEl.scrollHeight;
+        });
+      } else {
+        hasNewLines = true;
+      }
+    }
   });
 
   function toggle() {
@@ -125,6 +152,15 @@
       {#if collapsed && log.length}<span class="count">{t('console.lines', { n: log.length })}</span>{/if}
     </button>
     <div class="actions">
+      {#if !collapsed}
+        <input
+          class="search"
+          type="text"
+          bind:value={filter}
+          placeholder={t('console.searchPlaceholder')}
+          aria-label={t('console.searchPlaceholder')}
+        />
+      {/if}
       {#if running}
         <button class="sw-btn sw-btn-ghost mini" onclick={onCancel} title={t('console.cancelRun')}>
           {t('common.cancelAction')}
@@ -162,15 +198,21 @@
           <button class="link-btn" onclick={() => (showAll = true)}>{t('console.showAll')}</button>
         </div>
       {/if}
-      <div bind:this={logEl} class="log" style="height:{height}px">
-        {#each view as line}
-          <div
-            class="log-line"
-            class:log-warn={line.startsWith('⚠')}
-            class:log-diag={line.startsWith('[diag]')}
-            class:log-ok={line.startsWith('✓')}
-          >{line}</div>
-        {/each}
+      <div class="log-wrap">
+        <div bind:this={logEl} class="log" style="height:{height}px" onscroll={onLogScroll}>
+          {#each view as line}
+            <div
+              class="log-line"
+              class:log-warn={line.startsWith('⚠')}
+              class:log-diag={line.startsWith('[diag]')}
+              class:log-ok={line.startsWith('✓')}
+              class:log-err={/error|fail|exception/i.test(line)}
+            >{line}</div>
+          {/each}
+        </div>
+        {#if hasNewLines}
+          <button class="newlines-pill" onclick={scrollToBottom}>▾ {t('console.newLines')}</button>
+        {/if}
       </div>
     {:else}
       <pre class="empty-log" style="height:{height}px">{t('console.empty')}</pre>
@@ -250,7 +292,38 @@
   }
   .actions {
     display: flex;
+    align-items: center;
     gap: 6px;
+  }
+  .search {
+    width: 140px;
+    padding: 3px 8px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-primary);
+    background: var(--sw-bg-primary);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-sm, 4px);
+  }
+  .search:focus-visible {
+    outline: none;
+    border-color: var(--sw-accent);
+  }
+  .log-wrap {
+    position: relative;
+  }
+  .newlines-pill {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 12px;
+    font-size: var(--sw-text-xs);
+    color: #fff;
+    background: var(--sw-accent);
+    border: none;
+    border-radius: 9999px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
   .mini {
     padding: 3px 10px;
@@ -278,6 +351,10 @@
   }
   .log-ok {
     color: var(--sw-success);
+  }
+  /* z5_4: any line naming error/fail/exception reads as a failure even without the ⚠ prefix. */
+  .log-err {
+    color: var(--sw-status-bad);
   }
   @keyframes pulse {
     0%,

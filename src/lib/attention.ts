@@ -85,3 +85,21 @@ export function syncAttention(data: SyncStatus | null | undefined): Attention | 
   if (!data || !data.stignoreExists) return null;
   return data.stignoreMatches === false ? { level: 'warn' } : null;
 }
+
+/** Roll several sub-system attentions into one badge: highest severity wins
+ *  (danger > warn > done > info), summing the counts of the winning level so the
+ *  Home badge reflects the whole cockpit rather than a single subsystem. */
+const ATT_RANK: Record<Attention['level'], number> = { danger: 3, warn: 2, done: 1, info: 0 };
+export function maxAttention(list: (Attention | null | undefined)[]): Attention | null {
+  let best: Attention['level'] | null = null;
+  for (const a of list) {
+    if (!a) continue;
+    if (best === null || ATT_RANK[a.level] > ATT_RANK[best]) best = a.level;
+  }
+  if (best === null) return null;
+  let count = 0;
+  for (const a of list) {
+    if (a && a.level === best) count += a.count ?? 0;
+  }
+  return count > 0 ? { level: best, count } : { level: best };
+}

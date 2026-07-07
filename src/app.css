@@ -109,6 +109,8 @@
   --sw-status-degraded: #f59e0b;
   --sw-status-down: #ef4444;
   --sw-status-off: #6b7280;
+  /* Error/failure text token (matches the .status-bad red-400 canon); light theme darkens it for AA. */
+  --sw-status-bad: #f87171;
   --sw-danger: #f87171;
   --sw-warn: #f59e0b;
   --sw-success: #34d399;
@@ -167,6 +169,8 @@
   /* Darker teal so the "done" dot clears contrast on the near-white surface (#2dd4bf is too pale).
      --sw-status-warn stays inheriting --sw-warn (not overridden in light — the chain resolves). */
   --sw-status-done: #0d9488;
+  /* red-700 so error text clears AA on the near-white surface (the dark #f87171 is too pale). */
+  --sw-status-bad: #b91c1c;
 }
 
 @layer base {
@@ -379,6 +383,12 @@
     background: var(--sw-bg-secondary);
     border: 1px solid var(--sw-border);
     color: var(--sw-text-primary);
+  }
+  /* z5_11: the placeholder (e.g. the "5000" terminal-history hint) was a browser-default grey on the
+     grey field — grey-on-grey in light. Bind it to a themed muted so it stays legible in both themes. */
+  .sw-input::placeholder {
+    color: var(--sw-text-muted);
+    opacity: 1;
   }
   .sw-input:focus {
     outline: none;

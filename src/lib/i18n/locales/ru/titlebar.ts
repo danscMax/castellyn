@@ -7,5 +7,6 @@ export default {
   restore: 'Восстановить',
   close: 'Закрыть (свернуть в трей)',
   stripHint: 'Активные сессии и профиль ближе всех к лимиту Anthropic',
-  stripPeak: 'Наибольшая загрузка: {profile}'
+  stripPeak: 'Наибольшая загрузка: {profile}',
+  paletteHint: 'Палитра команд (Ctrl+K)'
 };

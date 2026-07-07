@@ -6,6 +6,7 @@ export default {
   home_subtitle: '一览配置文件、备份、同步和配置的健康状况。',
   home_allOk: '一切正常',
   home_noData: '暂无数据',
+  home_notConfigured: '未配置',
   home_issues: '{n} 个问题',
   home_backup: '备份',
   home_backupAge: '最近 {time}',

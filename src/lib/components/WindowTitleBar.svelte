@@ -10,6 +10,10 @@
   import { uiPrefs } from '$lib/uiPrefs.svelte';
   import { readConfig } from '$lib/ipc';
 
+  // z5_1: opens the command palette (Ctrl+K) — a visible affordance so the palette is discoverable
+  // without knowing the shortcut. Wired from +page.
+  let { onOpenPalette }: { onOpenPalette?: () => void } = $props();
+
   const appWin = getCurrentWindow();
 
   // Wave C-5: native session-status strip. Fed by data Castellyn already tracks (agent_status counts
@@ -119,6 +123,16 @@
 
   {#if runningStore.op}
     <div class="tb-progress"></div>
+  {/if}
+
+  {#if onOpenPalette}
+    <button class="tb-btn tb-palette" onclick={onOpenPalette}
+      aria-label={t('titlebar.paletteHint')} title={t('titlebar.paletteHint')}>
+      <svg viewBox="0 0 12 12" width="12" height="12">
+        <circle cx="5" cy="5" r="3.2" />
+        <line x1="7.3" y1="7.3" x2="10" y2="10" />
+      </svg>
+    </button>
   {/if}
 
   <div class="controls">
@@ -277,6 +291,9 @@
   /* Same steady red as TerminalPane's `.dot.limited` — "stopped on quota". */
   .ss-lim { background: var(--sw-status-down, #ef4444); }
   .titlebar.inactive .sess-strip { opacity: 0.6; }
+  .tb-palette {
+    width: 40px;
+  }
   .controls {
     display: flex;
     height: 100%;

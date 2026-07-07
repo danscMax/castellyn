@@ -63,6 +63,12 @@
     return t('common.daysAgo', { n: Math.round(h / 24) });
   }
 
+  // z5_5: a subsystem that was never set up should read "not set up" (muted, deep-links to its tab)
+  // rather than vanishing — an empty grid hides that sync/schedules/stack even exist.
+  const notConfigured = (key: string, tab: string, title: string): Chip => ({
+    key, tab, title, value: t('page.home_notConfigured'), level: 'muted'
+  });
+
   const chips = $derived.by<Chip[]>(() => {
     const out: Chip[] = [];
 
@@ -83,6 +89,8 @@
         // Drift/unlinked → one-click relink (parent runs the same confirmed action as the Sync tab).
         action: d > 0 || u > 0 ? { id: 'relink', label: t('page.home_relink') } : undefined
       });
+    } else {
+      out.push(notConfigured('drift', 'sync', t('page.home_config')));
     }
 
     if (profiles?.profiles?.length) {
@@ -134,6 +142,8 @@
         value: st.available ? label : t('page.home_syncOffline'),
         level: !st.available ? 'muted' : bad ? 'bad' : sync.stignoreMatches === false ? 'warn' : 'ok'
       });
+    } else {
+      out.push(notConfigured('sync', 'sync', t('page.home_sync')));
     }
 
     if (schedules?.tasks?.length) {
@@ -151,6 +161,8 @@
         value: failing > 0 ? t('page.home_tasksFailing', { n: failing }) : parts || t('page.home_ok'),
         level: failing > 0 ? 'bad' : missing || off ? 'warn' : 'ok'
       });
+    } else {
+      out.push(notConfigured('schedule', 'schedule', t('page.home_tasks')));
     }
 
     if (stack?.length) {
@@ -162,6 +174,8 @@
         level: up === 0 ? 'muted' : up < enabled.length ? 'warn' : 'ok',
         action: up === 0 ? { id: 'start-stack', label: t('page.home_stackStart') } : { id: 'stop-stack', label: t('page.home_stackStop') }
       });
+    } else {
+      out.push(notConfigured('stack', 'providers', t('page.home_stack')));
     }
 
     if (sessionCount != null) {

@@ -15,7 +15,8 @@
     anyRunning,
     onCheck,
     onApply,
-    onOpenForks
+    onOpenForks,
+    onOpenPlugins
   }: {
     comp: Component;
     status: any;
@@ -24,6 +25,8 @@
     onCheck: () => void;
     onApply: () => void;
     onOpenForks?: () => void;
+    // z5_6: jump to the Extensions tab from the plugins card, mirroring the forks deep-link.
+    onOpenPlugins?: () => void;
   } = $props();
 
   // Forks card: one-line actionable summary + a jump to the Forks tab.
@@ -158,6 +161,12 @@
       <button class="sw-btn sw-btn-primary flex-1" disabled={anyRunning} onclick={onOpenForks}
         title={t('updates.openForksTip')}>
         {t('updates.openForksBtn')}
+      </button>
+    {/if}
+    {#if comp.id === 'plugins' && onOpenPlugins}
+      <button class="sw-btn sw-btn-primary flex-1" disabled={anyRunning} onclick={onOpenPlugins}
+        title={t('updates.openPluginsTip')}>
+        {t('updates.openPluginsBtn')}
       </button>
     {/if}
     {#if comp.supportsApply}

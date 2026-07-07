@@ -6,6 +6,7 @@ export default {
   home_subtitle: 'Health of profiles, backup, sync and config at a glance.',
   home_allOk: 'all OK',
   home_noData: 'no data yet',
+  home_notConfigured: 'not set up',
   home_issues: '{n} issue(s)',
   home_backup: 'Backup',
   home_backupAge: 'last {time}',

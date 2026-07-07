@@ -13,5 +13,7 @@ export default {
   clearHint: '清除日志输出',
   windowed: '显示最近 {shown} 行，共 {total} 行',
   showAll: '显示全部',
+  newLines: '新日志',
+  searchPlaceholder: '筛选日志…',
   empty: '在组件上点击「检查」或「应用」——实时输出会显示在这里。'
 };

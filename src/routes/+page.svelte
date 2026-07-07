@@ -42,7 +42,6 @@
     readConfigDrift,
     runConfigDrift,
     readEngines,
-    runEngine,
     runRouter,
     runConnectRouter,
     readEngineModels,
@@ -143,7 +142,8 @@
     pluginsAttention,
     syncAttention,
     sessionsAttention,
-    stackDriftAttention
+    stackDriftAttention,
+    maxAttention
   } from '$lib/attention';
   import { agentSummary } from '$lib/agentStatus.svelte';
   import { pushLimits } from '$lib/limits.svelte';
@@ -178,6 +178,7 @@
   import NotificationPanel from '$lib/components/NotificationPanel.svelte';
   import { pushToast } from '$lib/toast.svelte';
   import { runningStore, opName } from '$lib/running.svelte';
+  import { paletteBus } from '$lib/palette.svelte';
   import { pushRun } from '$lib/runHistory.svelte';
   import { deriveOutcome } from '$lib/outcome';
   import { t, locale } from '$lib/i18n';
@@ -1491,30 +1492,6 @@
     }
   }
 
-  function onEngineAction(action: 'start' | 'stop', id: string) {
-    if (running) return;
-    const run = () => {
-      running = 'engine';
-      log = [
-        t('page.engine_log', {
-          id,
-          verb: action === 'start' ? t('page.engine_verb_start') : t('page.engine_verb_stop')
-        })
-      ];
-      runEngine(action, id).catch(onSpawnErr);
-    };
-    if (action === 'stop') {
-      askConfirm(
-        t('page.confirm_engine_stop_title'),
-        t('page.confirm_engine_stop_msg', { id }),
-        t('page.confirm_engine_stop_btn'),
-        run
-      );
-    } else {
-      run();
-    }
-  }
-
   function startProvider(args: ProviderArgs) {
     if (running) return; // match every sibling start* — don't clobber an in-flight run
     running = 'provider';
@@ -1747,7 +1724,13 @@
     sync: syncAttention(syncData),
     extensions: pluginsAttention(pluginUpdates.length),
     sessions: sessionsAttention(agentSummary),
-    home: stackDriftAttention(stackDrift)
+    // Home is the cockpit — roll every subsystem it surfaces into one badge (highest severity wins).
+    home: maxAttention([
+      stackDriftAttention(stackDrift),
+      backupAttention(backupData),
+      syncAttention(syncData),
+      profilesAttention(profilesData)
+    ])
   });
 
   // Lazy-load on first open (list_plugins spawns the claude CLI).
@@ -2025,6 +2008,15 @@
   // Command palette (Ctrl+K): jump to any tab + a few quick actions.
   let paletteOpen = $state(false);
   let hotkeyHelpOpen = $state(false);
+  // z5_1: the title-bar palette button (in +layout) bumps paletteBus.tick — open on each bump so the
+  // palette is discoverable by click, not only by knowing Ctrl+K.
+  let lastPaletteTick = 0;
+  $effect(() => {
+    if (paletteBus.tick !== lastPaletteTick) {
+      lastPaletteTick = paletteBus.tick;
+      if (paletteBus.tick > 0) paletteOpen = true;
+    }
+  });
   // Phase 4.2 — after a palette navigation, briefly scroll to + highlight a specific item in the target tab.
   let highlightTarget = $state<{ tab: string; id: string } | null>(null);
   // Consume highlightTarget after it has been applied (re-render cycle + transition completes).
@@ -2630,7 +2622,6 @@
               stack={stackData}
               {running}
               {stackRunning}
-              onEngine={onEngineAction}
               onStack={onStack}
               onProviderSet={onProviderSet}
               onRouterInstall={onRouterInstall}

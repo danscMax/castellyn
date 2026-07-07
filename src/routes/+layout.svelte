@@ -5,6 +5,7 @@
   import { initTheme } from '$lib/theme';
   import { initLocale } from '$lib/i18n';
   import WindowTitleBar from '$lib/components/WindowTitleBar.svelte';
+  import { requestPalette } from '$lib/palette.svelte';
   // DetachedView pulls in xterm (~480K). Only detached windows ever render it, so import it
   // lazily — otherwise the static import drags xterm into the main window's startup chunk.
 
@@ -41,7 +42,7 @@
   {/await}
 {:else}
   <div class="flex h-screen flex-col overflow-hidden">
-    <WindowTitleBar />
+    <WindowTitleBar onOpenPalette={requestPalette} />
     <div class="min-h-0 flex-1 overflow-hidden">
       {@render children()}
     </div>

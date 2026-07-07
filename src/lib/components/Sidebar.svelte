@@ -90,11 +90,12 @@
   }
 
   // Sections (NAV_GROUPS): headers + per-group collapse, so 14 flat rows become 3 short scannable
-  // blocks. "Maintain" starts closed — it's the rarely-visited half of the app. A closed group
+  // blocks. All groups start OPEN so a newcomer sees "Maintain" without hunting for it; a manual
+  // collapse still persists via GROUPS_KEY (a saved state wins over this default). A closed group
   // still surfaces its aggregated attention on the header, and the group holding the ACTIVE tab
   // is always rendered open (palette/hotkey jumps must never land on a hidden item).
   const GROUPS_KEY = 'cmh-sidebar-groups-closed';
-  let closedGroups = $state<Record<string, boolean>>({ maintain: true });
+  let closedGroups = $state<Record<string, boolean>>({});
   onMount(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(GROUPS_KEY) ?? 'null');

@@ -27,7 +27,6 @@
     running,
     stackRunning = null,
     confirmDestructive = true,
-    onEngine,
     onStack,
     onProviderSet,
     onRouterInstall,
@@ -55,7 +54,6 @@
     stackRunning?: string | null;
     /** R8: mirror the global "confirm destructive actions" toggle (settings #120). */
     confirmDestructive?: boolean;
-    onEngine: (action: 'start' | 'stop', id: string) => void;
     onStack?: (action: 'start' | 'stop' | 'restart', only?: string) => void;
     onProviderSet: (args: ProviderArgs) => void;
     onRouterInstall: () => void;
@@ -502,17 +500,6 @@
             {#if e.router && e.installed === false}
               <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={onRouterInstall}
                 title={t('providers.installCcrTitle')}>{t('providers.install')}</button>
-            {/if}
-            {#if e.hasCommand}
-              {#if e.running}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onEngine('stop', e.id)}
-                  title={e.router ? t('providers.stopRouterTitle') : t('providers.stopProcessTitle', { port: e.port })}>{t('providers.stop')}</button>
-              {:else}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onEngine('start', e.id)}
-                  title={e.router ? t('providers.startRouterTitle') : t('providers.startEngineTitle')}>{t('providers.start')}</button>
-              {/if}
-            {:else}
-              <span class="text-sw-xs text-sw-text-muted">{t('providers.manualStart')}</span>
             {/if}
             {#if e.protocol === 'anthropic' && !e.router}
               <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !e.running} onclick={() => openConnect(e)}

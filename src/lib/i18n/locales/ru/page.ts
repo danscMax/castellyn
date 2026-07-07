@@ -6,6 +6,7 @@ export default {
   home_subtitle: 'Здоровье профилей, бэкапа, синка и конфига одним взглядом.',
   home_allOk: 'всё ок',
   home_noData: 'пока нет данных',
+  home_notConfigured: 'не настроено',
   home_issues: 'проблем: {n}',
   home_backup: 'Бэкап',
   home_backupAge: 'последний {time}',

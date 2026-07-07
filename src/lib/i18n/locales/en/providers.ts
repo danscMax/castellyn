@@ -9,7 +9,7 @@ export default {
 
   // Engines section
   enginesHeading: 'Engines',
-  enginesDesc: 'Process control for the same services shown in “LLM stack” above: start/stop each one and bind it to profiles.',
+  enginesDesc: 'Bind these engines to profiles or connect them via the router. Starting and stopping the processes lives in “LLM stack” above.',
   running: 'running',
   stopped: 'stopped',
   svcDisabled: 'disabled',

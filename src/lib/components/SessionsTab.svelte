@@ -336,6 +336,8 @@
   const autoContinued = new Set<string>(); // pane keys already handled this limit episode
   const switchAttempted = new Set<string>(); // #21e: switch tried once per episode (else fall to wait)
   const contJitterMs: Record<string, number> = {};
+  // z5_12: last real user keystroke per pane key — auto-continue defers while the user is typing.
+  const lastUserInputAt: Record<string, number> = {};
   onMount(() => {
     let un: UnlistenFn | undefined;
     listen<LimitsStatusEvent>('limits-status', (e) => {
@@ -387,6 +389,11 @@
       const reset = Math.max(...candidates);
       if (contJitterMs[p.key] == null) contJitterMs[p.key] = 30_000 + Math.floor(Math.random() * 60_000);
       if (Date.now() < reset + contJitterMs[p.key]) continue;
+      // z5_12: don't inject into a pane the user is actively using — defer (don't consume the
+      // episode) while it's focused or had a keystroke in the last 8s; retry on the next tick.
+      const focused = activeKey === p.key && visible;
+      const recentInput = Date.now() - (lastUserInputAt[p.key] ?? 0) < 8_000;
+      if (focused || recentInput) continue;
       autoContinued.add(p.key);
       sessionWrite(id, t('sessions.autoContinueText') + '\r');
       pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
@@ -629,6 +636,11 @@
     confirmAsk = opts;
   }
 
+  // A persisted monitor-layout pane: a launch config (no live session) plus the captured claude
+  // session id, so a restore after an app restart can respawn with `--resume`. claudeSid is optional
+  // for backward-compat — layouts saved before this field just start fresh.
+  type SavedPane = DetachPane & { claudeSid?: string };
+
   // "Разнести по мониторам": open a detached window per (non-primary) monitor and spread the running
   // panes across them as a grid. Each pane mirrors its LIVE session via attach (no respawn); the main
   // window keeps its panes too. If there's only one monitor, this is a no-op (with a hint).
@@ -675,7 +687,7 @@
     // Open one detached grid-window per monitor; on success live-MOVE those panes out of the grid
     // (mark so their unmount doesn't kill the session — the monitor window now owns it via attach).
     const removeKeys = new Set<string>();
-    const layout: Record<number, DetachPane[]> = {};
+    const layout: Record<number, SavedPane[]> = {};
     for (const [idx, list] of byMon) {
       const ok = await openDetached(`mon-${idx}`, idx, list.map((e) => e.dp));
       if (!ok) continue; // monitor/window unavailable — leave those panes in the main grid
@@ -684,13 +696,15 @@
         removeKeys.add(e.key);
       }
       // Persist the LAUNCH config (no live session id) so this monitor can be restored next launch.
+      // Capture the claude session id (keyed by the live session id) for a `--resume` on restore.
       layout[idx] = list.map((e) => ({
         title: e.dp.title,
         tool: e.dp.tool,
         profile: e.dp.profile,
         cwd: e.dp.cwd,
         args: e.dp.args,
-        owns: true
+        owns: true,
+        claudeSid: e.dp.sessionId ? claudeSids[e.dp.sessionId] : undefined
       }));
     }
     if (removeKeys.size) panes = panes.filter((p) => !removeKeys.has(p.key));
@@ -729,7 +743,7 @@
       .join('; ');
   }
   async function restoreLayout() {
-    let saved: Record<number, DetachPane[]>;
+    let saved: Record<number, SavedPane[]>;
     try {
       saved = JSON.parse(localStorage.getItem(MLKEY) ?? '{}');
     } catch {
@@ -746,7 +760,19 @@
     for (const [idxStr, list] of Object.entries(saved)) {
       const idx = Number(idxStr);
       if (!have.has(idx) || !list?.length) continue;
-      await openDetached(`mon-${idx}`, idx, list);
+      // Resume each saved claude pane from its captured session id (same charset guard as restoreLast).
+      // Old layouts lack claudeSid → the guard fails and the pane just spawns fresh (no crash).
+      const spawn = list.map((p) => {
+        const args = p.args ?? '';
+        if (
+          p.tool === 'claude' && p.claudeSid &&
+          /^[\w-]{1,64}$/.test(p.claudeSid) && !/--(resume|continue)\b/.test(args)
+        ) {
+          return { ...p, args: `${args} --resume ${p.claudeSid}`.trim() };
+        }
+        return p;
+      });
+      await openDetached(`mon-${idx}`, idx, spawn);
     }
   }
 
@@ -889,6 +915,7 @@
     if (id === activeSpace) return;
     activeSpace = id;
     maximized = null; // the maximized pane may belong to another space
+    broadcast = false; // continuous broadcast is per-project — don't leak it into the space we switch to
     persistSpaces();
   }
   // V2: "＋ agent here" on a project tab — one more agent by the project's CURRENT recipe: the last
@@ -2251,6 +2278,7 @@
             maximized={maximized === pane.key}
             {broadcast}
             onInput={broadcastInput}
+            onUserInput={(k) => (lastUserInputAt[k] = Date.now())}
             {onIdChange}
             {onActivity}
             onFocus={(k) => (activeKey = k)}

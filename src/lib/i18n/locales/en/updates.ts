@@ -41,6 +41,8 @@ export default {
   checkBtn: 'Check',
   openForksBtn: 'Open Forks',
   openForksTip: 'Go to the “Forks” tab — actions per repository live there',
+  openPluginsBtn: 'Open Extensions',
+  openPluginsTip: 'Go to the “Extensions” tab — plugins, skills and agents live there',
   updateBtn: 'Update',
   updateBtnCount: 'Update ({count})',
   updateTip: 'Install the available updates for this component (with confirmation)',

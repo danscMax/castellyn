@@ -9,7 +9,7 @@ export default {
 
   // Engines section
   enginesHeading: '引擎',
-  enginesDesc: '对上方「LLM 栈」中相同服务的进程控制：逐个启动/停止并绑定到配置。',
+  enginesDesc: '将这些引擎绑定到配置或通过路由器连接。进程的启动和停止在上方的「LLM 栈」中。',
   running: '运行中',
   stopped: '已停止',
   svcDisabled: '已禁用',

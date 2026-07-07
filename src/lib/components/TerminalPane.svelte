@@ -55,6 +55,7 @@
     onDragEnter,
     onDrop,
     onInput,
+    onUserInput,
     onIdChange,
     onNewSession,
     onActivity,
@@ -87,6 +88,8 @@
     onDragEnter?: (key: string) => void;
     onDrop?: () => void;
     onInput?: (data: string) => void;
+    /** Fires on real user keystrokes/paste in this pane — lets the tab defer auto-continue. */
+    onUserInput?: (key: string) => void;
     onIdChange?: (key: string, id: string | null) => void;
     onNewSession?: () => void;
     onActivity?: (key: string) => void;
@@ -488,6 +491,7 @@
     // Keystrokes read `id`/`exited` live, so this single handler survives a relaunch. With broadcast
     // on, route input up to the tab so it's mirrored to every pane.
     term.onData((d) => {
+      onUserInput?.(paneKey); // mark this pane as actively typed-in (defers auto-continue)
       if (broadcast && onInput) {
         onInput(d);
         return;
@@ -512,6 +516,7 @@
       // send CR. Harmless in a plain shell (reads as Alt+Enter, which has no standard action).
       if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         const seq = '\x1b\r';
+        onUserInput?.(paneKey);
         if (broadcast && onInput) onInput(seq);
         else if (id && !exited) sessionWrite(id, seq);
         return false;
@@ -652,7 +657,7 @@
     {:else}
       <span class="name" title={onRename ? t('sessions.renameHint') : fullTitle} ondblclick={startRename}>{displayName || label}</span>
     {/if}
-    {#if tool === 'claude' && folderName}<span class="folder" title={cwd}>{folderName}</span>{/if}
+    {#if cwd && !sshTarget && folderName}<span class="folder" title={cwd}>{folderName}</span>{/if}
     <!-- F12: open the working folder in Explorer. Local panes only — an SSH pane's cwd is a remote path. -->
     {#if cwd && !sshTarget}
       <button class="x" onclick={() => openPath(cwd).catch((e) => pushToast({ kind: 'error', title: String(e) }))}

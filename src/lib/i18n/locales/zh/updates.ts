@@ -41,6 +41,8 @@ export default {
   checkBtn: '检查',
   openForksBtn: '打开分叉',
   openForksTip: '前往「分叉」标签页 — 各仓库的操作在那里',
+  openPluginsBtn: '打开扩展',
+  openPluginsTip: '前往「扩展」标签页 — 插件、技能和智能体在那里',
   updateBtn: '更新',
   updateBtnCount: '更新 ({count})',
   updateTip: '安装此组件的可用更新（需确认）',

@@ -323,7 +323,8 @@
   {:else if rows.length === 0}
     <p class="text-sw-sm text-sw-text-muted">{t('profiles.matrixEmpty')}</p>
   {:else}
-    <div class="sw-card overflow-x-auto p-0">
+    <!-- z5_10: pb-16 clears the sticky Apply bar so the last rows can scroll above it, not under it. -->
+    <div class="sw-card overflow-x-auto p-0 pb-16">
       <table class="mx">
         <thead>
           <tr>
@@ -665,11 +666,13 @@
     bottom: 0;
     padding: var(--sw-space-3);
     border-radius: var(--sw-radius);
-    background: var(--sw-bg);
+    /* z5_10: --sw-bg is undefined → the bar was transparent and table rows showed through it.
+       Use the opaque surface token so the bar fully hides the rows it sticks over. */
+    background: var(--sw-bg-primary);
     transition: background 0.15s ease, box-shadow 0.15s ease;
   }
   .applybar.has-changes {
-    background: color-mix(in srgb, var(--sw-accent) 10%, var(--sw-bg));
+    background: color-mix(in srgb, var(--sw-accent) 10%, var(--sw-bg-primary));
     box-shadow: 0 -2px 8px rgb(0 0 0 / 0.12), inset 0 0 0 1px var(--sw-accent);
   }
   .applybar-count {

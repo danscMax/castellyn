@@ -7,5 +7,6 @@ export default {
   restore: 'Restore',
   close: 'Close (minimize to tray)',
   stripHint: 'Live sessions and the profile closest to an Anthropic usage limit',
-  stripPeak: 'Highest usage: {profile}'
+  stripPeak: 'Highest usage: {profile}',
+  paletteHint: 'Command palette (Ctrl+K)'
 };

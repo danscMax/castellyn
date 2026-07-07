@@ -120,6 +120,7 @@
       onCheck={() => onCheck(c.id)}
       onApply={() => onApply(c)}
       onOpenForks={onOpenTab ? () => onOpenTab('forks') : undefined}
+      onOpenPlugins={onOpenTab ? () => onOpenTab('extensions') : undefined}
     />
   {/snippet}
 

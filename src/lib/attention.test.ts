@@ -7,7 +7,8 @@ import {
   pluginsAttention,
   syncAttention,
   sessionsAttention,
-  stackDriftAttention
+  stackDriftAttention,
+  maxAttention
 } from './attention';
 
 describe('attention', () => {
@@ -101,5 +102,20 @@ describe('attention', () => {
     expect(sessionsAttention({ blocked: 0, done: 4, limited: 1 })).toEqual({ level: 'warn', count: 1 });
     // blocked outranks limited.
     expect(sessionsAttention({ blocked: 3, done: 0, limited: 5 })).toEqual({ level: 'danger', count: 3 });
+  });
+
+  it('maxAttention rolls up highest severity and sums that level', () => {
+    // all null → null
+    expect(maxAttention([null, undefined, null])).toBeNull();
+    // danger outranks warn; counts of the winning level only.
+    expect(
+      maxAttention([{ level: 'warn', count: 2 }, { level: 'danger', count: 1 }, { level: 'danger', count: 3 }])
+    ).toEqual({ level: 'danger', count: 4 });
+    // warn wins over done; sums the two warns.
+    expect(
+      maxAttention([{ level: 'warn', count: 1 }, { level: 'done', count: 5 }, { level: 'warn', count: 2 }])
+    ).toEqual({ level: 'warn', count: 3 });
+    // winning level with no counts → level without count.
+    expect(maxAttention([{ level: 'warn' }, null])).toEqual({ level: 'warn' });
   });
 });
