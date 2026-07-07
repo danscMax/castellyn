@@ -3123,6 +3123,62 @@ fn stack_emit(app: &AppHandle, line: String) {
     );
 }
 
+/// Stable topological sort of stack.json services by `dependsOn` (Kahn's algorithm), so the start
+/// loop brings backends up before the front that depends on them. A service is emitted only after
+/// every id in its `dependsOn` that is actually present in `services` — a dependency on a missing
+/// id is ignored, never a hang. Ties (no edge between two services) keep manifest order. A cycle
+/// can't be resolved by definition, so the nodes involved in it fall back to manifest order instead
+/// of panicking or looping forever. Pure (no logging/I/O) — `native_stack_start` is the only
+/// consumer of the ordering.
+// ponytail: O(n^2) linear scan per emission — fine for a stack.json-sized service list (single
+// digits); swap for a binary-heap-backed Kahn's if this ever needs to order hundreds of services.
+fn order_services(services: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let n = services.len();
+    let mut index_of: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (i, svc) in services.iter().enumerate() {
+        if let Some(id) = svc.get("id").and_then(|x| x.as_str()) {
+            index_of.entry(id).or_insert(i);
+        }
+    }
+    // dependents[d] = indices that depend on service d (edges only for deps present in `services`).
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut indegree: Vec<usize> = vec![0; n];
+    for (i, svc) in services.iter().enumerate() {
+        let Some(dep_ids) = svc.get("dependsOn").and_then(|x| x.as_array()) else {
+            continue;
+        };
+        for d in dep_ids {
+            let Some(&di) = d.as_str().and_then(|d| index_of.get(d)) else {
+                continue; // missing id — ignored, not a blocker
+            };
+            if di != i {
+                dependents[di].push(i);
+                indegree[i] += 1;
+            }
+        }
+    }
+    let mut emitted = vec![false; n];
+    let mut result = Vec::with_capacity(n);
+    loop {
+        // Lowest-index unemitted node with no unmet deps left — keeps ties in manifest order.
+        let Some(i) = (0..n).find(|&i| !emitted[i] && indegree[i] == 0) else {
+            break; // remaining nodes (if any) are part of a cycle
+        };
+        emitted[i] = true;
+        result.push(services[i].clone());
+        for &dep_i in &dependents[i] {
+            indegree[dep_i] = indegree[dep_i].saturating_sub(1);
+        }
+    }
+    // Cycle fallback: whatever couldn't be resolved is appended in original manifest order.
+    for (i, svc) in services.iter().enumerate() {
+        if !emitted[i] {
+            result.push(svc.clone());
+        }
+    }
+    result
+}
+
 /// Native START: spawn each target enabled service (idempotent — skip an already-listening port),
 /// track its pid, wait until it's up. `only` = one service; else the core+router groups (the PS
 /// -Router start-all). Aborts early if a Stop set STACK_CANCEL.
@@ -3140,7 +3196,7 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     let mut started = 0;
     let mut matched = 0;
     let mut failed = 0;
-    for svc in stack_services() {
+    for svc in order_services(&stack_services()) {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             stack_emit(app, "[cancel] stop requested — aborting start".into());
             break;
@@ -14398,6 +14454,68 @@ mod tests {
             ready_timeout_secs(&serde_json::json!({ "readyTimeoutSec": "x" })),
             25
         );
+    }
+
+    #[test]
+    fn order_services_deps_precede_dependents() {
+        fn ids(services: &[serde_json::Value]) -> Vec<&str> {
+            services
+                .iter()
+                .map(|s| s.get("id").and_then(|x| x.as_str()).unwrap())
+                .collect()
+        }
+        let services = vec![
+            serde_json::json!({ "id": "gateway", "dependsOn": ["qwen"] }),
+            serde_json::json!({ "id": "qwen" }),
+        ];
+        let ordered = order_services(&services);
+        assert_eq!(ids(&ordered), vec!["qwen", "gateway"]);
+    }
+
+    #[test]
+    fn order_services_missing_dep_no_hang() {
+        // dependsOn an id that isn't in the list — must still be emitted, manifest order preserved.
+        let services = vec![
+            serde_json::json!({ "id": "a", "dependsOn": ["nope"] }),
+            serde_json::json!({ "id": "b" }),
+        ];
+        let ordered = order_services(&services);
+        let ids: Vec<&str> = ordered
+            .iter()
+            .map(|s| s.get("id").and_then(|x| x.as_str()).unwrap())
+            .collect();
+        assert_eq!(ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn order_services_cycle_falls_back() {
+        // a depends on b, b depends on a — unresolvable, must fall back to manifest order, not hang.
+        let services = vec![
+            serde_json::json!({ "id": "a", "dependsOn": ["b"] }),
+            serde_json::json!({ "id": "b", "dependsOn": ["a"] }),
+        ];
+        let ordered = order_services(&services);
+        let ids: Vec<&str> = ordered
+            .iter()
+            .map(|s| s.get("id").and_then(|x| x.as_str()).unwrap())
+            .collect();
+        assert_eq!(ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn order_services_no_deps_is_identity() {
+        // Regression guard: absent `dependsOn` anywhere must be a no-op reorder.
+        let services = vec![
+            serde_json::json!({ "id": "freellmapi" }),
+            serde_json::json!({ "id": "gateway" }),
+            serde_json::json!({ "id": "deepseek" }),
+        ];
+        let ordered = order_services(&services);
+        let ids: Vec<&str> = ordered
+            .iter()
+            .map(|s| s.get("id").and_then(|x| x.as_str()).unwrap())
+            .collect();
+        assert_eq!(ids, vec!["freellmapi", "gateway", "deepseek"]);
     }
 
     #[test]
