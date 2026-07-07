@@ -3041,9 +3041,10 @@ fn spawn_service_native(svc: &serde_json::Value) -> Option<u32> {
 /// is a soft upgrade, never a veto (an upstream-throttled proxy answers non-2xx on /v1/models while
 /// perfectly alive; failing it would report a running service as dead and leave it running).
 enum Readiness {
-    Down,   // port never listened within its budget — a real failure
-    PortUp, // port listens, but a declared health path didn't answer 2xx in time (still running)
-    Healthy, // port listens + 2xx health
+    Down,      // port never listened within its budget — a real failure
+    PortUp,    // port listens, but a declared health path didn't answer 2xx in time (still running)
+    Healthy,   // port listens + 2xx health
+    Cancelled, // a Stop set STACK_CANCEL mid-wait — abort, do NOT count as a failure (CAST-5)
 }
 
 async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
@@ -3061,6 +3062,9 @@ async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
     let port_deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
     let mut listening = false;
     while std::time::Instant::now() < port_deadline {
+        if STACK_CANCEL.load(Ordering::SeqCst) {
+            return Readiness::Cancelled;
+        }
         if tokio::task::spawn_blocking(move || port_listening(port))
             .await
             .unwrap_or(false)
@@ -3080,6 +3084,9 @@ async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
     //    non-2xx / no answer here downgrades to PortUp, it does NOT fail the service.
     let health_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < health_deadline {
+        if STACK_CANCEL.load(Ordering::SeqCst) {
+            return Readiness::Cancelled;
+        }
         let h = health.clone();
         if tokio::task::spawn_blocking(move || http_health_ok(port, &h))
             .await
@@ -3185,6 +3192,11 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                 }
                 stack_emit(app, format!("[ .. ] {name} (pid {pid}) starting…"));
                 match native_wait_ready(&svc).await {
+                    Readiness::Cancelled => {
+                        // Stop preempted this start mid-wait — abort cleanly, not a failure (CAST-5).
+                        stack_emit(app, format!("[cancel] {name}: start aborted"));
+                        break;
+                    }
                     Readiness::Down => {
                         failed += 1;
                         stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
@@ -3259,6 +3271,13 @@ fn is_ours_process(name: &str) -> bool {
         || name.starts_with("cmd")
 }
 
+/// Whether a Stop should flip the global `STACK_CANCEL` (which aborts an in-flight native start).
+/// Only a stop-ALL should — a targeted single-service stop must leave a concurrent full start of the
+/// OTHER services running (CAST-3). Pure so the cancel scope has a real assert behind it.
+fn stop_aborts_start(only: Option<&str>) -> bool {
+    only.is_none()
+}
+
 /// Native STOP: kill each target service by its tracked top-of-tree pid (persisted, so it survives an
 /// app restart), with a port→pid fallback (ownership-guarded) for anything we didn't spawn. kill_tree
 /// = taskkill /T so the whole npm→node tree dies and no window is orphaned.
@@ -3268,7 +3287,10 @@ async fn native_stack_stop(
     only: Option<&str>,
     emit_done: bool,
 ) -> i32 {
-    STACK_CANCEL.store(true, Ordering::SeqCst);
+    // Only a stop-all aborts a concurrent full start; a single-service stop leaves it running (CAST-3).
+    if stop_aborts_start(only) {
+        STACK_CANCEL.store(true, Ordering::SeqCst);
+    }
     if let Some(o) = only {
         if !stack_services()
             .iter()
@@ -3312,9 +3334,10 @@ async fn native_stack_stop(
                 killed = true;
             }
         }
-        // Port fallback (service started outside the app / stale pid): only kill a holder that IS one
-        // of our service processes (node/python) — never a foreign app that holds a manifest port.
-        if port != 0 {
+        // Port fallback ONLY when the tracked-pid kill didn't already succeed (CAST-4): a service
+        // started outside the app / with a stale pid. Guarded so we never kill a foreign app that now
+        // holds a manifest port after our own process already died.
+        if !killed && port != 0 {
             if let Some(pid) = by_port.get(&port) {
                 if pid_image_name(*pid).map(|n| is_ours_process(&n)).unwrap_or(false) {
                     let _ = kill_tree(*pid);
@@ -14216,6 +14239,15 @@ read_opencode_models,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_aborts_only_on_stop_all() {
+        // A stop-all (only=None) must flip STACK_CANCEL to abort a concurrent full start.
+        assert!(stop_aborts_start(None));
+        // A targeted single-service stop must NOT — it would otherwise cancel the full start
+        // of every OTHER service (CAST-3).
+        assert!(!stop_aborts_start(Some("gateway")));
+    }
 
     #[test]
     fn gc_install_path_tuple_parses_alias_and_slashes() {
