@@ -207,6 +207,10 @@ export type ProfilesStatus = {
 export const readProfiles = () => invoke<ProfilesStatus | null>('read_profiles');
 export const runProfiles = (action: ProfileAction, name?: string) =>
   invoke<number>('run_profiles', { action, name });
+// Resolve one Syncthing conflict file: keep-local deletes the .sync-conflict-* copy;
+// keep-other replaces the base file with it (backend guards path is a .claude conflict).
+export const resolveSyncConflict = (path: string, action: 'keep-local' | 'keep-other') =>
+  invoke<void>('resolve_sync_conflict', { path, action });
 // F23: repair the links of several profiles in one run (Home "Repair All").
 export const repairAllProfiles = (names: string[]) =>
   invoke<number>('repair_all_profiles', { names });
@@ -699,6 +703,8 @@ export type SyncAction = 'query' | 'set';
 
 export type SyncthingStatus = {
   available: boolean;
+  // available:false but keyConfigured:true = daemon down / wrong key (vs never configured).
+  keyConfigured?: boolean;
   version?: string;
   folderId?: string;
   folderLabel?: string;
@@ -872,7 +878,8 @@ export const runOpencodeProviders = () => invoke<number>('run_opencode_providers
 // Attach canonical rule files (config CLAUDE.md/RTK.md) to OpenCode's `instructions` array.
 export const runOpencodeInstructions = () => invoke<number>('run_opencode_instructions');
 // Fan out canonical .mcp.json servers into Codex via the official `codex mcp add` CLI.
-export const runCodexMcp = () => invoke<number>('run_codex_mcp');
+export const runCodexMcp = () =>
+  invoke<{ added: number; failed: string[] }>('run_codex_mcp');
 // Connect the freellmapi gateway to Codex ([model_providers] + [profiles]); also mirrors the
 // gateway key into the user env via setx. Resolves to whether the key was set.
 export const runCodexProviders = () => invoke<boolean>('run_codex_providers');

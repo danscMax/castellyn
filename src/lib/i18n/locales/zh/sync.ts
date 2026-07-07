@@ -20,6 +20,13 @@ export default {
   fstateUnlinked: '未链接',
   cleanConflictsBtn: '清理',
   cleanConflictsTip: '删除 *.sync-conflict-* 文件',
+  conflictShow: '显示…',
+  keepLocal: '保留本地',
+  keepOther: '采用另一台的',
+  stConfiguredButDown: '已配置但无法访问',
+  memoTitle: '哪些内容不会同步',
+  memoBody:
+    '• 密钥与凭据 — 凭据管理器、settings*.json、.credentials.json（各机器本地保存）。\n• 插件与市场 — 需在每台电脑分别安装。\n• OpenCode/Codex 分发与「共享技能」— 需在每台机器重新执行。',
   // Header
   title: '跨设备同步',
   subtitle:

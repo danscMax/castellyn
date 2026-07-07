@@ -20,6 +20,13 @@ export default {
   fstateUnlinked: 'без ссылки',
   cleanConflictsBtn: 'Очистить',
   cleanConflictsTip: 'Удалить файлы *.sync-conflict-*',
+  conflictShow: 'Показать…',
+  keepLocal: 'Оставить локальную',
+  keepOther: 'Взять с другой машины',
+  stConfiguredButDown: 'настроен, но недоступен',
+  memoTitle: 'Что НЕ синхронизируется',
+  memoBody:
+    '• Секреты и ключи — Credential Manager, settings*.json, .credentials.json (хранятся локально на каждой машине).\n• Плагины и маркетплейсы — ставятся отдельно на каждом ПК.\n• Fan-out’ы OpenCode/Codex и «Поделиться скиллами» — повторите на каждой машине.',
   // Header
   title: 'Синхронизация между компьютерами',
   subtitle:

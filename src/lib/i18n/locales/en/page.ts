@@ -198,6 +198,11 @@ export default {
   confirm_clean_msg:
     'Duplicate *.sync-conflict-* files will be removed (originals are untouched; Syncthing keeps versions). Continue?',
   confirm_clean_btn: 'Delete',
+  confirm_keepother_msg:
+    'The local file will be replaced with the other machine’s version (the current one is kept as *.pre-conflict.bak). Continue?',
+  confirm_fanout_body:
+    'Keys will be merged into {target} (existing ones with the same names are overwritten). Continue?',
+  codex_mcp_partial: 'Codex MCP: {added} added, {failed} failed',
 
   // MCP
   mcp_log: '▶ MCP: deploying to all profiles…',

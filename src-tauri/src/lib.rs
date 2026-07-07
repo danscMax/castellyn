@@ -8979,7 +8979,7 @@ fn cmd_argv_safe(argv: &[String]) -> bool {
 /// live 2026-07-02 (upstream #3441 is closed): servers registered this way load in a session
 /// and their tools resolve via Codex's tool search. Returns the count added.
 #[tauri::command]
-fn run_codex_mcp() -> Result<usize, String> {
+fn run_codex_mcp() -> Result<serde_json::Value, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // L4 (config.json ledger + config.toml)
     use std::os::windows::process::CommandExt;
     let home = std::env::var("USERPROFILE")
@@ -9066,10 +9066,10 @@ fn run_codex_mcp() -> Result<usize, String> {
         let _ = write_config_file(&hub);
     }
 
-    if !errs.is_empty() {
-        return Err(errs.join(" · "));
-    }
-    Ok(count)
+    // Partial-honest: report per-server outcome instead of an all-or-nothing Err. The hard Errs above
+    // (canon/config unreadable — no candidate at all) already returned; here at least one server was
+    // attempted, so surface added + failed. Ledger already advanced only when errs was empty.
+    Ok(serde_json::json!({ "added": count, "failed": errs }))
 }
 
 /// Merge an OpenAI-Responses-compatible provider into Codex's config.toml text: a
@@ -10338,6 +10338,89 @@ fn delete_skill(dir: String) -> Result<(), String> {
             .map_err(|e| trv("err.remove_link", cur_lang(), &[("e", &e)]))
     } else {
         std::fs::remove_dir_all(target).map_err(|e| trv("err.remove", cur_lang(), &[("e", &e)]))
+    }
+}
+
+/// Strip Syncthing's `.sync-conflict-<stamp>` infix to recover the original file's path.
+/// Format: `<name>.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX<.ext>` — the infix sits right before the
+/// final extension (or at the very end when the file has none). The stamp itself carries no `.`,
+/// so everything from the first `.` after `.sync-conflict-` is the original extension suffix.
+/// Returns None when the marker is absent.
+fn conflict_base_path(path: &str) -> Option<String> {
+    const MARK: &str = ".sync-conflict-";
+    let (prefix, rest) = path.split_once(MARK)?;
+    // Suffix = original extension (from the first dot after the stamp), or "" when extensionless.
+    let suffix = rest.find('.').map(|i| &rest[i..]).unwrap_or("");
+    Some(format!("{prefix}{suffix}"))
+}
+
+/// Resolve one Syncthing sync-conflict file (Sync tab). Two frozen SAFETY guards: the name must
+/// carry the `.sync-conflict-` marker AND the canonicalized path must sit inside `%USERPROFILE%\.claude`
+/// — either miss is refused, so a stray path can never delete/overwrite outside the profile tree.
+///   keep-local  = delete the conflict file (keep the local original untouched).
+///   keep-other  = adopt the conflict's version: rename base -> base.pre-conflict.bak, then conflict -> base.
+#[tauri::command]
+fn resolve_sync_conflict(path: String, action: String) -> Result<(), String> {
+    // Guard 1: the marker. Cheap string check first; also yields the base path for keep-other.
+    let base = conflict_base_path(&path)
+        .ok_or_else(|| format!("not a sync-conflict file: {path}"))?;
+    // Guard 2: canonicalize and confine to %USERPROFILE%\.claude (component-wise, not string prefix).
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
+    let claude_root = std::fs::canonicalize(std::path::Path::new(&home).join(".claude"))
+        .map_err(|e| format!("resolve .claude: {e}"))?;
+    let canon = std::fs::canonicalize(&path).map_err(|e| format!("no such file: {e}"))?;
+    if !canon.starts_with(&claude_root) {
+        return Err(format!("refused: {path} is outside {}", claude_root.display()));
+    }
+    match action.as_str() {
+        "keep-local" => {
+            std::fs::remove_file(&path).map_err(|e| format!("delete conflict: {e}"))
+        }
+        "keep-other" => {
+            // Back up the local original (best-effort: absent base just means nothing to preserve),
+            // then promote the conflict copy into the original's place.
+            if std::path::Path::new(&base).exists() {
+                std::fs::rename(&base, format!("{base}.pre-conflict.bak"))
+                    .map_err(|e| format!("backup base: {e}"))?;
+            }
+            std::fs::rename(&path, &base).map_err(|e| format!("promote conflict: {e}"))
+        }
+        _ => Err(format!("unknown action: {action}")),
+    }
+}
+
+#[cfg(test)]
+mod conflict_base_tests {
+    use super::conflict_base_path;
+    #[test]
+    fn with_extension() {
+        assert_eq!(
+            conflict_base_path(r"C:\u\.claude\settings.sync-conflict-20260707-120000-ABCDEFG.json")
+                .as_deref(),
+            Some(r"C:\u\.claude\settings.json")
+        );
+    }
+    #[test]
+    fn without_extension() {
+        assert_eq!(
+            conflict_base_path(r"C:\u\.claude\README.sync-conflict-20260707-120000-ABCDEFG")
+                .as_deref(),
+            Some(r"C:\u\.claude\README")
+        );
+    }
+    #[test]
+    fn multiple_dots() {
+        // Infix sits before the FINAL extension: my.config.<infix>.json -> my.config.json
+        assert_eq!(
+            conflict_base_path(r"C:\u\.claude\my.config.sync-conflict-20260707-120000-ABCDEFG.json")
+                .as_deref(),
+            Some(r"C:\u\.claude\my.config.json")
+        );
+    }
+    #[test]
+    fn no_marker_is_none() {
+        assert_eq!(conflict_base_path(r"C:\u\.claude\settings.json"), None);
     }
 }
 
@@ -14517,6 +14600,7 @@ read_opencode_models,
             agent_status_hook_status,
             agent_status_hook_set,
             delete_skill,
+            resolve_sync_conflict,
             read_schedules,
             read_schedules_cached,
             run_schedule,

@@ -197,6 +197,10 @@ export default {
   confirm_clean_msg:
     '将删除重复的 *.sync-conflict-* 文件（原始文件不受影响；Syncthing 会保留版本）。是否继续？',
   confirm_clean_btn: '删除',
+  confirm_keepother_msg:
+    '本地文件将被另一台机器的版本替换（当前文件保留为 *.pre-conflict.bak）。是否继续？',
+  confirm_fanout_body: '密钥将合并写入 {target}（同名的现有项会被覆盖）。是否继续？',
+  codex_mcp_partial: 'Codex MCP：已添加 {added}，失败 {failed}',
 
   // MCP
   mcp_log: '▶ MCP：部署到所有配置…',

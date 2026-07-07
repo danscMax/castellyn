@@ -14,6 +14,8 @@
     onApply,
     driftData = null,
     conflictCount = 0,
+    conflictFiles = [],
+    onResolveConflict,
     onDriftApply,
     onCleanConflicts,
     scriptsAvail = true
@@ -24,10 +26,17 @@
     onApply: (enabled: string[]) => void;
     driftData?: ConfigDriftStatus | null;
     conflictCount?: number;
+    conflictFiles?: string[];
+    onResolveConflict?: (path: string, action: 'keep-local' | 'keep-other') => void;
     onDriftApply?: (action: ConfigDriftAction) => void;
     onCleanConflicts?: () => void;
     scriptsAvail?: boolean;
   } = $props();
+
+  let showConflicts = $state(false);
+  // Parent folder of a conflict file (both slash styles), for the "open folder" action.
+  const parentDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '');
+  const baseName = (p: string) => p.slice(parentDir(p).length + 1);
 
   const busy = $derived(!!running);
 
@@ -137,6 +146,8 @@
           <span class="badge badge-ok" title={t('sync.daemonTitle')}>{t('sync.connected')}{st.version ? ` · ${st.version}` : ''}</span>
           <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => openPath('http://localhost:8384')}
             title={t('sync.openWebUiTip')}>{t('sync.openWebUi')}</button>
+        {:else if st?.keyConfigured}
+          <span class="badge badge-warn" title={t('sync.stConfiguredButDown')}>{t('sync.stConfiguredButDown')}</span>
         {:else}
           <span class="badge badge-warn" title={t('sync.notFoundTitle')}>{t('sync.notFound')}</span>
         {/if}
@@ -243,12 +254,34 @@
 
   <!-- Sync conflicts (USE-8) -->
   {#if conflictCount > 0}
-      <div class="sw-card mb-sw-4 flex items-center gap-sw-2 border border-amber-500/40 text-sw-sm">
-        <span class="badge badge-warn">{conflictCount} {pConflict(conflictCount)}</span>
-        <span class="text-sw-text-secondary">{t('sync.conflictsDesc')}</span>
-        {#if onCleanConflicts}
-          <button class="sw-btn sw-btn-ghost ml-auto" disabled={busy} onclick={onCleanConflicts}
-            title={t('sync.cleanConflictsTip')}>{t('sync.cleanConflictsBtn')}</button>
+      <div class="sw-card mb-sw-4 border border-amber-500/40 text-sw-sm">
+        <div class="flex items-center gap-sw-2">
+          <span class="badge badge-warn">{conflictCount} {pConflict(conflictCount)}</span>
+          <span class="text-sw-text-secondary">{t('sync.conflictsDesc')}</span>
+          {#if conflictFiles.length > 0 && onResolveConflict}
+            <button class="sw-btn sw-btn-ghost ml-auto" onclick={() => (showConflicts = !showConflicts)}
+              >{t('sync.conflictShow')}</button>
+          {/if}
+          {#if onCleanConflicts}
+            <button class="sw-btn sw-btn-ghost {conflictFiles.length > 0 && onResolveConflict ? '' : 'ml-auto'}"
+              disabled={busy} onclick={onCleanConflicts}
+              title={t('sync.cleanConflictsTip')}>{t('sync.cleanConflictsBtn')}</button>
+          {/if}
+        </div>
+        {#if showConflicts && onResolveConflict}
+          <div class="mt-sw-3 space-y-1">
+            {#each conflictFiles as f (f)}
+              <div class="flex items-center gap-sw-2 rounded bg-sw-surface px-sw-3 py-1.5">
+                <code class="font-mono flex-1 truncate" title={f}>{baseName(f)}</code>
+                <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" onclick={() => openPath(parentDir(f))}
+                  >{t('sync.folder')}</button>
+                <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy}
+                  onclick={() => onResolveConflict(f, 'keep-local')}>{t('sync.keepLocal')}</button>
+                <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy}
+                  onclick={() => onResolveConflict(f, 'keep-other')}>{t('sync.keepOther')}</button>
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -293,6 +326,12 @@
     <p class="mt-sw-2 text-sw-xs text-sw-text-muted">
       {t('sync.footnote')}
     </p>
+
+    <!-- What does NOT travel by sync — so a new machine isn't assumed fully migrated. -->
+    <div class="sw-card mt-sw-4 text-sw-sm">
+      <div class="mb-sw-1 font-medium">{t('sync.memoTitle')}</div>
+      <p class="text-sw-text-secondary whitespace-pre-line">{t('sync.memoBody')}</p>
+    </div>
   {:else}
     <!-- data is null only on first open (read_sync pending) — skeleton, not a misleading empty pane. -->
     <div class="flex flex-col gap-sw-2">

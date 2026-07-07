@@ -20,6 +20,13 @@ export default {
   fstateUnlinked: 'not linked',
   cleanConflictsBtn: 'Clean',
   cleanConflictsTip: 'Delete the *.sync-conflict-* files',
+  conflictShow: 'Show…',
+  keepLocal: 'Keep local',
+  keepOther: 'Take other machine’s',
+  stConfiguredButDown: 'configured but unreachable',
+  memoTitle: 'What does NOT sync',
+  memoBody:
+    '• Secrets and keys — Credential Manager, settings*.json, .credentials.json (kept locally on each machine).\n• Plugins and marketplaces — installed separately on every PC.\n• OpenCode/Codex fan-outs and “Share skills” — redo on each machine.',
   // Header
   title: 'Sync across machines',
   subtitle:

@@ -198,6 +198,11 @@ export default {
   confirm_clean_msg:
     'Будут удалены файлы-дубли *.sync-conflict-* (оригиналы не тронутся; Syncthing хранит версии). Продолжить?',
   confirm_clean_btn: 'Удалить',
+  confirm_keepother_msg:
+    'Локальный файл будет заменён версией с другой машины (текущий сохранится как *.pre-conflict.bak). Продолжить?',
+  confirm_fanout_body:
+    'Ключи будут дописаны в {target} (существующие с теми же именами перезапишутся). Продолжить?',
+  codex_mcp_partial: 'MCP в Codex: добавлено {added}, ошибок {failed}',
 
   // MCP
   mcp_log: '▶ MCP: развёртывание во все профили…',

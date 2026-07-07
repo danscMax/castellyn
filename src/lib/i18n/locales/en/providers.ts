@@ -77,9 +77,9 @@ export default {
   rcOpencodeTitle: 'Connect “{name}” to opencode',
   rcOpencodeSub: 'opencode will talk directly to {url} (OpenAI-compatible, no router).',
   rcOpencodeKeyLabel: 'API key (optional)',
-  rcOpencodeKeyPlaceholder: 'empty → keep current or {env:FREELLMAPI_KEY}',
+  rcOpencodeKeyPlaceholder: 'empty → keep current or {env:FREELLMAPI_API_KEY}',
   rcOpencodeKeyTip:
-    'If set, written literally to opencode.json. Empty: keep the current key, otherwise an {env:FREELLMAPI_KEY} placeholder.',
+    'If set, written literally to opencode.json. Empty: keep the current key, otherwise an {env:FREELLMAPI_API_KEY} placeholder.',
   rcOpencodeBtn: 'Connect',
   rcOpencodeTip: 'Write the provider to opencode.json and make it the active model',
   editEndpointTitle: 'Change engine address/port (if the port is taken by another service)',

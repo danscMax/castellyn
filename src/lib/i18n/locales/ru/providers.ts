@@ -77,9 +77,9 @@ export default {
   rcOpencodeTitle: 'Подключить «{name}» к opencode',
   rcOpencodeSub: 'opencode будет ходить напрямую на {url} (OpenAI-совместимый, без роутера).',
   rcOpencodeKeyLabel: 'API-ключ (необязательно)',
-  rcOpencodeKeyPlaceholder: 'пусто → сохранить текущий или {env:FREELLMAPI_KEY}',
+  rcOpencodeKeyPlaceholder: 'пусто → сохранить текущий или {env:FREELLMAPI_API_KEY}',
   rcOpencodeKeyTip:
-    'Если задать — запишется литералом в opencode.json. Пусто: оставить текущий ключ, иначе плейсхолдер {env:FREELLMAPI_KEY}.',
+    'Если задать — запишется литералом в opencode.json. Пусто: оставить текущий ключ, иначе плейсхолдер {env:FREELLMAPI_API_KEY}.',
   rcOpencodeBtn: 'Подключить',
   rcOpencodeTip: 'Записать провайдера в opencode.json и сделать активной моделью',
   editEndpointTitle: 'Изменить адрес/порт движка (если порт занят другим сервисом)',

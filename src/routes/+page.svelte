@@ -13,6 +13,7 @@
     runBackup,
     readProfiles,
     runProfiles,
+    resolveSyncConflict,
     repairAllProfiles,
     readProfilesConfig,
     runProfileMgmt,
@@ -764,6 +765,21 @@
     }
   }
 
+  // Per-file conflict resolution (USE-8): keep-local deletes the conflict copy (reuses the
+  // clean-conflicts confirm); keep-other overwrites the local file with the other machine's
+  // version (destructive → danger). Both refresh profiles the same way clean-conflicts does.
+  function onResolveConflict(path: string, action: 'keep-local' | 'keep-other') {
+    const run = () =>
+      resolveSyncConflict(path, action)
+        .then(reloadProfiles)
+        .catch(toastErr);
+    if (action === 'keep-local')
+      askConfirm(t('page.confirm_clean_title'), t('page.confirm_clean_msg'), t('page.confirm_clean_btn'), run,
+        { danger: true });
+    else
+      askConfirm(t('common.confirm'), t('page.confirm_keepother_msg'), t('sync.keepOther'), run, { danger: true });
+  }
+
   // Finish a half-built profile's folder symlinks with a one-off elevated repair (UAC).
   // Routes through the 'profiles' run slot, so run-done reloads the tab like any repair.
   function onRepairElevated(name: string) {
@@ -1113,33 +1129,56 @@
       pushToast({ kind: 'error', title: t(errKey), detail: String(e) });
     }
   }
+  // Fan-outs write into another harness's config file — confirm the exact target first.
+  const confirmFanout = (target: string, run: () => void) =>
+    askConfirm(t('common.confirm'), t('page.confirm_fanout_body', { target }), t('page.confirm_mcp_btn'), run);
+  // Codex MCP is honest about partial failure: {added, failed}. Warn (not error) when some
+  // servers failed but others landed; the ledger only advances when failed is empty.
+  async function deployCodexMcp() {
+    try {
+      const res = await runCodexMcp();
+      if (res.failed.length)
+        pushToast({
+          kind: 'warn',
+          title: t('page.codex_mcp_partial', { added: res.added, failed: res.failed.length }),
+          detail: res.failed[0]
+        });
+      else pushToast({ kind: 'success', title: t('environments.deployMcpDoneCodex', { n: res.added }) });
+      await reloadEnvs();
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('environments.deployMcpErrorCodex'), detail: String(e) });
+    }
+  }
   const onDeployMcp = (id: string) => {
     if (id === 'opencode')
-      void deployToHarness(runOpencodeMcp, 'environments.deployMcpDone', 'environments.deployMcpError');
-    else if (id === 'codex')
-      void deployToHarness(runCodexMcp, 'environments.deployMcpDoneCodex', 'environments.deployMcpErrorCodex');
+      confirmFanout('opencode.json', () =>
+        void deployToHarness(runOpencodeMcp, 'environments.deployMcpDone', 'environments.deployMcpError'));
+    else if (id === 'codex') confirmFanout('~/.codex/config.toml', () => void deployCodexMcp());
   };
   const onDeployProviders = (id: string) => {
     if (id === 'opencode')
-      void deployToHarness(runOpencodeProviders, 'environments.deployProvidersDone', 'environments.deployProvidersError');
+      confirmFanout('opencode.json', () =>
+        void deployToHarness(runOpencodeProviders, 'environments.deployProvidersDone', 'environments.deployProvidersError'));
     else if (id === 'codex')
       // Not deployToHarness: the result is "was the key mirrored", which picks the toast text.
-      void (async () => {
-        try {
-          const keySet = await runCodexProviders();
-          pushToast({
-            kind: keySet ? 'success' : 'warn',
-            title: t(keySet ? 'environments.connectGatewayDone' : 'environments.connectGatewayDoneNoKey')
-          });
-          await reloadEnvs();
-        } catch (e) {
-          pushToast({ kind: 'error', title: t('environments.connectGatewayError'), detail: String(e) });
-        }
-      })();
+      confirmFanout('~/.codex/config.toml', () =>
+        void (async () => {
+          try {
+            const keySet = await runCodexProviders();
+            pushToast({
+              kind: keySet ? 'success' : 'warn',
+              title: t(keySet ? 'environments.connectGatewayDone' : 'environments.connectGatewayDoneNoKey')
+            });
+            await reloadEnvs();
+          } catch (e) {
+            pushToast({ kind: 'error', title: t('environments.connectGatewayError'), detail: String(e) });
+          }
+        })());
   };
   const onDeployInstructions = (id: string) => {
     if (id === 'opencode')
-      void deployToHarness(runOpencodeInstructions, 'environments.deployInstrDone', 'environments.deployInstrError');
+      confirmFanout('opencode.json', () =>
+        void deployToHarness(runOpencodeInstructions, 'environments.deployInstrDone', 'environments.deployInstrError'));
   };
 
   // Share skills into ~/.agents/skills (additive junctions) so OpenCode + Codex see them all.
@@ -1331,7 +1370,7 @@
   }
 
   function onSyncApply(enabled: string[]) {
-    const all = ['history', 'projects', 'skills', 'agents', 'commands', 'keybindings'];
+    const all = ['history', 'projects', 'skills', 'agents', 'commands', 'keybindings', 'castellyn'];
     const off = all.filter((i) => !enabled.includes(i));
     // Enabling/keeping sync items is additive and safe — only gate behind a confirm when something
     // is actually being DISABLED (the destructive direction).
@@ -1585,7 +1624,7 @@
 
   // Point opencode at an OpenAI-compatible engine (writes opencode.json). The gateway engine
   // reuses the existing "freellmapi" provider id (reconciles its config). apiKey: literal if
-  // typed; else keep the existing one; else an {env:FREELLMAPI_KEY} placeholder.
+  // typed; else keep the existing one; else an {env:FREELLMAPI_API_KEY} placeholder.
   function onConnectOpencode(engine: EngineStatus, model: string, key: string) {
     if (running) return;
     const providerId = engine.id === 'llmstack' ? 'freellmapi' : engine.id;
@@ -1599,7 +1638,7 @@
     };
     if (key.trim()) args.key = key.trim();
     else if (existing?.hasKey) args.keepKey = true;
-    else args.envKey = 'FREELLMAPI_KEY';
+    else args.envKey = 'FREELLMAPI_API_KEY';
     askConfirm(
       t('page.confirm_opencode_title'),
       t('page.confirm_opencode_msg', { engine: engine.name, model }),
@@ -2557,6 +2596,7 @@
       {:else if active === 'sync'}
         <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}
           driftData={driftData} conflictCount={profilesData?.syncConflicts?.count ?? 0}
+          conflictFiles={profilesData?.syncConflicts?.files ?? []} onResolveConflict={onResolveConflict}
           onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} {scriptsAvail} />
       {:else if active === 'analytics'}
         <AnalyticsTab onOpenProviders={() => (active = 'providers')} />
