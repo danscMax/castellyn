@@ -19,6 +19,7 @@ use tokio::process::Command;
 
 mod agent_status;
 mod limits;
+mod stack_health;
 mod i18n;
 use i18n::{tr, trv, Lang};
 
@@ -190,6 +191,14 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     limits_monitor: Option<bool>,
+    // Background llm-stack liveness poll (Home/System Health card): None = default (true). Polls
+    // every 30s and flags services that transition to down. Set false to stop the background poll.
+    #[serde(
+        rename = "stackHealthMonitor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    stack_health_monitor: Option<bool>,
     // Auto-continue a limited Claude pane once its 5h window resets (Sessions, item 21c). None =
     // default (true). No UI toggle — a config-only escape hatch for rollback if unattended auto-input
     // is unwanted. The whole loop lives in the frontend (SessionsTab); the backend only persists it.
@@ -3647,16 +3656,16 @@ fn http_health_ok(port: u16, path: &str) -> bool {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StackHealth {
-    id: String,
-    name: String,
-    group: String,
-    port: u16,
-    enabled: bool,
+pub(crate) struct StackHealth {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) group: String,
+    pub(crate) port: u16,
+    pub(crate) enabled: bool,
     /// TCP port accepts a connection.
-    port_open: bool,
+    pub(crate) port_open: bool,
     /// HTTP health endpoint returned 2xx. None when the service has no `health` path (port-only).
-    healthy: Option<bool>,
+    pub(crate) healthy: Option<bool>,
 }
 
 /// Real health of llm-stack services: a TCP port probe plus — when `health` is set in stack.json —
@@ -3669,7 +3678,7 @@ async fn read_stack_health() -> Vec<StackHealth> {
         .unwrap_or_default()
 }
 
-fn read_stack_health_blocking() -> Vec<StackHealth> {
+pub(crate) fn read_stack_health_blocking() -> Vec<StackHealth> {
     let s = |e: &serde_json::Value, k: &str| {
         e.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
     };
@@ -14125,6 +14134,9 @@ read_opencode_models,
             // Anthropic OAuth usage-limit monitor (per profile; 85%/99% alerts). No-op for profiles
             // without OAuth creds; disableable via the `limitsMonitor` config toggle.
             limits::start(app.handle().clone());
+            // Background llm-stack liveness poll (every 30s): pushes stack-health + flags
+            // transition-to-down so post-startup death is seen without a manual refresh.
+            stack_health::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();
             let cfg = read_config_file();
