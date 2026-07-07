@@ -3057,6 +3057,16 @@ fn ready_timeout_secs(svc: &serde_json::Value) -> u64 {
         .unwrap_or(25)
 }
 
+/// Per-service soft-health-confirmation budget in seconds (mirrors `ready_timeout_secs`). Declared
+/// via `healthTimeoutSec`; anything missing or non-positive falls back to the historical 15s
+/// default, so a stack.json without the field behaves exactly as before.
+fn health_timeout_secs(svc: &serde_json::Value) -> u64 {
+    svc.get("healthTimeoutSec")
+        .and_then(|x| x.as_u64())
+        .filter(|&n| n > 0)
+        .unwrap_or(15)
+}
+
 async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
     let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     if port == 0 {
@@ -3093,9 +3103,11 @@ async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
     if health.is_empty() {
         return Readiness::Healthy;
     }
-    // 2) soft health confirmation — a FRESH 15s budget so a slow-binding port can't starve it. A
-    //    non-2xx / no answer here downgrades to PortUp, it does NOT fail the service.
-    let health_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // 2) soft health confirmation — a FRESH budget (stack.json healthTimeoutSec, default 15s) so a
+    //    slow-binding port can't starve it. A non-2xx / no answer here downgrades to PortUp, it does
+    //    NOT fail the service.
+    let health_deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(health_timeout_secs(svc));
     while std::time::Instant::now() < health_deadline {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             return Readiness::Cancelled;
@@ -3179,9 +3191,47 @@ fn order_services(services: &[serde_json::Value]) -> Vec<serde_json::Value> {
     result
 }
 
+/// Whether a failed service should trigger a rollback of everything this run already started.
+/// Trivial today (mirrors the `critical` flag verbatim) but named/typed so the call sites read as
+/// intent and the gate has a real unit test independent of the async start loop.
+fn should_teardown(failed_is_critical: bool) -> bool {
+    failed_is_critical
+}
+
+/// Kills and unregisters every pid `native_stack_start` already spawned this run, then logs the
+/// rollback. Called when a `critical` service fails to come up — leaves the stack exactly as it
+/// was before this Start, instead of a half-started backend/router pair.
+fn teardown_started(
+    app: &AppHandle,
+    procs: &StackProcs,
+    failed_name: &str,
+    started_pids: &[(String, u32)],
+) {
+    if started_pids.is_empty() {
+        return;
+    }
+    {
+        let mut m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
+        for (sid, pid) in started_pids {
+            let _ = kill_tree(*pid);
+            m.remove(sid);
+        }
+        save_stack_procs(&m);
+    }
+    stack_emit(
+        app,
+        format!(
+            "[teardown] critical {failed_name} failed — rolled back {} service(s)",
+            started_pids.len()
+        ),
+    );
+}
+
 /// Native START: spawn each target enabled service (idempotent — skip an already-listening port),
 /// track its pid, wait until it's up. `only` = one service; else the core+router groups (the PS
-/// -Router start-all). Aborts early if a Stop set STACK_CANCEL.
+/// -Router start-all). Aborts early if a Stop set STACK_CANCEL. A `critical:true` service that
+/// fails to come up rolls back every service THIS run already started (kill + unregister pid) —
+/// a half-started stack (e.g. a router up with no backend behind it) is worse than none.
 async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
     STACK_CANCEL.store(false, Ordering::SeqCst);
     // A -Only id that isn't in the manifest otherwise looks just like "nothing started".
@@ -3196,6 +3246,8 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     let mut started = 0;
     let mut matched = 0;
     let mut failed = 0;
+    // pids this run actually spawned — rolled back in full if a critical service then fails.
+    let mut started_pids: Vec<(String, u32)> = Vec::new();
     for svc in order_services(&stack_services()) {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             stack_emit(app, "[cancel] stop requested — aborting start".into());
@@ -3259,6 +3311,7 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                     m.insert(sid.clone(), pid);
                     save_stack_procs(&m);
                 }
+                started_pids.push((sid.clone(), pid));
                 stack_emit(app, format!("[ .. ] {name} (pid {pid}) starting…"));
                 match native_wait_ready(&svc).await {
                     Readiness::Cancelled => {
@@ -3269,6 +3322,11 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                     Readiness::Down => {
                         failed += 1;
                         stack_emit(app, format!("[fail] {name} did not come up — see stack-logs\\{sid}.log"));
+                        let is_critical = svc.get("critical").and_then(|x| x.as_bool()).unwrap_or(false);
+                        if should_teardown(is_critical) {
+                            teardown_started(app, procs, &name, &started_pids);
+                            break;
+                        }
                     }
                     ready => {
                         started += 1;
@@ -3294,6 +3352,11 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
             None => {
                 failed += 1;
                 stack_emit(app, format!("[fail] {name}: could not spawn (check command)"));
+                let is_critical = svc.get("critical").and_then(|x| x.as_bool()).unwrap_or(false);
+                if should_teardown(is_critical) {
+                    teardown_started(app, procs, &name, &started_pids);
+                    break;
+                }
             }
         }
     }
@@ -14454,6 +14517,28 @@ mod tests {
             ready_timeout_secs(&serde_json::json!({ "readyTimeoutSec": "x" })),
             25
         );
+    }
+
+    #[test]
+    fn health_timeout_reads_override_else_default() {
+        // No field → historical 15s default.
+        assert_eq!(health_timeout_secs(&serde_json::json!({})), 15);
+        // A positive override wins (a slow health endpoint).
+        assert_eq!(
+            health_timeout_secs(&serde_json::json!({ "healthTimeoutSec": 40 })),
+            40
+        );
+        // Zero falls back to the default, never a zero budget.
+        assert_eq!(
+            health_timeout_secs(&serde_json::json!({ "healthTimeoutSec": 0 })),
+            15
+        );
+    }
+
+    #[test]
+    fn should_teardown_mirrors_critical_flag() {
+        assert!(should_teardown(true));
+        assert!(!should_teardown(false));
     }
 
     #[test]
