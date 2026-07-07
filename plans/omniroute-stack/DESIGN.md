@@ -62,6 +62,7 @@ OpenCode/Codex ─ OpenAI baseURL   =http://localhost:20128/v1 ─┼─► Omni
 - **Ф1. Починить «врущий» мониторинг (независимо от OmniRoute):** де-хардкод `Update-FreeLLMAPI.ps1` `:3001→:13001` + null-guard `git rev-parse` (стоп false-green); фоновый health-loop.
 - **Ф2. Слой per-account health** (см. §5, п.2) — ридеры по портам движков + OmniRoute SQLite.
 - **Ф3. Attention+toast** (§5 п.3) + «нужна ре-авторизация» с deep-link.
+- **Ф3.5. Supervisor hardening (portfolio-аудит 2026-07-06) — ПРЕРЕКВИЗИТ к единому фронту.** `stackNative` уже дефолт (`unwrap_or(true)`) и несмокан, а аудит нашёл 5 багов, помеченных «fix BEFORE enabling» → они уже в дефолтном пути и при едином фронте бьют сильнее: **CAST-2** старт рапортует `code:0` даже если сервис не поднялся (false-green; пробросить реальный exit через `native_stack_start`→`run_stack`) — стартовый близнец Ф1-фикса; **CAST-1** двойной `run-done` при restart; **CAST-3** single-stop ставит глобальный `STACK_CANCEL`, гася full-start (только при `only=None` / per-id set); **CAST-4** port-kill после успешного pid-kill (гейт `if !killed`); **CAST-5** `STACK_CANCEL` не проверяется в цикле `native_wait_ready`. + **`readyTimeoutSec` на сервис в stack.json** (llm-stack-2), читаемый И нативным `native_wait_ready` (не только PS-лаунчером) — нужно OmniRoute (движки cold-start >25с). + `glm-router` `ROUTER_SECRET` (llm-stack-1), раз держим его fallback'ом.
 - **Ф4. Развести перегруженный `id 'gateway'`:** добавить отдельный `id 'omniroute'` в stack.json (port 20128, env DATA_DIR, health, реальный dir); client-target сайты → на `omniroute`, backend-сайты freellmapi → остаются на `gateway`.
 - **Ф5. Фронт — критичный:** заменить хардкод `id==='gateway'` в `StackHealthCard` на data-driven поле `critical/role:"front"` в `StackHealth` → мёртвый OmniRoute роняет общий баннер в down.
 - **Ф6. OpenAI-клиенты:** разблокировать арм `("direct","openai")` (`lib.rs:6086`) → OpenCode/Codex на `:20128/v1` как конфиг. Claude Code — без кода.
@@ -92,6 +93,7 @@ Claude Code → `:20128` реальный запрос (с tool-use); OpenCode/C
 - Нужен ли `glm-router` после доказанного Anthropic-перевода OmniRoute — решить после Ф-смоука.
 - Онбординг-визард первого запуска OmniRoute (пароль `CHANGEME`→смена, ключ, провайдеры) — отдельным шагом.
 - ⚠ **Plan 2 (из финального ревью Ф1):** `prev_down` в `stack_health.rs` стартует пустым → первый тик (~30с после старта) эмитит `stack-service-down` для КАЖДОГО уже-down enabled-сервиса (ложный всплеск «только что упал»). Сейчас инертно (нет потребителя события). При подключении тоста/бейджа в Plan 2 — засеять `prev_down` из первого поллинга (эмитить только со 2-го тика) или явно подавить baseline первого тика.
+- ⚠ **fork-updater = ДВЕ расходящиеся копии** (найдено 2026-07-07): `Castellyn\tools\fork-updater\ForkSync.psm1` (75KB, + runtime `*.last.json`/logs — эту гоняет Castellyn через манифест) vs `E:\Scripts\fork-updater\ForkSync.psm1` (54KB, + `tests/`/`repos.json`/`README` — цель portfolio-аудита). Файлы ОТЛИЧАЮТСЯ. **Ф9/D6 обязан сперва свести их в один канон** (вендор-синк по образцу `ScriptKit.ps1`), иначе 8 аудит-фиксов fork-updater лягут не в ту копию, что использует Castellyn.
 
 ## 10. Результаты Ф0 (pre-integration гейт, 2026-07-07) — вживую
 
@@ -113,3 +115,19 @@ OmniRoute установлен глобально (`npm i -g omniroute`, v3.8.45
 - **Оговорка честности:** wedge получен на голом сервере без провайдеров под burst-пробами — это НЕ доказывает, что нормально сконфигурированный OmniRoute нестабилен. Нужен ре-тест с провайдерами. Но для единого фронта это усиливает приоритет мониторинга/аларма/fallback ДО ретайра запасных путей.
 
 **Итог гейта:** зелёный на «можно строить», с двумя открытыми пунктами к Ф7-смоуку (точный health-роут + стабильность под конфигом). Спек-дельты выше применить при реализации.
+
+## 11. Модель провижнинга (лучшая практика 2025-26) — решение
+
+**Вопрос владельца:** зашить все движки/апдейтеры прямо в Castellyn «без внешних зависимостей», чтобы юзеру не ставить всё по отдельности?
+
+**Решение: НЕ реимплементировать и НЕ бандлить — Castellyn = провижнер и владелец жизненного цикла внешних движков.**
+- [Tauri sidecar](https://v2.tauri.app/develop/sidecar/) требует self-contained бинарь БЕЗ рантайм-зависимостей → наши движки (Node+Chrome/Playwright, Python, OmniRoute=1174 npm-пакета) им не забандлить. Реимплементация в Rust = стать мейнтейнером upstream + потерять их апдейты (ровно то, ради чего fork-sync). Антипаттерн.
+- **Паттерн (uv tool / Ollama / VS Code):** один установ Castellyn → детект отсутствующего (`where omniroute`, `omniroute doctor`, git-статус движков) → **install-on-demand с согласия** (`npm i -g omniroute`, git-клон движков, `npm install`, `npx playwright install chromium`) → persist (receipt в `%APPDATA%\castellyn`) → авто-апдейт. Движки остаются внешним кодом; юзер их руками НЕ трогает — «без внешних зависимостей» с его точки зрения.
+- **Два рычага сократить поверхность установки:** (1) OmniRoute поглощает провайдеров → меньше движков (аудит Опции 4); (2) в Rust переносим только ТОНКУЮ оркестрацию (лаунчеры/апдейтеры — начали нативным супервизором, заменившим `start/stop-stack.ps1`), не тяжёлые движки.
+- **Реализация:** отдельная поздняя фаза — first-run dependency-wizard (детект → install-with-consent → receipt), поверх уже существующего онбординга. НЕ блокирует Plans 1-3.
+
+## 12. Что НЕ обсолетится (ответ на «llm-stack и fork-updater больше не нужны?»)
+
+Castellyn — нативный ШЕЛЛ/оркестратор, не замена. Ретайрится только ПЕРЕСЕЧЕНИЕ:
+- **llm-stack ОСТАЁТСЯ:** `stack.json` = канонический реестр сервисов, который читает нативный супервизор (и аудит его расширяет — `readyTimeoutSec`); `glm-router/` (fallback Anthropic); `extension/` (DeepSeek-креды). Ретайрятся только PS-лаунчеры `start/stop-stack.ps1` (нативный супервизор — дефолт; но их держат 3 внешних потребителя).
+- **fork-updater ОСТАЁТСЯ и становится КАНОНОМ** (D6) — самостоятельный движок с тест-сьютом; Castellyn лишь вызывает `update-forks.ps1`. Ретайрится `sync-freellmapi.cmd`. (Сперва свести две расходящиеся копии — см. §9.)
