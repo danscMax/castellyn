@@ -8861,16 +8861,23 @@ fn run_codex_mcp() -> Result<usize, String> {
     Ok(count)
 }
 
-/// Merge the freellmapi gateway into Codex's config.toml text: a `[model_providers.freellmapi]`
-/// table (Responses API — the gateway ships a /v1/responses shim) plus a `[profiles.freellmapi]`
-/// so `codex --profile freellmapi` just works. Format-preserving via toml_edit. Canonical fields
+/// Merge an OpenAI-Responses-compatible provider into Codex's config.toml text: a
+/// `[model_providers.<provider_id>]` table (Responses API) plus a `[profiles.<provider_id>]` so
+/// `codex --profile <provider_id>` just works. Format-preserving via toml_edit. Canonical fields
 /// (name/base_url/env_key, profile's model_provider) overwrite; the profile `model` is only
 /// seeded when absent so a user's model choice survives a re-deploy. The top-level
 /// `model`/`model_provider` are never touched — the user's ChatGPT default stays.
 /// Raw myproviders.json entries are deliberately NOT fanned out to Codex: it speaks only the
 /// Responses wire API (WireApi enum has no `chat` since 2026-02), so chat-completions/anthropic
 /// endpoints would register but silently fail.
-fn patch_codex_gateway(toml_text: &str, base_url: &str) -> Result<String, String> {
+fn patch_codex_provider(
+    toml_text: &str,
+    provider_id: &str,
+    display_name: &str,
+    base_url: &str,
+    env_key: &str,
+    seed_model: &str,
+) -> Result<String, String> {
     use toml_edit::{value, DocumentMut, Item, Table};
     let mut doc: DocumentMut = toml_text
         .parse()
@@ -8886,23 +8893,23 @@ fn patch_codex_gateway(toml_text: &str, base_url: &str) -> Result<String, String
     }
 
     let providers = subtable(doc.as_table_mut(), "model_providers");
-    let p = subtable(providers, "freellmapi");
-    p.insert("name", value("FreeLLMAPI"));
+    let p = subtable(providers, provider_id);
+    p.insert("name", value(display_name));
     p.insert("base_url", value(format!("{base_url}/v1")));
-    p.insert("env_key", value("FREELLMAPI_API_KEY"));
+    p.insert("env_key", value(env_key));
 
     let profiles = subtable(doc.as_table_mut(), "profiles");
-    let prof = subtable(profiles, "freellmapi");
-    prof.insert("model_provider", value("freellmapi"));
+    let prof = subtable(profiles, provider_id);
+    prof.insert("model_provider", value(provider_id));
     if !prof.contains_key("model") {
-        prof.insert("model", value("kimi-k2-thinking"));
+        prof.insert("model", value(seed_model));
     }
 
     Ok(doc.to_string())
 }
 
 /// Connect the freellmapi gateway to Codex (the "providers" fan-out for Codex — see
-/// `patch_codex_gateway` for why the raw registry is not written). After the config write
+/// `patch_codex_provider` for why the raw registry is not written). After the config write
 /// it best-effort mirrors the gateway's unified API key into the USER environment
 /// (`setx FREELLMAPI_API_KEY`, read from the gateway's own SQLite via a read-only node
 /// helper — same mechanism as analytics) so `codex --profile freellmapi` works out of the
@@ -8917,7 +8924,14 @@ fn run_codex_providers() -> Result<bool, String> {
     let cfg_path = format!("{home}\\.codex\\config.toml");
     let text = std::fs::read_to_string(&cfg_path)
         .map_err(|_| tr("err.codex_missing", cur_lang()).to_string())?;
-    let patched = patch_codex_gateway(text.trim_start_matches('\u{feff}'), &base)?;
+    let patched = patch_codex_provider(
+        text.trim_start_matches('\u{feff}'),
+        "freellmapi",
+        "FreeLLMAPI",
+        &base,
+        "FREELLMAPI_API_KEY",
+        "kimi-k2-thinking",
+    )?;
     write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
 
     // Key mirror is best-effort: a missing DB/node/helper leaves the config connected and
@@ -8953,6 +8967,32 @@ fn run_codex_providers() -> Result<bool, String> {
     })()
     .is_some();
     Ok(key_set)
+}
+
+/// Connect OmniRoute to Codex (Ф6 — `patch_codex_provider` generalized off the freellmapi-only
+/// `run_codex_providers`). Unlike freellmapi there is no key mirror here: OmniRoute's own key
+/// management (`omniroute keys`) is the source of truth, wired up in Part B once `:20128` actually
+/// serves `/v1/responses`. Always returns `Ok(false)` — the boolean return shape is kept only to
+/// match `run_codex_providers`'s call signature on the frontend.
+#[tauri::command]
+fn run_codex_omniroute() -> Result<bool, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
+    let base = omniroute_base_url().ok_or_else(|| tr("err.omniroute_missing", cur_lang()).to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
+    let cfg_path = format!("{home}\\.codex\\config.toml");
+    let text = std::fs::read_to_string(&cfg_path)
+        .map_err(|_| tr("err.codex_missing", cur_lang()).to_string())?;
+    let patched = patch_codex_provider(
+        text.trim_start_matches('\u{feff}'),
+        "omniroute",
+        "OmniRoute",
+        &base,
+        "OMNIROUTE_API_KEY",
+        "kimi-k2-thinking",
+    )?;
+    write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
+    Ok(false)
 }
 
 /// Canonical rule files fanned into OpenCode's `instructions` array (paths, not copies —
@@ -9042,7 +9082,15 @@ mod opencode_fanout_tests {
     #[test]
     fn codex_gateway_patch_preserves_config_and_user_model() {
         let existing = "# my codex\nmodel = \"gpt-5.5\"\n\n[profiles.freellmapi]\nmodel = \"auto\"\n";
-        let out = super::patch_codex_gateway(existing, "http://localhost:13001").unwrap();
+        let out = super::patch_codex_provider(
+            existing,
+            "freellmapi",
+            "FreeLLMAPI",
+            "http://localhost:13001",
+            "FREELLMAPI_API_KEY",
+            "kimi-k2-thinking",
+        )
+        .unwrap();
         // comment + top-level model untouched; provider table written; user's profile model kept
         assert!(out.contains("# my codex"));
         assert!(out.contains("model = \"gpt-5.5\""));
@@ -9052,12 +9100,55 @@ mod opencode_fanout_tests {
         assert!(out.contains("model = \"auto\""));
         assert!(!out.contains("model = \"kimi-k2-thinking\""));
         // fresh config: profile model seeded, top-level model_provider NOT set
-        let fresh = super::patch_codex_gateway("", "http://localhost:13001").unwrap();
+        let fresh = super::patch_codex_provider(
+            "",
+            "freellmapi",
+            "FreeLLMAPI",
+            "http://localhost:13001",
+            "FREELLMAPI_API_KEY",
+            "kimi-k2-thinking",
+        )
+        .unwrap();
         assert!(fresh.contains("model = \"kimi-k2-thinking\""));
         // the profile sets model_provider, but the TOP-LEVEL default must stay untouched
         let doc: toml_edit::DocumentMut = fresh.parse().unwrap();
         assert!(doc.get("model_provider").is_none());
         assert!(doc.get("model").is_none());
+    }
+
+    #[test]
+    fn codex_omniroute_patch_writes_provider_and_profile() {
+        let existing = "# my codex\nmodel = \"gpt-5.5\"\n\n[profiles.omniroute]\nmodel = \"auto\"\n";
+        let out = super::patch_codex_provider(
+            existing,
+            "omniroute",
+            "OmniRoute",
+            "http://localhost:20128",
+            "OMNIROUTE_API_KEY",
+            "kimi-k2-thinking",
+        )
+        .unwrap();
+        assert!(out.contains("[model_providers.omniroute]"));
+        assert!(out.contains("name = \"OmniRoute\""));
+        assert!(out.contains("base_url = \"http://localhost:20128/v1\""));
+        assert!(out.contains("env_key = \"OMNIROUTE_API_KEY\""));
+        assert!(out.contains("[profiles.omniroute]"));
+        assert!(out.contains("model_provider = \"omniroute\""));
+        // existing user model under the profile is preserved on re-patch
+        assert!(out.contains("model = \"auto\""));
+        assert!(!out.contains("model = \"kimi-k2-thinking\""));
+
+        // fresh config: profile model seeded
+        let fresh = super::patch_codex_provider(
+            "",
+            "omniroute",
+            "OmniRoute",
+            "http://localhost:20128",
+            "OMNIROUTE_API_KEY",
+            "kimi-k2-thinking",
+        )
+        .unwrap();
+        assert!(fresh.contains("model = \"kimi-k2-thinking\""));
     }
 
     #[test]
@@ -14130,6 +14221,7 @@ read_opencode_models,
             run_opencode_instructions,
             run_codex_mcp,
             run_codex_providers,
+            run_codex_omniroute,
             list_plugin_updates,
             list_plugin_contents,
             list_plugin_releases,

@@ -96,6 +96,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("err.no_providers", ["в реестре нет провайдеров — добавьте их на вкладке «Провайдеры»", "no providers in the registry — add them on the Providers tab", "注册表中没有提供商 — 请在“提供商”标签页添加"]),
     ("err.canon_rules_missing", ["канонические файлы правил не найдены (config\\CLAUDE.md / RTK.md)", "canonical rule files not found (config\\CLAUDE.md / RTK.md)", "未找到规范规则文件（config\\CLAUDE.md / RTK.md）"]),
     ("err.gateway_missing", ["сервис gateway не найден в stack.json", "gateway service not found in stack.json", "在 stack.json 中未找到 gateway 服务"]),
+    ("err.omniroute_missing", ["сервис omniroute не найден в stack.json", "omniroute service not found in stack.json", "在 stack.json 中未找到 omniroute 服务"]),
     ("err.codex_missing", ["config.toml не найден (Codex установлен?)", "config.toml not found (is Codex installed?)", "未找到 config.toml（Codex 是否已安装？）"]),
     ("err.rtk_not_found", ["бинарник rtk не найден (сначала установите rtk)", "rtk binary not found (install rtk first)", "未找到 rtk 可执行文件（请先安装 rtk）"]),
     ("err.rtk_not_managed", ["rtk.ts создан не Castellyn — файл не тронут", "rtk.ts is not Castellyn-managed — left untouched", "rtk.ts 并非由 Castellyn 管理 — 未做改动"]),
