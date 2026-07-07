@@ -229,7 +229,9 @@
     margin: 0 0 var(--sw-space-4);
     border: 1px solid var(--sw-border);
     border-radius: var(--sw-radius-md);
-    background: var(--sw-bg);
+    /* --sw-bg is undefined (only --sw-bg-primary/-secondary exist) → was transparent; use the
+       opaque nested-panel token so the plan list has a solid surface in both themes. */
+    background: var(--sw-bg-secondary);
     overflow: hidden;
   }
   .plan-head {
