@@ -3047,6 +3047,16 @@ enum Readiness {
     Cancelled, // a Stop set STACK_CANCEL mid-wait — abort, do NOT count as a failure (CAST-5)
 }
 
+/// Per-service port-readiness budget in seconds. An OmniRoute/Qwen engine can cold-start >25s, so
+/// stack.json may declare `readyTimeoutSec`; anything missing or non-positive falls back to the
+/// historical 25s default (never a zero budget). Pure so the calibration knob has a real assert.
+fn ready_timeout_secs(svc: &serde_json::Value) -> u64 {
+    svc.get("readyTimeoutSec")
+        .and_then(|x| x.as_u64())
+        .filter(|&n| n > 0)
+        .unwrap_or(25)
+}
+
 async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
     let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     if port == 0 {
@@ -3057,9 +3067,12 @@ async fn native_wait_ready(svc: &serde_json::Value) -> Readiness {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-    // 1) wait for the port to listen — its OWN 25s budget. port_listening is a blocking TCP connect,
-    //    so run it off the async worker like the health probe below.
-    let port_deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+    // 1) wait for the port to listen — its OWN budget (stack.json readyTimeoutSec, default 25s).
+    //    port_listening is a blocking TCP connect, so run it off the async worker like the health
+    //    probe below. Slow-binding engines (headless-Chrome cold start) need longer or they read
+    //    as a false [fail].
+    let port_deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(ready_timeout_secs(svc));
     let mut listening = false;
     while std::time::Instant::now() < port_deadline {
         if STACK_CANCEL.load(Ordering::SeqCst) {
@@ -14247,6 +14260,26 @@ mod tests {
         // A targeted single-service stop must NOT — it would otherwise cancel the full start
         // of every OTHER service (CAST-3).
         assert!(!stop_aborts_start(Some("gateway")));
+    }
+
+    #[test]
+    fn ready_timeout_reads_override_else_default() {
+        // No field → historical 25s default.
+        assert_eq!(ready_timeout_secs(&serde_json::json!({})), 25);
+        // A positive override wins (Qwen cold start).
+        assert_eq!(
+            ready_timeout_secs(&serde_json::json!({ "readyTimeoutSec": 60 })),
+            60
+        );
+        // Nonsense (0 / non-number) falls back to the default, never a zero budget.
+        assert_eq!(
+            ready_timeout_secs(&serde_json::json!({ "readyTimeoutSec": 0 })),
+            25
+        );
+        assert_eq!(
+            ready_timeout_secs(&serde_json::json!({ "readyTimeoutSec": "x" })),
+            25
+        );
     }
 
     #[test]
