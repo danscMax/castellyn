@@ -171,6 +171,39 @@
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
   let search: SearchAddon | undefined;
+  // P2: keep a handle so a hidden pane can release its GPU context (WebView2 caps ~16 live contexts —
+  // dozens of panes otherwise starve the visible ones back into the slow DOM renderer).
+  let webgl: WebglAddon | undefined;
+  let webglDisposeTimer: ReturnType<typeof setTimeout> | undefined;
+  // P1: buffer output for an off-screen pane and flush it on show, so a hidden pane doesn't burn CPU
+  // parsing a busy TUI's redraws. FIFO; capped so a runaway producer can't grow it without bound.
+  let pendingBuf: Uint8Array[] = [];
+  let pendingBytes = 0;
+  const PENDING_CAP = 2 * 1024 * 1024; // 2 MB
+  function drainPending() {
+    if (!term || !pendingBuf.length) return;
+    for (const b of pendingBuf) term.write(b);
+    pendingBuf = [];
+    pendingBytes = 0;
+  }
+  function loadWebgl() {
+    if (!term || webgl) return;
+    try {
+      const w = new WebglAddon();
+      // On a runtime GPU context loss (driver reset, suspend/resume, browser reclaiming contexts)
+      // dispose the dead addon so xterm reverts to its DOM renderer and keeps repainting.
+      w.onContextLoss(() => {
+        w.dispose();
+        if (webgl === w) webgl = undefined;
+        term?.refresh(0, term.rows - 1);
+        refit();
+      });
+      term.loadAddon(w);
+      webgl = w;
+    } catch {
+      /* WebGL unavailable → xterm uses its default renderer */
+    }
+  }
   let id = $state<string | null>(null);
   let myToken = 0; // this pane's fan-out channel token (0 = spawner; attach returns its own) — for detach
   let gotData = $state(false); // first PTY byte seen → drives the ssh connecting→connected dot (#17)
@@ -256,12 +289,14 @@
     term?.paste(text);
   }
   function openSearch() {
+    drainPending(); // P1: search must see buffered output even if this pane is currently off-screen
     searchOpen = true;
     queueMicrotask(() => searchInput?.focus());
   }
   // Dump the full scrollback to a .log file (client-side download, no backend).
   function exportLog() {
     if (!term) return;
+    drainPending(); // P1: export the buffered output too, not just what was on screen
     const buf = term.buffer.active;
     const lines: string[] = [];
     for (let i = 0; i < buf.length; i++) {
@@ -354,9 +389,16 @@
     const chan = new Channel<ArrayBuffer>();
     chan.onmessage = (buf) => {
       if (!gotData) gotData = true;
-      term?.write(new Uint8Array(buf));
-      // Mark unread when output lands in a pane that isn't currently on screen.
-      if (!visible) onActivity?.(paneKey);
+      const bytes = new Uint8Array(buf);
+      if (visible) {
+        term?.write(bytes);
+      } else {
+        // P1: off-screen — buffer instead of parsing now. Flushed on show (visible effect below).
+        pendingBuf.push(bytes);
+        pendingBytes += bytes.length;
+        if (pendingBytes > PENDING_CAP) drainPending(); // cap memory: flush once, keep buffering
+        onActivity?.(paneKey); // mark unread
+      }
     };
     try {
       if (attachId) {
@@ -447,22 +489,9 @@
     fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    // GPU renderer for smooth output across many panes; fall back to canvas if the context drops.
-    try {
-      const webgl = new WebglAddon();
-      // On a runtime GPU context loss (driver reset, suspend/resume, browser reclaiming contexts
-      // when many panes are open) dispose the dead WebGL addon so xterm reverts to its DOM renderer,
-      // then force a reflow/redraw so this pane keeps repainting instead of freezing until reopened.
-      // We do NOT re-load WebGL — the DOM renderer keeps the pane alive without a GPU context.
-      webgl.onContextLoss(() => {
-        webgl.dispose();
-        term?.refresh(0, term.rows - 1);
-        refit();
-      });
-      term.loadAddon(webgl);
-    } catch {
-      /* WebGL unavailable → xterm uses its default renderer */
-    }
+    // GPU renderer for smooth output across many panes; released for hidden panes (P2) and reloaded
+    // on show. Falls back to the DOM renderer if WebGL is unavailable or the context drops.
+    if (visible) loadWebgl();
     search = new SearchAddon();
     term.loadAddon(search);
     // Unicode 11 widths (#19): xterm defaults to v6, mismeasuring modern emoji / CJK and drifting the
@@ -600,14 +629,33 @@
       // else: an attached non-owner that wasn't a move (shouldn't happen in current model) → leave it.
     }
     onIdChange?.(paneKey, null);
+    if (webglDisposeTimer) clearTimeout(webglDisposeTimer);
     term?.dispose();
   });
 
   // A hidden pane (other tab active, or another pane maximized) has zero size; re-fit when shown.
+  // Also drives P1 (flush the output buffer on show) and P2 (release/restore the GPU context).
   $effect(() => {
-    visible;
+    const vis = visible;
     maximized;
-    if (term && fit && visible) requestAnimationFrame(() => refit());
+    if (vis) {
+      if (webglDisposeTimer) {
+        clearTimeout(webglDisposeTimer);
+        webglDisposeTimer = undefined;
+      }
+      if (term && !webgl) loadWebgl(); // restore GPU renderer if it was released while hidden
+      drainPending(); // P1: flush buffered output now that we're on screen
+      if (term && fit) requestAnimationFrame(() => refit());
+    } else if (webgl && !webglDisposeTimer) {
+      // P2: release the GPU context, throttled — a quick tab flip shouldn't churn WebGL.
+      webglDisposeTimer = setTimeout(() => {
+        webglDisposeTimer = undefined;
+        if (!visible) {
+          webgl?.dispose();
+          webgl = undefined;
+        }
+      }, 5000);
+    }
   });
 </script>
 

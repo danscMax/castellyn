@@ -343,10 +343,20 @@
     listen<LimitsStatusEvent>('limits-status', (e) => {
       limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
     }).then((u) => (un = u));
-    const tick = setInterval(maybeAutoContinue, 12_000);
+    // P3: self-scheduling tick — 12s while visible, 60s when the window is hidden. Auto-continue is
+    // still valuable in the background (that's the whole point), so gate the CADENCE, not the feature:
+    // a limited pane still resumes within a minute of its reset when Castellyn sits in the tray.
+    let tickTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleTick = () => {
+      tickTimer = setTimeout(() => {
+        maybeAutoContinue();
+        scheduleTick();
+      }, document.hidden ? 60_000 : 12_000);
+    };
+    scheduleTick();
     return () => {
       un?.();
-      clearInterval(tick);
+      if (tickTimer) clearTimeout(tickTimer);
     };
   });
   function maybeAutoContinue() {

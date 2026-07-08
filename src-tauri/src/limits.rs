@@ -15,7 +15,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 const POLL_SECS: u64 = 300; // 5 minutes
-const HTTP_TIMEOUT_SECS: u64 = 8;
+const HTTP_TIMEOUT_SECS: u64 = 5; // P5: was 8; a stalled profile shouldn't hold up the round for long
 const WARN_PCT: f64 = 85.0;
 const CRIT_PCT: f64 = 99.0;
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -266,9 +266,20 @@ pub fn start(app: AppHandle) {
             let Ok(home) = std::env::var("USERPROFILE") else {
                 return;
             };
-            for (name, _settings) in crate::plugin_sync_profiles(&home) {
-                let cred = format!("{home}\\{name}\\.credentials.json");
-                poll_profile(&app, &name, &cred);
+            // P5: poll profiles concurrently (bounded to 4 at a time) instead of serially — the round's
+            // wall-clock was up to N × HTTP_TIMEOUT_SECS; now it's ~max(per-profile), not the sum.
+            let profiles = crate::plugin_sync_profiles(&home);
+            for chunk in profiles.chunks(4) {
+                std::thread::scope(|s| {
+                    for (name, _settings) in chunk {
+                        let app_ref = &app;
+                        let home_ref = &home;
+                        s.spawn(move || {
+                            let cred = format!("{home_ref}\\{name}\\.credentials.json");
+                            poll_profile(app_ref, name, &cred);
+                        });
+                    }
+                });
             }
         });
     });

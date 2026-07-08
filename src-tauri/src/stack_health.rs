@@ -55,6 +55,12 @@ pub(crate) fn newly_down(prev_down: &mut HashSet<String>, curr: &[(String, bool)
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
         let mut prev_down: HashSet<String> = HashSet::new();
+        // P8: last-emitted snapshot + ticks since the last emit, so we push only on a real change
+        // (plus a keep-alive) instead of a full payload every 30s.
+        let mut prev_emit: Option<String> = None;
+        let mut ticks_since_emit: u32 = 0;
+        // ~5 min keep-alive so a card that treats "no events" as "monitor dead" stays reassured.
+        const KEEPALIVE_TICKS: u32 = 10;
         loop {
             std::thread::sleep(Duration::from_secs(POLL_SECS));
             crate::run_guarded("stack-health", || {
@@ -70,8 +76,14 @@ pub fn start(app: AppHandle) {
                 .collect();
             let fired = newly_down(&mut prev_down, &curr);
             STACK_DOWN_COUNT.store(curr.iter().filter(|(_, down)| *down).count(), Ordering::Relaxed);
-            // Push the full list every tick so the UI updates live without a manual refresh.
-            let _ = app.emit("stack-health", &health);
+            // P8: push the list only when it changed since the last emit, plus a periodic keep-alive.
+            let snap = serde_json::to_string(&health).unwrap_or_default();
+            ticks_since_emit += 1;
+            if prev_emit.as_deref() != Some(snap.as_str()) || ticks_since_emit >= KEEPALIVE_TICKS {
+                let _ = app.emit("stack-health", &health);
+                prev_emit = Some(snap);
+                ticks_since_emit = 0;
+            }
             let now = Instant::now();
             for id in fired {
                 // A service WE just stopped (within the TTL) is expected down — stay silent (it's

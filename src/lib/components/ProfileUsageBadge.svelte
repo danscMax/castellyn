@@ -1,27 +1,17 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { readProfileUsage, type ProfileUsage } from '$lib/ipc';
+  import { type ProfileUsage } from '$lib/ipc';
   import { t } from '$lib/i18n';
+  import { usageStore, subscribeUsage } from '$lib/usagePoll.svelte';
 
-  // Shows remaining Claude Code budget (5h + weekly) for a profile, refreshed every 60s. The
-  // backend caches per profile, so polling is cheap. Renders nothing when not logged in / offline.
-  // compact = minimal inline form (for the session pane bar): "5ч 90% · 7д 94%", no reset countdown.
+  // Shows remaining Claude Code budget (5h + weekly) for a profile. P6: usage comes from a single
+  // shared poll per profile (usagePoll.svelte), so 10 panes of one profile poll once, not 10 times.
+  // Renders nothing when not logged in / offline. compact = minimal inline form for the pane bar.
   let { profile, compact = false }: { profile: string; compact?: boolean } = $props();
 
-  let u = $state<ProfileUsage | null>(null);
-
-  async function load() {
-    try {
-      u = await readProfileUsage(profile);
-    } catch {
-      u = null;
-    }
-  }
-  onMount(() => {
-    load();
-    const id = setInterval(load, 60_000);
-    return () => clearInterval(id);
-  });
+  // Subscribe to this profile's shared poll for the lifetime of the badge (re-subscribes if `profile`
+  // changes; the cleanup stops the poll when the last subscriber leaves).
+  $effect(() => subscribeUsage(profile));
+  const u = $derived<ProfileUsage | null>(usageStore[profile] ?? null);
 
   // utilization → remaining % (what's left), clamped 0..100.
   const remain = (pct: number | null | undefined) =>

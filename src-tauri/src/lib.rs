@@ -5465,7 +5465,9 @@ fn set_profile_plugins(name: String, enable: Vec<String>, disable: Vec<String>) 
     upsert_enabled_plugins(&mut settings, &enable, &disable);
     let serialized =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {e}"))?;
-    write_json_atomic(&settings_path, &serialized).map_err(|e| format!("write settings: {e}"))
+    write_json_atomic(&settings_path, &serialized).map_err(|e| format!("write settings: {e}"))?;
+    invalidate_plugins_cache(); // P4: the enabled set changed — next open must re-read
+    Ok(())
 }
 
 /// Recreate ONE profile's shared-folder links (Repair-ProfileLinks.ps1 -Name). The matrix-apply
@@ -7721,9 +7723,29 @@ fn plugin_descriptions() -> std::collections::HashMap<String, String> {
     map
 }
 
+/// P4: cache for list_plugins — a cold `claude plugin list` (pwsh spawn) is a visible pause on every
+/// tab open. TTL-cached so a re-open within a minute is instant; invalidated after any mutation.
+static PLUGINS_CACHE: std::sync::LazyLock<
+    Mutex<Option<(std::time::Instant, serde_json::Value)>>,
+> = std::sync::LazyLock::new(|| Mutex::new(None));
+
+fn invalidate_plugins_cache() {
+    *PLUGINS_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 /// List installed plugins via `claude plugin list --json`, enriched with descriptions from disk.
 #[tauri::command]
 async fn list_plugins() -> Result<serde_json::Value, String> {
+    // P4: serve a fresh (<60s) cached result instantly; otherwise fall through to the real read.
+    const PLUGINS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+    {
+        let guard = PLUGINS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((t, v)) = guard.as_ref() {
+            if t.elapsed() < PLUGINS_TTL {
+                return Ok(v.clone());
+            }
+        }
+    }
     let fut = tokio::process::Command::new("pwsh")
         .args([
             "-NoProfile",
@@ -7793,6 +7815,8 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
             }
         }
     }
+    *PLUGINS_CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((std::time::Instant::now(), v.clone()));
     Ok(v)
 }
 
@@ -7846,7 +7870,9 @@ fn unblock_managed_plugin(id: String) -> Result<(), String> {
         return Err(trv("err.plugin_not_blocked", cur_lang(), &[("id", &id)]));
     }
     let serialized = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    write_json_atomic(&path, &serialized).map_err(|e| format!("write managed source: {e}"))
+    write_json_atomic(&path, &serialized).map_err(|e| format!("write managed source: {e}"))?;
+    invalidate_plugins_cache(); // P4: block policy changed — next open must re-read
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -10340,6 +10366,7 @@ async fn run_plugins_bulk(app: AppHandle, action: String, ids: Vec<String>) -> R
     .await
     .unwrap_or(-1);
     drop(_slot); // release the bulk domain (also released automatically if dropped earlier)
+    invalidate_plugins_cache(); // P4: a bulk install/update/remove changed the list — force a re-read
     let _ = app.emit(
         "run-done",
         RunDone {
