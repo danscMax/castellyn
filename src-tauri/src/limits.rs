@@ -259,16 +259,18 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(POLL_SECS));
-        if !crate::read_config_file().limits_monitor.unwrap_or(true) {
-            continue;
-        }
-        let Ok(home) = std::env::var("USERPROFILE") else {
-            continue;
-        };
-        for (name, _settings) in crate::plugin_sync_profiles(&home) {
-            let cred = format!("{home}\\{name}\\.credentials.json");
-            poll_profile(&app, &name, &cred);
-        }
+        crate::run_guarded("limits", || {
+            if !crate::read_config_file().limits_monitor.unwrap_or(true) {
+                return;
+            }
+            let Ok(home) = std::env::var("USERPROFILE") else {
+                return;
+            };
+            for (name, _settings) in crate::plugin_sync_profiles(&home) {
+                let cred = format!("{home}\\{name}\\.credentials.json");
+                poll_profile(&app, &name, &cred);
+            }
+        });
     });
 }
 

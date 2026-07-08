@@ -57,8 +57,9 @@ pub fn start(app: AppHandle) {
         let mut prev_down: HashSet<String> = HashSet::new();
         loop {
             std::thread::sleep(Duration::from_secs(POLL_SECS));
+            crate::run_guarded("stack-health", || {
             if !crate::read_config_file().stack_health_monitor.unwrap_or(true) {
-                continue;
+                return;
             }
             let health = crate::read_stack_health_blocking();
             // Only enabled services count as "outages"; a disabled service being down is expected.
@@ -88,6 +89,7 @@ pub fn start(app: AppHandle) {
                 }
             }
             crate::update_tray_tooltip(&app);
+            });
         }
     });
 }

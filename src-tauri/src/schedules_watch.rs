@@ -45,6 +45,7 @@ pub fn start(app: AppHandle) {
         let mut prev_failed: HashSet<String> = HashSet::new();
         loop {
             std::thread::sleep(Duration::from_secs(POLL_SECS));
+            crate::run_guarded("schedules-watch", || {
             let tasks = crate::read_schedules_cached_inner()
                 .ok()
                 .flatten()
@@ -57,6 +58,7 @@ pub fn start(app: AppHandle) {
                     &crate::i18n::trv("notify.schedule_failed_body", crate::cur_lang(), &[("name", &name)]),
                 );
             }
+            });
         }
     });
 }

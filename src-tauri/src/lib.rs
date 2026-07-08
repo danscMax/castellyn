@@ -2998,9 +2998,26 @@ fn load_stack_procs() -> std::collections::HashMap<String, u32> {
 }
 fn save_stack_procs(m: &std::collections::HashMap<String, u32>) {
     if let Some(p) = stack_procs_path() {
-        if let Ok(txt) = serde_json::to_string(m) {
-            let _ = std::fs::write(p, txt);
+        // Route through the atomic writer (temp+rename): a crash mid-write must never leave a
+        // half-written/blanked PID map — a blanked map orphans running services (Stop can't find
+        // their pids). Surface a persist failure instead of swallowing it.
+        match serde_json::to_string(m) {
+            Ok(txt) => {
+                if let Err(e) = write_json_atomic(&p.to_string_lossy(), &txt) {
+                    eprintln!("[stack] failed to persist stack-procs.json: {e}");
+                }
+            }
+            Err(e) => eprintln!("[stack] failed to serialize stack procs: {e}"),
         }
+    }
+}
+
+/// Run one monitor-thread tick under a panic guard: a panicking tick logs and the polling loop
+/// keeps running, instead of the whole thread dying silently (mirrors the RunSlot panic-survival
+/// guarantee). A dead monitor thread means notifications quietly stop for the app's lifetime.
+pub(crate) fn run_guarded<F: FnOnce()>(name: &str, tick: F) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(tick)).is_err() {
+        eprintln!("[monitor:{name}] tick panicked; thread continues");
     }
 }
 
@@ -13693,10 +13710,30 @@ fn session_spawn(
         // snappy. True backpressure (a frontend→backend credit/ack so a slow xterm can pause the
         // reader) remains a follow-up — this only thins the flood, it doesn't bound it.
         let mut buf = [0u8; 32 * 1024];
+        // Transient read errors (a PTY hiccup, an interrupted syscall) previously counted as EOF and
+        // reaped a still-live session. Distinguish: Interrupted → retry at once; any other error →
+        // short backoff (50/100/200ms) up to 3× while checking the child is alive — a live child means
+        // keep reading, a dead/exhausted one means the session really ended. Reset on any good read.
+        let mut transient_retries = 0u8;
         loop {
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break, // EOF: the child closed the PTY (it has exited)
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    if transient_retries >= 3 {
+                        break; // persistent error → give up (never a busy-loop / zombie reader)
+                    }
+                    let backoff = [50u64, 100, 200][transient_retries as usize];
+                    transient_retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(backoff));
+                    match child.try_wait() {
+                        Ok(Some(_)) => break,   // child exited → real end of session
+                        Ok(None) => continue,   // still alive → the PTY hiccuped; keep reading
+                        Err(_) => continue,     // can't tell → retry within the cap
+                    }
+                }
                 Ok(n) => {
+                    transient_retries = 0;
                     let bytes = &buf[..n];
                     agent_status::on_output(&id_r, n);
                     // #21b: flag a usage-limit banner in this session's output (bounded tail scan).
@@ -15114,6 +15151,18 @@ mod tests {
             RunSlot::reserve(&state).is_ok(),
             "the slot frees after a panic, not wedged busy"
         );
+    }
+
+    #[test]
+    fn run_guarded_survives_panic() {
+        // A panicking monitor tick must not stop later ticks — the whole point of R2's guard.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        run_guarded("test", || panic!("boom in a monitor tick"));
+        let mut ran_after = false;
+        run_guarded("test", || ran_after = true);
+        std::panic::set_hook(prev);
+        assert!(ran_after, "a panicking tick must not stop later ticks");
     }
 
     #[test]

@@ -430,6 +430,7 @@ pub fn start(app: tauri::AppHandle) {
     }
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+        crate::run_guarded("agent-status", || {
         let dir = status_dir();
         // Read hook files OUTSIDE the tracks lock: on_output() takes that lock from every
         // PTY reader thread per chunk, so fs reads (AV scans can stall them) must not
@@ -500,6 +501,7 @@ pub fn start(app: tauri::AppHandle) {
         if changed {
             crate::update_tray_tooltip(&app);
         }
+        });
     });
 }
 
