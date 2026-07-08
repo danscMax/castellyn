@@ -2,6 +2,7 @@
   // A styled replacement for the native <select>: app-themed trigger + chevron, a floating panel
   // with hover/keyboard highlight, a check on the current value, optional icons/hints. Bindable.
   import { anchored } from '$lib/floating';
+  import { Check } from '@lucide/svelte';
   // `iconHtml` renders trusted markup (e.g. a status `.dot`); callers pass controlled literals only.
   type Opt = { value: string; label: string; icon?: string; iconHtml?: string; hint?: string };
 
@@ -118,7 +119,7 @@
             {#if o.iconHtml}<span class="ic">{@html o.iconHtml}</span>{:else if o.icon}<span class="ic">{o.icon}</span>{/if}
             <span class="opt-label">{o.label}</span>
             {#if o.hint}<span class="opt-hint">{o.hint}</span>{/if}
-            {#if o.value === value}<span class="check">✓</span>{/if}
+            {#if o.value === value}<span class="check"><Check size={14} /></span>{/if}
           </button>
         </li>
       {/each}
@@ -231,6 +232,8 @@
     font-size: var(--sw-text-xs);
   }
   .check {
+    display: inline-flex;
+    align-items: center;
     color: var(--sw-accent-text);
     flex-shrink: 0;
   }

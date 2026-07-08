@@ -3,6 +3,7 @@
   import { t } from '$lib/i18n';
   import { opName } from '$lib/running.svelte';
   import { copyText } from '$lib/clipboard';
+  import { classifyLine } from '$lib/logKind';
 
   let {
     log,
@@ -42,6 +43,11 @@
     filter ? windowed.filter((l) => l.toLowerCase().includes(filter.toLowerCase())) : windowed
   );
   const hiddenCount = $derived(showAll ? 0 : Math.max(0, log.length - LOG_WINDOW));
+
+  // P7: classify each visible line ONCE per view change (in a derived) instead of running four
+  // class:-directive expressions — incl. a regex — on every render of every line. Classifier is a
+  // pure, unit-tested module (V11: ru+en failure vocabulary).
+  const viewClassified = $derived(view.map((text) => ({ text, kind: classifyLine(text) })));
 
   // Smart autoscroll: only pin to the bottom when the user is already there; if they've scrolled up
   // to read, hold position and raise a "▾ new lines" pill instead of yanking them back. `atBottom`
@@ -200,14 +206,14 @@
       {/if}
       <div class="log-wrap">
         <div bind:this={logEl} class="log" style="height:{height}px" onscroll={onLogScroll}>
-          {#each view as line}
+          {#each viewClassified as l}
             <div
               class="log-line"
-              class:log-warn={line.startsWith('⚠')}
-              class:log-diag={line.startsWith('[diag]')}
-              class:log-ok={line.startsWith('✓')}
-              class:log-err={/error|fail|exception/i.test(line)}
-            >{line}</div>
+              class:log-warn={l.kind === 'warn'}
+              class:log-diag={l.kind === 'diag'}
+              class:log-ok={l.kind === 'ok'}
+              class:log-err={l.kind === 'err'}
+            >{l.text}</div>
           {/each}
         </div>
         {#if hasNewLines}
@@ -344,7 +350,11 @@
     word-break: break-word;
   }
   .log-warn {
-    color: var(--sw-warn);
+    /* V6: light-aware canon amber (--sw-warn has no light override → pale on the light console). */
+    color: #f59e0b;
+  }
+  :global(.light) .log-warn {
+    color: #b45309;
   }
   .log-diag {
     color: var(--sw-text-dimmed);

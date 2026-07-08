@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, type Component } from 'svelte';
   import { anchored } from '$lib/floating';
   type Item = {
     label: string;
@@ -15,7 +15,8 @@
     align = 'right',
     variant = 'ghost',
     disabled = false,
-    glyph
+    glyph,
+    icon
   }: {
     label?: string;
     title?: string;
@@ -24,6 +25,7 @@
     variant?: 'ghost' | 'primary';
     disabled?: boolean;
     glyph?: string; // custom trigger glyph (no caret); falls back to ⋯ when no label/glyph given
+    icon?: Component | null; // V9: lucide icon component for the trigger (preferred over glyph)
   } = $props();
 
   let open = $state(false);
@@ -86,7 +88,10 @@
     aria-haspopup="menu"
     aria-expanded={open}
   >
-    {#if label}{label} <span class="caret">▾</span>{:else if glyph}<span class="dots" aria-hidden="true">{glyph}</span>{:else}<span class="dots" aria-hidden="true">⋯</span>{/if}
+    {#if label}{label} <span class="caret">▾</span>
+    {:else if icon}{@const Icon = icon}<span class="dots" aria-hidden="true"><Icon size={15} /></span>
+    {:else if glyph}<span class="dots" aria-hidden="true">{glyph}</span>
+    {:else}<span class="dots" aria-hidden="true">⋯</span>{/if}
   </button>
   {#if open}
     <div class="menu" role="menu" tabindex="-1" bind:this={menuEl} onkeydown={onMenuKey} use:anchored={{ anchor: root!, align, onOutside: () => (open = false) }}>
@@ -116,6 +121,8 @@
     font-size: 0.8em;
   }
   .dots {
+    display: inline-flex;
+    align-items: center;
     font-size: 1.1em;
     line-height: 1;
     letter-spacing: 1px;

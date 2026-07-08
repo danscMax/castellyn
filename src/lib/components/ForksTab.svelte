@@ -337,7 +337,7 @@
             <button class="refresh-chip" onclick={() => onCancelCheck?.()} aria-label={t('forks.cancelCheck')} title={t('forks.cancelCheckTip')}>
               <span class="refresh-dot"></span>
               {t('forks.refreshing')}
-              <span class="cancel-x" aria-hidden="true">✕</span>
+              <span class="cancel-x" aria-hidden="true"><X size={12} /></span>
             </button>
           {:else}
             {t('forks.modeLine', { mode: forkMode(status?.mode) })}

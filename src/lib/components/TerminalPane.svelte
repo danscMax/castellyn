@@ -25,6 +25,11 @@
   import { getMonitors, openDetached } from '$lib/monitors';
   import DropdownMenu from './DropdownMenu.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  // V9: one icon language (lucide) across the pane toolbar — replaces the emoji/glyph zoo.
+  import {
+    FolderOpen, RotateCw, Search, Eraser, Download, Copy, Minus,
+    Maximize2, Minimize2, X, ChevronUp, ChevronDown, StickyNote, Monitor
+  } from '@lucide/svelte';
   import { markMoved, consumeMoved } from '$lib/sessionMove';
   import { MSG_SNIPPETS } from '$lib/sessionPresets';
   import { t } from '$lib/i18n';
@@ -661,39 +666,39 @@
     <!-- F12: open the working folder in Explorer. Local panes only — an SSH pane's cwd is a remote path. -->
     {#if cwd && !sshTarget}
       <button class="x" onclick={() => openPath(cwd).catch((e) => pushToast({ kind: 'error', title: String(e) }))}
-        title={t('sessions.openCwd')} aria-label={t('sessions.openCwd')}>📁</button>
+        title={t('sessions.openCwd')} aria-label={t('sessions.openCwd')}><FolderOpen size={14} /></button>
     {/if}
     {#if args}<span class="argbadge" title={args}>⚑</span>{/if}
     {#if tool === 'claude' && profile}<ProfileUsageBadge {profile} compact />{/if}
     <span class="spacer"></span>
     {#if exited || error}
-      <button class="x relaunch" onclick={() => (confirmRelaunch = true)} title={t('sessions.relaunch')}>↻ {t('sessions.relaunch')}</button>
+      <button class="x relaunch" onclick={() => (confirmRelaunch = true)} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
     {/if}
-    <DropdownMenu glyph="❡" title={t('sessions.snippets')} items={snipItems} />
-    <button class="x" onclick={openSearch} title={t('sessions.find')} aria-label={t('sessions.find')}>🔍</button>
-    <button class="x" onclick={() => term?.clear()} title={t('sessions.clearOutput')} aria-label={t('sessions.clearOutput')}>⌫</button>
-    <button class="x" onclick={exportLog} title={t('sessions.exportLog')} aria-label={t('sessions.exportLog')}>⭳</button>
+    <DropdownMenu icon={StickyNote} title={t('sessions.snippets')} items={snipItems} />
+    <button class="x" onclick={openSearch} title={t('sessions.find')} aria-label={t('sessions.find')}><Search size={14} /></button>
+    <button class="x" onclick={() => term?.clear()} title={t('sessions.clearOutput')} aria-label={t('sessions.clearOutput')}><Eraser size={14} /></button>
+    <button class="x" onclick={exportLog} title={t('sessions.exportLog')} aria-label={t('sessions.exportLog')}><Download size={14} /></button>
     <button class="x" onclick={() => zoom(-1)} title={t('sessions.zoomOut')} aria-label={t('sessions.zoomOut')}>A−</button>
     <button class="x" onclick={() => zoom(1)} title={t('sessions.zoomIn')} aria-label={t('sessions.zoomIn')}>A+</button>
     {#if !attachId && id && !exited && monitors.length > 1}
-      <!-- U6: glyph (not label) so the accessible name comes from title, not the «⬈» symbol -->
-      <DropdownMenu glyph="⬈" title={t('sessions.toMonitorTip')} items={monItems} />
+      <!-- U6: icon (not label) so the accessible name comes from title, not the symbol -->
+      <DropdownMenu icon={Monitor} title={t('sessions.toMonitorTip')} items={monItems} />
     {/if}
     {#if onDuplicate}
-      <button class="x clone" onclick={onDuplicate} title="{t('sessions.duplicate')} · Ctrl+Shift+D" aria-label={t('sessions.duplicate')}>⧉</button>
+      <button class="x clone" onclick={onDuplicate} title="{t('sessions.duplicate')} · Ctrl+Shift+D" aria-label={t('sessions.duplicate')}><Copy size={14} /></button>
     {/if}
     {#if onBackground}
-      <button class="x" onclick={onBackground} title={t('sessions.backgroundPane')} aria-label={t('sessions.backgroundPane')}>🗕</button>
+      <button class="x" onclick={onBackground} title={t('sessions.backgroundPane')} aria-label={t('sessions.backgroundPane')}><Minus size={14} /></button>
     {/if}
     {#if onToggleMax}
       <button class="x" onclick={onToggleMax}
         title={maximized ? t('sessions.restore') : t('sessions.maximize')}
-        aria-label={maximized ? t('sessions.restore') : t('sessions.maximize')}>{maximized ? '⤡' : '⤢'}</button>
+        aria-label={maximized ? t('sessions.restore') : t('sessions.maximize')}>{#if maximized}<Minimize2 size={14} />{:else}<Maximize2 size={14} />{/if}</button>
     {/if}
     {#if onReturnToMain}
       <button class="x" onclick={onReturnToMain} title={t('sessions.returnToMain')} aria-label={t('sessions.returnToMain')}>←</button>
     {/if}
-    <button class="x" onclick={onClose} title={t('sessions.closePane')} aria-label={t('sessions.closePane')}>✕</button>
+    <button class="x" onclick={onClose} title={t('sessions.closePane')} aria-label={t('sessions.closePane')}><X size={14} /></button>
   </div>
   {#if searchOpen}
     <div class="find">
@@ -709,9 +714,9 @@
           else if (e.key === 'Escape') searchOpen = false;
         }}
       />
-      <button class="x" onclick={() => runSearch(false)} title={t('sessions.findPrev')} aria-label={t('sessions.findPrev')}>↑</button>
-      <button class="x" onclick={() => runSearch(true)} title={t('sessions.findNext')} aria-label={t('sessions.findNext')}>↓</button>
-      <button class="x" onclick={() => (searchOpen = false)} aria-label={t('sessions.closeFind')}>✕</button>
+      <button class="x" onclick={() => runSearch(false)} title={t('sessions.findPrev')} aria-label={t('sessions.findPrev')}><ChevronUp size={14} /></button>
+      <button class="x" onclick={() => runSearch(true)} title={t('sessions.findNext')} aria-label={t('sessions.findNext')}><ChevronDown size={14} /></button>
+      <button class="x" onclick={() => (searchOpen = false)} aria-label={t('sessions.closeFind')}><X size={14} /></button>
     </div>
   {/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -875,6 +880,9 @@
     flex: 1;
   }
   .x {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     border: none;
     background: transparent;
     color: var(--sw-text-muted);

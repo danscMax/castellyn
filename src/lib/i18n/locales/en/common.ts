@@ -56,6 +56,7 @@ export default {
   busyDisabled: 'Unavailable while another task is running',
   none: 'none',
   noData: 'no data',
+  noMatches: 'Nothing found',
   dash: '—',
   upToDate: 'up to date',
 

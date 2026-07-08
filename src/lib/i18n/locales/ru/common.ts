@@ -56,6 +56,7 @@ export default {
   busyDisabled: 'Недоступно, пока идёт другая задача',
   none: 'нет',
   noData: 'нет данных',
+  noMatches: 'Ничего не найдено',
   dash: '—',
   upToDate: 'актуально',
 

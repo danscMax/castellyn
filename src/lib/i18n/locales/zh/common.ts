@@ -56,6 +56,7 @@ export default {
   busyDisabled: '另一个任务运行时不可用',
   none: '无',
   noData: '无数据',
+  noMatches: '未找到任何内容',
   dash: '—',
   upToDate: '已是最新',
 

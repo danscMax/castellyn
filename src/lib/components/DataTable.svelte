@@ -309,7 +309,7 @@
           {/if}
         {/each}
         {#if !sorted.length}
-          <tr><td colspan={colSpan} class="dt-empty">{#if empty}{@render empty()}{:else}—{/if}</td></tr>
+          <tr><td colspan={colSpan} class="dt-empty">{#if empty}{@render empty()}{:else}{t('common.noMatches')}{/if}</td></tr>
         {/if}
       </tbody>
     </table>

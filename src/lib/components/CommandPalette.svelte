@@ -95,7 +95,7 @@
           </li>
         {/each}
         {#if !filtered.length}
-          <li class="empty">—</li>
+          <li class="empty">{t('common.noMatches')}</li>
         {/if}
       </ul>
     </div>

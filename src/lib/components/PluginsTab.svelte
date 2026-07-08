@@ -7,7 +7,7 @@
   import Spinner from './Spinner.svelte';
   import DropdownMenu from './DropdownMenu.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
-  import { Puzzle, SquareSlash, Bot } from '@lucide/svelte';
+  import { Puzzle, SquareSlash, Bot, Lock } from '@lucide/svelte';
 
   let {
     plugins,
@@ -333,7 +333,7 @@
         {/if}
         <button class="sw-btn text-sw-xs {onlyEnabled ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={() => (onlyEnabled = !onlyEnabled)}>{t('plugins.filterEnabled')}</button>
         {#if managedCount}
-          <button class="sw-btn text-sw-xs {onlyManaged ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={() => (onlyManaged = !onlyManaged)}>🔒 {t('plugins.filterManaged', { n: managedCount })}</button>
+          <button class="sw-btn text-sw-xs inline-flex items-center gap-sw-1 {onlyManaged ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={() => (onlyManaged = !onlyManaged)}><Lock size={13} /> {t('plugins.filterManaged', { n: managedCount })}</button>
         {/if}
       {/snippet}
 
@@ -382,7 +382,7 @@
               <!-- Managed policy blocks this plugin in EVERY profile — a toggle would just fail
                    nine times. Offer the real fix: unblock in the source + redeploy (UAC). -->
               <button class="lockbtn" disabled={busy || !onUnblock} onclick={() => onUnblock?.(p.id)}
-                title={`${t('plugins.blockedBadge')} — ${t('plugins.blockedTip')}`} aria-label={t('plugins.blockedBadge')}>🔒</button>
+                title={`${t('plugins.blockedBadge')} — ${t('plugins.blockedTip')}`} aria-label={t('plugins.blockedBadge')}><Lock size={13} /></button>
             {:else}
               <Toggle checked={p.enabled} disabled={busy} onCheckedChange={() => act(p.enabled ? 'disable' : 'enable', p.id)}
                 title={p.enabled ? t('plugins.disableBtnTip') : t('plugins.enableBtnTip')} />
