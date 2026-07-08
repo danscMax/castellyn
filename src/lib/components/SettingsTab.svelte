@@ -25,6 +25,7 @@
   import { copyText } from '$lib/clipboard';
   import { pushToast } from '$lib/toast.svelte';
   import Toggle from './Toggle.svelte';
+  import Select from './Select.svelte';
   import { uiPrefs } from '$lib/uiPrefs.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import EmptyState from './EmptyState.svelte';
@@ -87,6 +88,14 @@
   let closeToTray = $state(true);
   let stackNative = $state(false);
   let showSessionStatusBar = $state(true);
+  // U2: background-monitor toggles (were config-only). U3: startup update check.
+  let limitsMonitor = $state(true);
+  let stackHealthMonitor = $state(true);
+  let updateCheckOnStart = $state(true);
+  // U11: the Sessions notification/limit settings, surfaced here too (same config fields).
+  let statusSounds = $state(true);
+  let statusNotify = $state(true);
+  let limitMode = $state('wait');
   // #123: OS-global show/hide accelerator (empty = off).
   let toggleHotkey = $state('');
   // Phase 4.1: full shortcut mapping
@@ -153,6 +162,12 @@
     stackNative = !!c.stackNative;
     showSessionStatusBar = c.showSessionStatusBar ?? true;
     uiPrefs.showSessionStatusBar = showSessionStatusBar;
+    limitsMonitor = c.limitsMonitor ?? true;
+    stackHealthMonitor = c.stackHealthMonitor ?? true;
+    updateCheckOnStart = c.updateCheckOnStart ?? true;
+    statusSounds = c.statusSounds ?? true;
+    statusNotify = c.statusNotify ?? true;
+    limitMode = c.limitMode ?? 'wait';
     toggleHotkey = c.toggleHotkey ?? '';
   }
 
@@ -300,6 +315,38 @@
     }
     flash(t('settings.saved'));
   }
+  async function toggleLimitsMonitor(v: boolean) {
+    limitsMonitor = v;
+    if (!(await persist({ limitsMonitor: v }))) { limitsMonitor = !v; return; }
+    flash(t('settings.saved'));
+  }
+  async function toggleStackHealthMonitor(v: boolean) {
+    stackHealthMonitor = v;
+    if (!(await persist({ stackHealthMonitor: v }))) { stackHealthMonitor = !v; return; }
+    flash(t('settings.saved'));
+  }
+  async function toggleUpdateCheck(v: boolean) {
+    updateCheckOnStart = v;
+    if (!(await persist({ updateCheckOnStart: v }))) { updateCheckOnStart = !v; return; }
+    flash(t('settings.saved'));
+  }
+  async function toggleStatusSounds(v: boolean) {
+    statusSounds = v;
+    if (!(await persist({ statusSounds: v }))) { statusSounds = !v; return; }
+    flash(t('settings.saved'));
+  }
+  async function toggleStatusNotify(v: boolean) {
+    statusNotify = v;
+    if (!(await persist({ statusNotify: v }))) { statusNotify = !v; return; }
+    flash(t('settings.saved'));
+  }
+  async function setLimitMode(v: string) {
+    const prev = limitMode;
+    limitMode = v;
+    if (!(await persist({ limitMode: v }))) { limitMode = prev; return; }
+    flash(t('settings.saved'));
+  }
+
   // Phase 4.1: apply the full shortcut mapping (replaces the single toggleHotkey path).
   async function applyShortcuts() {
     errMsg = '';
@@ -482,6 +529,59 @@
           <button class="sw-btn sw-btn-primary" onclick={applyShortcuts} title={t('settings.toggleHotkeyTip')}>{t('settings.shortcutsApply')}</button>
         </div>
       </div>
+    </div>
+    {/if}
+
+    <!-- U2/U3: Background monitors + startup update check -->
+    {#if show(t('settings.monitorsSection'), t('settings.limitsMonitor'), t('settings.stackHealthMonitor'), t('settings.updateCheckOnStart'))}
+    <div class="sw-card flex flex-col gap-sw-3" data-highlight-id="settings:monitors">
+      <div class="font-medium">{t('settings.monitorsSection')}</div>
+      <div class="text-sw-sm text-sw-text-secondary">{t('settings.monitorsSectionDesc')}</div>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('settings.limitsMonitor')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('settings.limitsMonitorDesc')}</span>
+        </span>
+        <Toggle checked={limitsMonitor} onCheckedChange={toggleLimitsMonitor} title={t('settings.limitsMonitor')} />
+      </label>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('settings.stackHealthMonitor')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('settings.stackHealthMonitorDesc')}</span>
+        </span>
+        <Toggle checked={stackHealthMonitor} onCheckedChange={toggleStackHealthMonitor} title={t('settings.stackHealthMonitor')} />
+      </label>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('settings.updateCheckOnStart')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('settings.updateCheckOnStartDesc')}</span>
+        </span>
+        <Toggle checked={updateCheckOnStart} onCheckedChange={toggleUpdateCheck} title={t('settings.updateCheckOnStart')} />
+      </label>
+    </div>
+    {/if}
+
+    <!-- U11: Sessions notification/limit settings mirrored from the Sessions popover -->
+    {#if show(t('settings.sessionsSection'), t('sessions.statusSound'), t('sessions.statusToast'), t('sessions.limitMode'))}
+    <div class="sw-card flex flex-col gap-sw-3" data-highlight-id="settings:sessions">
+      <div class="font-medium">{t('settings.sessionsSection')}</div>
+      <div class="text-sw-sm text-sw-text-secondary">{t('settings.sessionsSectionDesc')}</div>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('sessions.statusSound')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('sessions.statusSoundHint')}</span>
+        </span>
+        <Toggle checked={statusSounds} onCheckedChange={toggleStatusSounds} title={t('sessions.statusSound')} />
+      </label>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('sessions.statusToast')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('sessions.statusToastHint')}</span>
+        </span>
+        <Toggle checked={statusNotify} onCheckedChange={toggleStatusNotify} title={t('sessions.statusToast')} />
+      </label>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('sessions.limitMode')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('sessions.limitModeHint')}</span>
+        </span>
+        <Select value={limitMode} onChange={setLimitMode}
+          options={[{ value: 'wait', label: t('sessions.limitModeWait') }, { value: 'switchProfile', label: t('sessions.limitModeSwitch') }]} />
+      </label>
     </div>
     {/if}
 

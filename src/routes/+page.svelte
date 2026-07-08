@@ -148,6 +148,7 @@
   import { agentSummary } from '$lib/agentStatus.svelte';
   import { pushLimits } from '$lib/limits.svelte';
   import { getTheme, applyTheme, type Theme } from '$lib/theme';
+  import { checkForUpdate } from '$lib/updater';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import { navOrder } from '$lib/navOrder.svelte';
@@ -179,6 +180,7 @@
   import { pushToast } from '$lib/toast.svelte';
   import { runningStore, opName } from '$lib/running.svelte';
   import { paletteBus } from '$lib/palette.svelte';
+  import { navBus } from '$lib/nav.svelte';
   import { pushRun } from '$lib/runHistory.svelte';
   import { deriveOutcome } from '$lib/outcome';
   import { t, locale } from '$lib/i18n';
@@ -187,6 +189,10 @@
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
   let running = $state<string | null>(null);
+  // U3: a startup update check found a newer Castellyn — drives the Settings sidebar badge + a toast.
+  let updateAvailable = $state(false);
+  // U8: the Home quick-action currently running — shows an inline spinner on that chip (no tab switch).
+  let homeBusyAction = $state<string | null>(null);
   // The LLM stack runs in its OWN backend concurrency domain (StackRun), so its busy state is
   // tracked SEPARATELY from the global `running` — a stack op neither blocks nor is blocked by
   // maintenance/config runs, and Stop is never gated (the backend preempts an in-flight start).
@@ -1141,7 +1147,7 @@
   }
   // Fan-outs write into another harness's config file — confirm the exact target first.
   const confirmFanout = (target: string, run: () => void) =>
-    askConfirm(t('common.confirm'), t('page.confirm_fanout_body', { target }), t('page.confirm_mcp_btn'), run);
+    askConfirm(t('page.confirm_fanout_title', { target }), t('page.confirm_fanout_body', { target }), t('page.confirm_mcp_btn'), run);
   // Codex MCP is honest about partial failure: {added, failed}. Warn (not error) when some
   // servers failed but others landed; the ledger only advances when failed is empty.
   async function deployCodexMcp() {
@@ -1308,9 +1314,11 @@
 
   // F23: Home quick actions / per-chip actions → the parent's existing handlers.
   function onHomeAction(id: string) {
+    // U8: show inline progress on the clicked chip and let the outcome toast report the result —
+    // don't yank the user to another tab. The clear effect below drops it when the run finishes.
+    homeBusyAction = id;
     switch (id) {
       case 'check-all':
-        active = 'updates';
         startRun('all', 'check');
         break;
       case 'refresh-forks':
@@ -1733,6 +1741,8 @@
     sync: syncAttention(syncData),
     extensions: pluginsAttention(pluginUpdates.length),
     sessions: sessionsAttention(agentSummary),
+    // U3: a pending Castellyn update surfaces as an info badge on Settings (never auto-installs).
+    settings: updateAvailable ? ({ level: 'info' } as const) : null,
     // Home is the cockpit — roll every subsystem it surfaces into one badge (highest severity wins).
     home: maxAttention([
       stackDriftAttention(stackDrift),
@@ -2026,6 +2036,19 @@
       if (paletteBus.tick > 0) paletteOpen = true;
     }
   });
+  // U13: the title-bar session-status strip (in +layout) requests a tab switch via navBus.
+  let lastNavTick = 0;
+  $effect(() => {
+    if (navBus.tick !== lastNavTick) {
+      lastNavTick = navBus.tick;
+      if (navBus.tab) active = navBus.tab;
+    }
+  });
+  // U8: a Home quick-action's inline spinner clears once the run it launched is done. Runs go through
+  // either the global lock (`running`) or the stack lock (`stackRunning`); when both are idle, clear.
+  $effect(() => {
+    if (!running && !stackRunning) homeBusyAction = null;
+  });
   // Phase 4.2 — after a palette navigation, briefly scroll to + highlight a specific item in the target tab.
   let highlightTarget = $state<{ tab: string; id: string } | null>(null);
   // Consume highlightTarget after it has been applied (re-render cycle + transition completes).
@@ -2180,6 +2203,23 @@
     // Mirror the resolved UI locale into the backend so errors/run-log/tray match, even before
     // the user ever opens the language switcher.
     setLanguage(locale.current).catch(() => {});
+    // U3: startup update check — fire-and-forget, badge + toast only, never auto-installs. Gated on
+    // the updateCheckOnStart config toggle (default on); network errors are swallowed silently.
+    readConfig()
+      .then((c) => {
+        if (c.updateCheckOnStart === false) return;
+        return checkForUpdate().then((info) => {
+          if (info) {
+            updateAvailable = true;
+            pushToast({
+              kind: 'info',
+              title: t('page.updateAvailableToast'),
+              action: { label: t('page.openSettingsAction'), onClick: () => (active = 'settings') }
+            });
+          }
+        });
+      })
+      .catch(() => {});
     try {
       if (localStorage.getItem('cmh-density') === 'compact') density = 'compact';
       fullWidth = localStorage.getItem('cmh-fullwidth') !== '0';
@@ -2578,7 +2618,7 @@
         <HomeTab profiles={profilesData} sync={syncData} drift={driftData} schedules={schedulesData}
           stack={stackData} sessionCount={homeSessionCount} {stackDrift} {gcItems} busy={!!running} {components} {statuses}
           onOpen={(id) => (active = id)} onRefresh={reloadHome} onReloadDrift={reloadStackDrift}
-          onReloadGc={reloadGc} onGcDelete={onGcDelete} onAction={onHomeAction} />
+          onReloadGc={reloadGc} onGcDelete={onGcDelete} onAction={onHomeAction} busyAction={homeBusyAction} />
       {:else if active === 'updates'}
         <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} {scriptsAvail} />
       {:else if active === 'forks'}

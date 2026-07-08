@@ -7,7 +7,7 @@
     MyProvider,
     MyProviderInput
   } from '$lib/ipc';
-  import { updateEngine, checkMyProvider, checkProviderUrl, checkProviderBalance, readStackProcs, freellmapiAuthStatus, gatewayBaseUrl, type StackProc, type ProviderBalance } from '$lib/ipc';
+  import { updateEngine, checkMyProvider, checkProviderUrl, checkProviderBalance, readStackProcs, freellmapiAuthStatus, gatewayBaseUrl, stackLogPath, openPath, type StackProc, type ProviderBalance } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
   import { pushToast } from '$lib/toast.svelte';
@@ -233,6 +233,41 @@
       health = { ...health, [id]: { ok: false, detail: String(e) } };
     }
   }
+  // U12: check every custom provider at once (bounded concurrency so we don't hammer them), then
+  // report a "N ok / M" summary. Per-row spinners come free from the shared `health` map.
+  let checkingAll = $state(false);
+  async function checkAll() {
+    if (checkingAll || !myProviderList.length) return;
+    checkingAll = true;
+    try {
+      const ids = myProviderList.map((p) => p.id);
+      const CONC = 3;
+      for (let i = 0; i < ids.length; i += CONC) {
+        await Promise.all(ids.slice(i, i + CONC).map((id) => check(id)));
+      }
+      const ok = ids.filter((id) => {
+        const h = health[id];
+        return h !== 'checking' && h?.ok;
+      }).length;
+      pushToast({
+        kind: ok === ids.length ? 'success' : 'warn',
+        title: t('myProviders.checkAllDone', { ok, total: ids.length })
+      });
+    } finally {
+      checkingAll = false;
+    }
+  }
+  // U1: open a stack service's log file directly (the failure message points at it, but there was
+  // no way to open it from the app).
+  async function openStackLog(id: string) {
+    try {
+      const p = await stackLogPath(id);
+      if (p) await openPath(p);
+      else pushToast({ kind: 'info', title: t('providers.noLogYet') });
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('common.error'), detail: String(e) });
+    }
+  }
   // Liveness check for an arbitrary base URL (engines / stack services), keyed separately so
   // results don't collide with my-provider checks. No key — local backends.
   async function checkUrl(key: string, baseUrl: string, protocol: string) {
@@ -362,9 +397,9 @@
         </button>
         <div class="flex shrink-0 gap-sw-2">
           <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start')}
-            title={t('providers.stackStartTip')}>{t('providers.stackStartAll')}</button>
+            title={t('providers.stackStartTip')}>{stackBusy ? t('providers.busy') : t('providers.stackStartAll')}</button>
           <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop')}
-            title={t('providers.stackStopTip')}>{t('providers.stackStopAll')}</button>
+            title={t('providers.stackStopTip')}>{stopBusy ? t('providers.busy') : t('providers.stackStopAll')}</button>
         </div>
       </div>
       {#if stackOpen}
@@ -415,6 +450,8 @@
                 {:else}
                   <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start', s.id)}
                     title={t('providers.stackStartOneTip', { name: s.name })}>{t('providers.start')}</button>
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => openStackLog(s.id)}
+                    title={t('providers.openLogTip', { name: s.name })}>{t('providers.openLog')}</button>
                 {/if}
               {/if}
               {#if s.dashboard}
@@ -557,6 +594,11 @@
   <div class="mb-sw-2 mt-sw-6 flex items-center justify-between gap-sw-2" id="sec-my">
     <h2 class="section-title">{t('myProviders.title')}</h2>
     <div class="flex shrink-0 items-center gap-sw-2">
+      {#if myProviderList.length > 1}
+        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || checkingAll} onclick={checkAll} title={t('myProviders.checkAllTip')}>
+          {checkingAll ? t('common.busy') : t('myProviders.checkAll')}
+        </button>
+      {/if}
       <button class="sw-btn sw-btn-primary text-sw-xs" disabled={busy} onclick={mpAdd} title={t('myProviders.addTitle')}>
         {t('myProviders.add')}
       </button>

@@ -192,7 +192,7 @@ export default {
   confirm_orphan_del_btn: 'В Корзину',
   confirm_reinstall_title: 'Переустановить профили?',
   confirm_reinstall_msg:
-    'Install-ClaudeProfiles.ps1 -Force пересоздаст junction’ы/симлинки всех профилей и потребует прав администратора (UAC). Продолжить?',
+    'Пересоздаст ссылки (junction’ы) всех профилей — потребуются права администратора. Продолжить?',
   confirm_reinstall_btn: 'Переустановить',
   confirm_reinstall_word: 'ПЕРЕУСТАНОВИТЬ',
   confirm_clean_title: 'Удалить sync-конфликты?',
@@ -201,6 +201,7 @@ export default {
   confirm_clean_btn: 'Удалить',
   confirm_keepother_msg:
     'Локальный файл будет заменён версией с другой машины (текущий сохранится как *.pre-conflict.bak). Продолжить?',
+  confirm_fanout_title: 'Записать в {target}?',
   confirm_fanout_body:
     'Ключи будут дописаны в {target} (существующие с теми же именами перезапишутся). Продолжить?',
   codex_mcp_partial: 'MCP в Codex: добавлено {added}, ошибок {failed}',
@@ -214,7 +215,7 @@ export default {
   confirm_mcp_remove_title: 'Удалить MCP-сервер?',
   confirm_mcp_remove_msg: 'Сервер «{name}» будет удалён из config/.mcp.json. Продолжить?',
   confirm_unblock_title: 'Разблокировать плагин?',
-  confirm_unblock_msg: '{id}: уберу явную блокировку из managed-источника и передеплою managed-settings (запрос UAC). После этого плагин можно включать по профилям.',
+  confirm_unblock_msg: 'Снимет блокировку плагина «{id}» и обновит настройки (потребуются права администратора). После этого плагин можно включать по профилям. Продолжить?',
   confirm_unblock_btn: 'Разблокировать',
   unblock_done: 'Разблокировано и передеплоено: {id}',
   confirm_mcp_extra_title: 'Убрать сервер из профиля?',
@@ -258,7 +259,7 @@ export default {
   router_install_log: '▶ Роутер: установка claude-code-router (npm)…',
   confirm_router_title: 'Подключить через роутер?',
   confirm_router_msg:
-    'Профиль «{profile}» будет переключён на «{engine}» (модель «{model}») через ccr: настрою и запущу claude-code-router и привяжу профиль к http://127.0.0.1:3456. Перезапусти профиль после. Продолжить?',
+    'Профиль «{profile}» будет переключён на движок «{engine}» (модель «{model}») через локальный роутер. После переключения перезапустите профиль. Продолжить?',
   confirm_router_btn: 'Подключить',
   router_log: '▶ Роутер: {engine} ({model}) → профиль {profile}…',
 
@@ -295,6 +296,8 @@ export default {
   toast_op_error: '{name}: ошибка (код {code})',
   toast_op_error_detail: 'Подробности — в логе выполнения.',
   toast_open_log: 'Открыть лог',
+  updateAvailableToast: 'Доступно обновление Castellyn',
+  openSettingsAction: 'Открыть Настройки',
   toast_stack_down_title: 'Сервис стека упал',
   toast_stack_down_detail: 'Сервис «{name}» остановился неожиданно.',
   toast_generic_error: 'Что-то пошло не так',

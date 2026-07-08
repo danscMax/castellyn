@@ -227,6 +227,14 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     show_session_status_bar: Option<bool>,
+    // U3: check for a Castellyn update once at startup (badge only, never auto-installs). None =
+    // default (true). Purely a frontend read — the backend only persists it.
+    #[serde(
+        rename = "updateCheckOnStart",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    update_check_on_start: Option<bool>,
     // Gap-2: MCP server names Castellyn has deployed to each harness — the reconcile ledger (see
     // ManagedMcp). Written by the OpenCode/Codex MCP fan-out; not user-facing.
     #[serde(
@@ -3901,6 +3909,18 @@ pub(crate) struct StackHealth {
     /// This service is the client-facing front — its outage is the overall alarm (data-driven,
     /// replaces the old hardcoded `id == "gateway"`). From stack.json `critical` (default false).
     pub(crate) critical: bool,
+}
+
+/// U1: absolute path to a stack service's log file, if it exists. A failed service tells the user to
+/// "see stack-logs\<id>.log"; the UI's "Open log" button resolves the path here and opens it.
+#[tauri::command]
+fn stack_log_path(id: String) -> Option<String> {
+    let p = stack_log_dir()?.join(format!("{id}.log"));
+    if p.exists() {
+        Some(p.to_string_lossy().into_owned())
+    } else {
+        None
+    }
 }
 
 /// Real health of llm-stack services: a TCP port probe plus — when `health` is set in stack.json —
@@ -14553,6 +14573,7 @@ pub fn run() {
             read_stack,
             run_stack,
             read_stack_health,
+            stack_log_path,
             read_stack_procs,
             session_spawn,
             session_write,

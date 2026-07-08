@@ -371,6 +371,8 @@ export type StackHealth = {
   critical: boolean; // client-facing front — its outage drives the overall 'down' alarm
 };
 export const readStackHealth = () => invoke<StackHealth[]>('read_stack_health');
+// U1: resolve a stack service's log-file path (null if it doesn't exist yet).
+export const stackLogPath = (id: string) => invoke<string | null>('stack_log_path', { id });
 
 // --- stack process info (PID + uptime per listening port, one pwsh snapshot) ---
 export type StackProc = { port: number; pid: number; uptimeSec: number };
@@ -1008,9 +1010,14 @@ export type HubConfig = {
   // Manage the LLM stack natively (Castellyn spawns/tracks/stops services) — now the DEFAULT
   // (absent/true). false = fall back to the legacy PS launcher scripts. See stackNative in SettingsTab.
   stackNative?: boolean;
+  // Anthropic OAuth usage-limit monitor (Sessions): polls each profile every 5 min, alerts at 85/99%.
+  // absent/true = on.
+  limitsMonitor?: boolean;
   // Background llm-stack liveness poll (every 30s) — flags services that transition to down.
   // absent/true = on.
   stackHealthMonitor?: boolean;
+  // U3: check for a Castellyn update once at startup (badge only, never auto-installs). absent/true = on.
+  updateCheckOnStart?: boolean | null;
   fetchTimeoutSec?: number | null;
   ghTimeoutSec?: number | null;
   toggleHotkey?: string | null;

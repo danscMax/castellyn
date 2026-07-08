@@ -8,5 +8,6 @@ export default {
   close: '关闭（最小化到托盘）',
   stripHint: '活动会话及最接近 Anthropic 用量上限的配置',
   stripPeak: '最高用量：{profile}',
+  stripOpenSessions: '打开“会话”标签页',
   paletteHint: '命令面板 (Ctrl+K)'
 };

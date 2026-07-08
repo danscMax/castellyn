@@ -191,7 +191,7 @@ export default {
   confirm_orphan_del_btn: '移入回收站',
   confirm_reinstall_title: '重新安装配置？',
   confirm_reinstall_msg:
-    'Install-ClaudeProfiles.ps1 -Force 将重建所有配置的 junction/符号链接，并需要管理员权限（UAC）。是否继续？',
+    '将重建所有配置的链接（junction），需要管理员权限。是否继续？',
   confirm_reinstall_btn: '重新安装',
   confirm_reinstall_word: '重新安装',
   confirm_clean_title: '删除同步冲突？',
@@ -200,6 +200,7 @@ export default {
   confirm_clean_btn: '删除',
   confirm_keepother_msg:
     '本地文件将被另一台机器的版本替换（当前文件保留为 *.pre-conflict.bak）。是否继续？',
+  confirm_fanout_title: '写入 {target}？',
   confirm_fanout_body: '密钥将合并写入 {target}（同名的现有项会被覆盖）。是否继续？',
   codex_mcp_partial: 'Codex MCP：已添加 {added}，失败 {failed}',
 
@@ -212,7 +213,7 @@ export default {
   confirm_mcp_remove_title: '删除 MCP 服务器？',
   confirm_mcp_remove_msg: '服务器「{name}」将从 config/.mcp.json 中删除。是否继续？',
   confirm_unblock_title: '解除插件阻止？',
-  confirm_unblock_msg: '{id}：将从 managed 源中移除显式阻止并重新部署 managed-settings（UAC 提示）。之后即可按配置启用。',
+  confirm_unblock_msg: '将解除插件「{id}」的阻止并更新设置（需要管理员权限）。之后即可按配置启用。是否继续？',
   confirm_unblock_btn: '解除阻止',
   unblock_done: '已解除并重新部署：{id}',
   confirm_mcp_extra_title: '从配置中移除服务器？',
@@ -252,7 +253,7 @@ export default {
   router_install_log: '▶ 路由器：安装 claude-code-router（npm）…',
   confirm_router_title: '通过路由器连接？',
   confirm_router_msg:
-    '配置「{profile}」将通过 ccr 切换到「{engine}」（模型「{model}」）：我会配置并启动 claude-code-router，并将该配置绑定到 http://127.0.0.1:3456。之后请重启该配置。是否继续？',
+    '配置「{profile}」将通过本地路由切换到「{engine}」引擎（模型「{model}」）。之后请重启该配置。是否继续？',
   confirm_router_btn: '连接',
   router_log: '▶ 路由器：{engine}（{model}）→ 配置 {profile}…',
 
@@ -289,6 +290,8 @@ export default {
   toast_op_error: '{name}：错误（代码 {code}）',
   toast_op_error_detail: '详情见运行日志。',
   toast_open_log: '打开日志',
+  updateAvailableToast: 'Castellyn 有可用更新',
+  openSettingsAction: '打开设置',
   toast_stack_down_title: '堆栈服务已停止',
   toast_stack_down_detail: '服务「{name}」意外停止。',
   toast_generic_error: '出错了',

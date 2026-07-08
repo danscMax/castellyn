@@ -192,7 +192,7 @@ export default {
   confirm_orphan_del_btn: 'To Recycle Bin',
   confirm_reinstall_title: 'Reinstall profiles?',
   confirm_reinstall_msg:
-    'Install-ClaudeProfiles.ps1 -Force will recreate the junctions/symlinks of all profiles and requires administrator rights (UAC). Continue?',
+    'Recreates the links (junctions) of all profiles — administrator rights are required. Continue?',
   confirm_reinstall_btn: 'Reinstall',
   confirm_reinstall_word: 'REINSTALL',
   confirm_clean_title: 'Remove sync conflicts?',
@@ -201,6 +201,7 @@ export default {
   confirm_clean_btn: 'Delete',
   confirm_keepother_msg:
     'The local file will be replaced with the other machine’s version (the current one is kept as *.pre-conflict.bak). Continue?',
+  confirm_fanout_title: 'Write into {target}?',
   confirm_fanout_body:
     'Keys will be merged into {target} (existing ones with the same names are overwritten). Continue?',
   codex_mcp_partial: 'Codex MCP: {added} added, {failed} failed',
@@ -214,7 +215,7 @@ export default {
   confirm_mcp_remove_title: 'Remove MCP server?',
   confirm_mcp_remove_msg: 'Server “{name}” will be removed from config/.mcp.json. Continue?',
   confirm_unblock_title: 'Unblock plugin?',
-  confirm_unblock_msg: '{id}: removes the explicit block from the managed source and redeploys managed-settings (UAC prompt). Per-profile enable works afterwards.',
+  confirm_unblock_msg: 'Unblocks the plugin “{id}” and updates settings (administrator rights required). Per-profile enable works afterwards. Continue?',
   confirm_unblock_btn: 'Unblock',
   unblock_done: 'Unblocked and redeployed: {id}',
   confirm_mcp_extra_title: 'Remove server from profile?',
@@ -258,7 +259,7 @@ export default {
   router_install_log: '▶ Router: installing claude-code-router (npm)…',
   confirm_router_title: 'Connect via router?',
   confirm_router_msg:
-    'Profile “{profile}” will be switched to “{engine}” (model “{model}”) via ccr: I’ll configure and start claude-code-router and bind the profile to http://127.0.0.1:3456. Restart the profile afterwards. Continue?',
+    'Profile “{profile}” will be switched to the “{engine}” engine (model “{model}”) via the local router. Restart the profile afterwards. Continue?',
   confirm_router_btn: 'Connect',
   router_log: '▶ Router: {engine} ({model}) → profile {profile}…',
 
@@ -295,6 +296,8 @@ export default {
   toast_op_error: '{name}: error (code {code})',
   toast_op_error_detail: 'See the run log for details.',
   toast_open_log: 'Open log',
+  updateAvailableToast: 'A Castellyn update is available',
+  openSettingsAction: 'Open Settings',
   toast_stack_down_title: 'Stack service went down',
   toast_stack_down_detail: 'Service “{name}” stopped unexpectedly.',
   toast_generic_error: 'Something went wrong',

@@ -8,5 +8,6 @@ export default {
   close: 'Закрыть (свернуть в трей)',
   stripHint: 'Активные сессии и профиль ближе всех к лимиту Anthropic',
   stripPeak: 'Наибольшая загрузка: {profile}',
+  stripOpenSessions: 'Открыть вкладку «Сессии»',
   paletteHint: 'Палитра команд (Ctrl+K)'
 };

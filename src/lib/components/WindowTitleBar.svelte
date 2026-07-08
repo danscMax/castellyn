@@ -9,6 +9,7 @@
   import { peakUtilization } from '$lib/limits.svelte';
   import { uiPrefs } from '$lib/uiPrefs.svelte';
   import { readConfig } from '$lib/ipc';
+  import { requestTab } from '$lib/nav.svelte';
 
   // z5_1: opens the command palette (Ctrl+K) — a visible affordance so the palette is discoverable
   // without knowing the shortcut. Wired from +page.
@@ -101,22 +102,22 @@
   </div>
 
   {#if showStrip}
-    <!-- Session-status strip: live counts + the profile closest to an Anthropic limit. Drag region
-         like the rest of the bar (not interactive). -->
+    <!-- Session-status strip: live counts + the profile closest to an Anthropic limit. The strip is a
+         drag region; U13: the individual count items are buttons that jump to the Sessions tab. -->
     <div class="sess-strip {peakClass}" data-tauri-drag-region title={t('titlebar.stripHint')}>
       {#if agentSummary.working}
-        <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-work" data-tauri-drag-region></span>{agentSummary.working}</span>
+        <button class="ss-item" onclick={() => requestTab('sessions')} title={t('titlebar.stripOpenSessions')}><span class="ss-dot ss-work"></span>{agentSummary.working}</button>
       {/if}
       {#if agentSummary.blocked}
-        <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-block" data-tauri-drag-region></span>{agentSummary.blocked}</span>
+        <button class="ss-item" onclick={() => requestTab('sessions')} title={t('titlebar.stripOpenSessions')}><span class="ss-dot ss-block"></span>{agentSummary.blocked}</button>
       {/if}
       {#if agentSummary.limited}
-        <span class="ss-item" data-tauri-drag-region><span class="ss-dot ss-lim" data-tauri-drag-region></span>{agentSummary.limited}</span>
+        <button class="ss-item" onclick={() => requestTab('sessions')} title={t('titlebar.stripOpenSessions')}><span class="ss-dot ss-lim"></span>{agentSummary.limited}</button>
       {/if}
       {#if peak}
-        <span class="ss-item ss-peak" data-tauri-drag-region title={t('titlebar.stripPeak', { profile: peak.profile })}>
+        <button class="ss-item ss-peak" onclick={() => requestTab('sessions')} title={t('titlebar.stripPeak', { profile: peak.profile })}>
           {peak.window} {Math.round(peak.pct)}%
-        </span>
+        </button>
       {/if}
     </div>
   {/if}
@@ -279,6 +280,18 @@
     align-items: center;
     gap: 4px;
     font-variant-numeric: tabular-nums;
+    /* U13: clickable → Sessions. Button reset so it reads as part of the strip until hovered. */
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    padding: 1px 3px;
+    margin: 0 -1px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .ss-item:hover {
+    background: var(--sw-sidebar-item-hover);
   }
   .ss-peak {
     font-weight: 600;

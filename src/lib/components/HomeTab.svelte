@@ -6,6 +6,7 @@
   import { profileHasMissingLink } from '$lib/attention';
   import StackDriftCard from './StackDriftCard.svelte';
   import StackGcCard from './StackGcCard.svelte';
+  import Spinner from './Spinner.svelte';
   import type { SyncStatus, ConfigDriftStatus, ProfilesStatus, SchedulesStatus, StackService, StackDriftItem, GcItem } from '$lib/ipc';
 
   // USE-1: single-pane "is my Claude setup healthy?" overview. Pure aggregation of data the
@@ -28,7 +29,8 @@
     onReloadDrift,
     onReloadGc,
     onGcDelete,
-    onAction
+    onAction,
+    busyAction = null
   }: {
     profiles: ProfilesStatus | null;
     sync: SyncStatus | null;
@@ -51,6 +53,8 @@
     onReloadGc?: () => void | Promise<void>;
     onGcDelete?: (ids: string[], labels: string[]) => void | Promise<void>;
     onAction?: (id: string) => void;
+    /** U8: the quick-action currently running — shows an inline spinner on that chip. */
+    busyAction?: string | null;
   } = $props();
 
   type Level = 'ok' | 'warn' | 'bad' | 'muted';
@@ -255,12 +259,20 @@
     {#if onAction}
       <!-- F23: quick actions — run the same parent handlers the dedicated tabs use. -->
       <span class="ml-auto flex flex-wrap gap-sw-2">
-        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('check-all')}>{t('page.home_checkAll')}</button>
-        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('refresh-forks')}>{t('page.home_refreshForks')}</button>
+        <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('check-all')}>
+          {#if busyAction === 'check-all'}<Spinner size={12} />{/if}{t('page.home_checkAll')}
+        </button>
+        <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('refresh-forks')}>
+          {#if busyAction === 'refresh-forks'}<Spinner size={12} />{/if}{t('page.home_refreshForks')}
+        </button>
         {#if stackUp === 0}
-          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('start-stack')}>{t('page.home_stackStart')}</button>
+          <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('start-stack')}>
+            {#if busyAction === 'start-stack'}<Spinner size={12} />{/if}{t('page.home_stackStart')}
+          </button>
         {:else}
-          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('stop-stack')}>{t('page.home_stackStop')}</button>
+          <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('stop-stack')}>
+            {#if busyAction === 'stop-stack'}<Spinner size={12} />{/if}{t('page.home_stackStop')}
+          </button>
         {/if}
       </span>
     {/if}

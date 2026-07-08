@@ -8,5 +8,6 @@ export default {
   close: 'Close (minimize to tray)',
   stripHint: 'Live sessions and the profile closest to an Anthropic usage limit',
   stripPeak: 'Highest usage: {profile}',
+  stripOpenSessions: 'Open the Sessions tab',
   paletteHint: 'Command palette (Ctrl+K)'
 };
