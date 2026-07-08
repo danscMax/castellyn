@@ -746,14 +746,16 @@
     let saved: Record<number, SavedPane[]>;
     try {
       saved = JSON.parse(localStorage.getItem(MLKEY) ?? '{}');
-    } catch {
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('sessions.restoreLayoutFail'), detail: String(e) });
       return;
     }
     invalidateMonitors(); // re-enumerate: the saved layout may target monitors that are now gone
     let mons;
     try {
       mons = await getMonitors();
-    } catch {
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('sessions.restoreLayoutFail'), detail: String(e) });
       return;
     }
     const have = new Set(mons.map((m) => m.index));

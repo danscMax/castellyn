@@ -20,7 +20,19 @@ export type DeriveInput = {
   code: number;
   mode: 'check' | 'apply';
   status: any;
+  /** Epoch-ms when this run began. Used to reject a STALE envelope's summary: a script that died
+   *  before writing leaves the previous run's envelope, whose summary would lie about this run. */
+  startedAt?: number;
 };
+
+// True only when the envelope was (re)written by THIS run — its ISO `timestamp` is at/after the
+// run's start (small skew tolerance). Without a start reference, treat it as stale to be safe.
+function envelopeFresh(status: any, startedAt?: number): boolean {
+  if (!startedAt) return false;
+  const ts = Date.parse(status?.timestamp ?? '');
+  if (Number.isNaN(ts)) return false;
+  return ts >= startedAt - 2000;
+}
 
 function durationText(s: any): string | undefined {
   if (typeof s?.durationSec === 'number') {
@@ -43,14 +55,21 @@ function forkDetail(s: any): string | undefined {
 }
 
 export function deriveOutcome(input: DeriveInput): Outcome {
-  const { id, name, code, mode, status } = input;
+  const { id, name, code, mode, status, startedAt } = input;
 
-  // Any non-zero exit is an error — point the user at the log for details.
+  // Any non-zero exit is an error. U9: if the script wrote a FRESH one-line summary for this run
+  // (e.g. "failed on smoke tests"), show it — it's more useful than the generic "open the log".
+  // A stale envelope (script died before writing) falls back to the generic text so we never lie.
   if (code !== 0) {
+    const summaryStr =
+      typeof status?.summary === 'string' && status.summary ? status.summary : undefined;
     return {
       kind: 'error',
       title: t('page.toast_op_error', { name, code }),
-      detail: t('page.toast_op_error_detail'),
+      detail:
+        summaryStr && envelopeFresh(status, startedAt)
+          ? summaryStr
+          : t('page.toast_op_error_detail'),
       action: { kind: 'log', label: t('page.toast_open_log') }
     };
   }

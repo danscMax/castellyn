@@ -65,5 +65,6 @@ export default {
   planCredsOn: 'Missing credentials are filled from the snapshot (existing ones are kept).',
   planCredsOff: 'Credentials are left untouched.',
   planUntouched: 'Shared and system-managed files are not changed.',
-  planDetails: 'Technical output'
+  planDetails: 'Technical output',
+  restoreDone: 'Restore complete'
 };

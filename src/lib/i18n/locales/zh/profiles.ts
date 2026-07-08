@@ -174,6 +174,7 @@ export default {
   lcApplyTip: '保存此配置的启动模式和所选工具集',
   lcCancel: '取消',
   lcApply: '应用',
+  lcSaved: '已保存配置「{name}」的启动设置',
 
   // Ф2.5 — 矩阵（提供商 / 代理 / 共享文件夹于一张表）
   matrixTitle: '矩阵',

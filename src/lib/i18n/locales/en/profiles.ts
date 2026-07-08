@@ -180,6 +180,7 @@ export default {
   lcApplyTip: 'Save the launch mode and selected tool set for this profile',
   lcCancel: 'Cancel',
   lcApply: 'Apply',
+  lcSaved: 'Saved launch settings for profile “{name}”',
 
   // Ф2.5 — Matrix (provider / proxy / shared folders in one grid)
   matrixTitle: 'Matrix',

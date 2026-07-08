@@ -46,5 +46,9 @@ export default {
   errBadJson: 'Некорректный JSON',
   savedServer: 'Сервер «{name}» сохранён',
   removedServer: 'Сервер «{name}» удалён',
-  removedExtra: '«{name}» убран из {profile}'
+  removedExtra: '«{name}» убран из {profile}',
+  unsavedTitle: 'Несохранённые изменения',
+  unsavedMsg: 'Закрыть форму и потерять введённое?',
+  discardEdits: 'Закрыть без сохранения',
+  keepEditing: 'Продолжить правку'
 };

@@ -57,12 +57,17 @@
   // R7: gate the in-flight save like the sibling measure() does — a double-click used to fire
   // onSave twice before the dialog closed.
   let applying = $state(false);
+  let applyErr = $state('');
   async function apply() {
     if (applying) return;
     applying = true;
+    applyErr = '';
     try {
       await onSave(selection());
-      onCancel();
+      onCancel(); // R5: only close once the save actually succeeded
+    } catch (e) {
+      // R5: a rejected save must keep the dialog open (was closing as if saved) and say why.
+      applyErr = String((e as { message?: string })?.message ?? e);
     } finally {
       applying = false;
     }
@@ -163,6 +168,10 @@
           {t('profiles.lcMeasureNote', { cmd: 'claude -p' })}
         </p>
       </div>
+
+      {#if applyErr}
+        <p class="mt-sw-2 text-sw-xs" style="color:var(--sw-danger)">{applyErr}</p>
+      {/if}
 
       <div class="dlg-row">
         <button class="sw-btn sw-btn-ghost" onclick={onCancel} title={t('profiles.lcCancelTip')}>{t('common.cancel')}</button>

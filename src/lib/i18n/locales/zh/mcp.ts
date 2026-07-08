@@ -46,5 +46,9 @@ export default {
   errBadJson: 'JSON 无效',
   savedServer: '已保存服务器「{name}」',
   removedServer: '已删除服务器「{name}」',
-  removedExtra: '已从 {profile} 移除「{name}」'
+  removedExtra: '已从 {profile} 移除「{name}」',
+  unsavedTitle: '未保存的更改',
+  unsavedMsg: '关闭表单并丢失已输入的内容？',
+  discardEdits: '不保存并关闭',
+  keepEditing: '继续编辑'
 };

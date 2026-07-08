@@ -37,6 +37,25 @@
   // True once a preview/restore has been triggered from THIS dialog — gates the in-dialog output
   // panel. Reset on any input change (snapshot/selection/creds) so a stale plan never lingers.
   let ran = $state(false);
+  // R4: restore completion tracking. A finished restore used to leave the danger button live
+  // (busy fell, hasPreviewed stayed true) with no "done" signal — one stray click re-ran the whole
+  // destructive restore. Now we detect the busy rise→fall of a restore run, show "done", and force
+  // a fresh preview before another restore can fire.
+  let restoreArmed = $state(false); // a restore was requested; watching its run to finish
+  let restoreSawBusy = $state(false);
+  let restoreDone = $state(false);
+  $effect(() => {
+    if (!restoreArmed) return;
+    if (busy) {
+      restoreSawBusy = true;
+      return;
+    }
+    if (restoreSawBusy) {
+      restoreArmed = false;
+      restoreDone = true;
+      hasPreviewed = false; // disarm the danger button: a new restore needs a new preview
+    }
+  });
 
   // Default every (newly seen) profile to selected.
   $effect(() => {
@@ -73,11 +92,15 @@
   }
   function preview() {
     ran = true;
+    restoreDone = false; // a fresh plan clears the previous "done" badge
     onPreview(opts());
     hasPreviewed = true;
   }
   function restore() {
     ran = true;
+    restoreDone = false;
+    restoreArmed = true;
+    restoreSawBusy = false;
     onRestore(opts());
   }
 </script>
@@ -116,7 +139,8 @@
         <div class="plan">
           <div class="plan-head">
             <span class="plan-title">{t('backup.planWhat')}</span>
-            {#if busy}<span class="plan-run"><Spinner size={13} /> {t('common.busy')}</span>{/if}
+            {#if busy}<span class="plan-run"><Spinner size={13} /> {t('common.busy')}</span>
+            {:else if restoreDone}<span class="plan-done status-ok">{t('backup.restoreDone')}</span>{/if}
           </div>
           <ul class="plan-summary">
             <li>{t('backup.planProfiles', { n: selected.length, list: selected.join(', ') })}</li>
@@ -131,7 +155,7 @@
       {/if}
 
       <div class="row">
-        <button class="sw-btn sw-btn-ghost" onclick={onClose} title={t('backup.closeTitle')}>{t('common.close')}</button>
+        <button class="sw-btn {restoreDone ? 'sw-btn-primary' : 'sw-btn-ghost'}" onclick={onClose} title={t('backup.closeTitle')}>{t('common.close')}</button>
         <button class="sw-btn sw-btn-ghost" disabled={busy || selected.length === 0} onclick={preview}
           title={t('backup.previewTitle')}>
           {t('backup.showPlan')}
@@ -253,6 +277,10 @@
     gap: var(--sw-space-2);
     font-size: var(--sw-text-xs);
     color: var(--sw-text-secondary);
+  }
+  .plan-done {
+    font-size: var(--sw-text-xs);
+    font-weight: 600;
   }
   .plan-summary {
     margin: 0;

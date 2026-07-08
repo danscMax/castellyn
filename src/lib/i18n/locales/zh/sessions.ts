@@ -180,6 +180,7 @@ export default {
   forgetLayout: '忘记布局',
   forgetLayoutTip: '忘记已保存的显示器布局（不再提示恢复）',
   forgetLayoutDone: '已忘记保存的显示器布局。',
+  restoreLayoutFail: '无法恢复布局',
   defaultArgs: '默认参数',
   defaultArgsHint: '应用于 Claude 快速启动（配置 /「全部启动」）。',
   wsSave: '保存工作区',

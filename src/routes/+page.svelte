@@ -323,8 +323,12 @@
 
   // Mirror the run lock into a tiny store so the title bar (a sibling in +layout) can show
   // "what's running now" without prop-drilling. opName lives alongside the store now.
+  // U9: stamp when the current run began so the outcome layer can tell a fresh envelope (written by
+  // this run) from a stale one (a previous run's, left behind if the script died before writing).
+  let runStartedAt = 0;
   $effect(() => {
     runningStore.op = running;
+    if (running) runStartedAt = Date.now();
   });
 
   // Surface an invoke/IPC failure both in the log and as a glanceable error toast (#150).
@@ -665,8 +669,11 @@
     try {
       await setLaunchConfig(name, mode, mcp, claudeMd);
       await reloadProfiles();
+      pushToast({ kind: 'success', title: t('profiles.lcSaved', { name }) });
     } catch (e) {
+      // R5: surface the failure AND rethrow so the dialog stays open instead of closing as if saved.
       toastErr(e);
+      throw e;
     }
   }
 
@@ -1029,7 +1036,9 @@
       await reloadMcp();
       pushToast({ kind: 'success', title: t('mcp.savedServer', { name }) });
     } catch (e) {
+      // U4: rethrow so the form stays open with the error, instead of closing and losing the JSON.
       toastErr(e);
+      throw e;
     }
   }
   function onMcpRemoveServer(name: string) {
@@ -2331,7 +2340,8 @@
               name: c.name,
               code,
               mode: wasApply ? 'apply' : 'check',
-              status: statuses[id]
+              status: statuses[id],
+              startedAt: runStartedAt
             });
             pushToast({
               kind: out.kind,

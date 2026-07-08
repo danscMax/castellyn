@@ -20,7 +20,7 @@
     running: string | null;
     onRefresh: () => void;
     onDeploy: (target?: string | string[]) => void;
-    onUpsert: (name: string, definition: string) => void;
+    onUpsert: (name: string, definition: string) => Promise<void>;
     onRemoveServer: (name: string) => void;
     onRemoveExtra: (name: string, profile: string) => void;
   } = $props();
@@ -34,21 +34,46 @@
   let formJson = $state(DEFAULT_DEF);
   let formEditing = $state(false); // true = name locked (editing an existing server)
   let formError = $state('');
+  let submitting = $state(false);
+  // U4: initial values to detect unsaved edits before discarding the form; a confirm gates close.
+  let formInitName = $state('');
+  let formInitJson = $state(DEFAULT_DEF);
+  let confirmDiscard = $state(false);
   function openAdd() {
     formName = '';
     formJson = DEFAULT_DEF;
+    formInitName = '';
+    formInitJson = DEFAULT_DEF;
     formEditing = false;
     formError = '';
+    confirmDiscard = false;
     formOpen = true;
   }
   function openEdit(srv: McpServer) {
     formName = srv.name;
     formJson = JSON.stringify(srv.definition, null, 2);
+    formInitName = formName;
+    formInitJson = formJson;
     formEditing = true;
     formError = '';
+    confirmDiscard = false;
     formOpen = true;
   }
-  function submitForm() {
+  const formDirty = $derived(formName !== formInitName || formJson !== formInitJson);
+  function requestClose() {
+    // U4: don't silently drop typed JSON — confirm first if the form has unsaved changes.
+    if (formDirty) {
+      confirmDiscard = true;
+      return;
+    }
+    formOpen = false;
+  }
+  function discardAndClose() {
+    confirmDiscard = false;
+    formOpen = false;
+  }
+  async function submitForm() {
+    if (submitting) return;
     if (!formName.trim()) {
       formError = t('mcp.errEmptyName');
       return;
@@ -59,8 +84,18 @@
       formError = `${t('mcp.errBadJson')}: ${e}`;
       return;
     }
-    onUpsert(formName.trim(), formJson);
-    formOpen = false;
+    submitting = true;
+    formError = '';
+    try {
+      // U4: await the backend result — only close on success. A rejected upsert keeps the form
+      // (and the typed JSON) open with the reason, instead of closing as if it saved.
+      await onUpsert(formName.trim(), formJson);
+      formOpen = false;
+    } catch (e) {
+      formError = String((e as { message?: string })?.message ?? e);
+    } finally {
+      submitting = false;
+    }
   }
   // Bulk MCP deploy (#76): pick profiles, deploy to all of them in one run.
   let bulkSel = $state<Record<string, boolean>>({});
@@ -229,7 +264,7 @@
   {/if}
 </div>
 
-<ModalShell open={formOpen} onClose={() => (formOpen = false)} size="md">
+<ModalShell open={formOpen} onClose={requestClose} size="md">
   <h3 class="dlg-h">{formEditing ? t('mcp.editServerTitle') : t('mcp.addServerTitle')}</h3>
   <label class="dlg-fld">
     <span>{t('mcp.formName')}</span>
@@ -241,8 +276,18 @@
     <textarea class="sw-input font-mono text-sw-xs" bind:value={formJson} rows="8" spellcheck="false"></textarea>
   </label>
   {#if formError}<p class="warn text-sw-xs">{formError}</p>{/if}
-  <div class="dlg-row">
-    <button class="sw-btn sw-btn-ghost" onclick={() => (formOpen = false)}>{t('common.cancel')}</button>
-    <button class="sw-btn sw-btn-primary" onclick={submitForm}>{t('common.save')}</button>
-  </div>
+  {#if confirmDiscard}
+    <div class="dlg-row items-center">
+      <span class="mr-auto text-sw-xs text-sw-text-secondary">{t('mcp.unsavedMsg')}</span>
+      <button class="sw-btn sw-btn-ghost" onclick={() => (confirmDiscard = false)}>{t('mcp.keepEditing')}</button>
+      <button class="sw-btn sw-btn-danger" onclick={discardAndClose}>{t('mcp.discardEdits')}</button>
+    </div>
+  {:else}
+    <div class="dlg-row">
+      <button class="sw-btn sw-btn-ghost" onclick={requestClose}>{t('common.cancel')}</button>
+      <button class="sw-btn sw-btn-primary" disabled={submitting} onclick={submitForm}>
+        {submitting ? t('common.busy') : t('common.save')}
+      </button>
+    </div>
+  {/if}
 </ModalShell>

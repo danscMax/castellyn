@@ -46,5 +46,9 @@ export default {
   errBadJson: 'Invalid JSON',
   savedServer: 'Saved server “{name}”',
   removedServer: 'Removed server “{name}”',
-  removedExtra: 'Removed “{name}” from {profile}'
+  removedExtra: 'Removed “{name}” from {profile}',
+  unsavedTitle: 'Unsaved changes',
+  unsavedMsg: 'Close the form and lose what you typed?',
+  discardEdits: 'Close without saving',
+  keepEditing: 'Keep editing'
 };

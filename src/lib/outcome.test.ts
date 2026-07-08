@@ -97,4 +97,45 @@ describe('deriveOutcome', () => {
     expect(o.kind).toBe('warn');
     expect(o.action?.kind).toBe('log');
   });
+
+  // U9: on a non-zero exit, a FRESH envelope summary (written by this run) is shown; a STALE one
+  // (a previous run's, left behind if the script died before writing) falls back to generic text.
+  it('U9: non-zero exit with a fresh envelope summary → shows the summary', () => {
+    const started = Date.parse('2026-07-08T10:00:00Z');
+    const o = deriveOutcome({
+      id: 'speckit',
+      name: 'SpecKit',
+      code: 1,
+      mode: 'apply',
+      status: { status: 'error', summary: 'упал на smoke-тестах', timestamp: '2026-07-08T10:00:05Z' },
+      startedAt: started
+    });
+    expect(o.kind).toBe('error');
+    expect(o.detail).toBe('упал на smoke-тестах');
+    expect(o.action?.kind).toBe('log');
+  });
+
+  it('U9: non-zero exit with a stale envelope → generic detail, not the old summary', () => {
+    const started = Date.parse('2026-07-08T10:00:00Z');
+    const o = deriveOutcome({
+      id: 'speckit',
+      name: 'SpecKit',
+      code: 1,
+      mode: 'apply',
+      status: { status: 'error', summary: 'старое резюме', timestamp: '2026-07-08T09:00:00Z' },
+      startedAt: started
+    });
+    expect(o.detail).not.toBe('старое резюме');
+  });
+
+  it('U9: non-zero exit without a startedAt reference → generic detail', () => {
+    const o = deriveOutcome({
+      id: 'speckit',
+      name: 'SpecKit',
+      code: 1,
+      mode: 'apply',
+      status: { status: 'error', summary: 'резюме', timestamp: '2026-07-08T10:00:05Z' }
+    });
+    expect(o.detail).not.toBe('резюме');
+  });
 });

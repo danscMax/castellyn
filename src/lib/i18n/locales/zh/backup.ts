@@ -65,5 +65,6 @@ export default {
   planCredsOn: '将从快照补全缺失的凭据（保留现有凭据）。',
   planCredsOff: '不会改动凭据。',
   planUntouched: '共享与系统托管文件保持不变。',
-  planDetails: '技术输出'
+  planDetails: '技术输出',
+  restoreDone: '恢复完成'
 };

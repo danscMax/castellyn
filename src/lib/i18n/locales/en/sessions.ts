@@ -180,6 +180,7 @@ export default {
   forgetLayout: 'Forget layout',
   forgetLayoutTip: 'Forget the saved monitor layout (stop offering to restore it)',
   forgetLayoutDone: 'Saved monitor layout forgotten.',
+  restoreLayoutFail: 'Couldn’t restore the layout',
   defaultArgs: 'Default arguments',
   defaultArgsHint: 'Applied to Claude quick-launches (profiles / "Launch all").',
   wsSave: 'Save workspace',
