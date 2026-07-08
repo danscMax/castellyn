@@ -269,8 +269,11 @@
     white-space: nowrap;
     flex-shrink: 0;
   }
-  .sess-strip.strip-warn { color: var(--sw-warn); }
-  .sess-strip.strip-err { color: var(--sw-err, #ef4444); }
+  /* V2/V6: light-aware canon amber (was --sw-warn, no light override → pale on light); err via the
+     light-aware --sw-status-bad token (was the phantom --sw-err, undefined → hardcoded red). */
+  .sess-strip.strip-warn { color: #f59e0b; }
+  :global(.light) .sess-strip.strip-warn { color: #b45309; }
+  .sess-strip.strip-err { color: var(--sw-status-bad); }
   .ss-item {
     display: inline-flex;
     align-items: center;
@@ -286,8 +289,9 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
-  .ss-work { background: var(--sw-ok, #22c55e); }
-  .ss-block { background: var(--sw-warn, #f59e0b); }
+  /* V2: canon status tokens (was the phantom --sw-ok, undefined → hardcoded green). */
+  .ss-work { background: var(--sw-status-up); }
+  .ss-block { background: var(--sw-status-degraded); }
   /* Same steady red as TerminalPane's `.dot.limited` — "stopped on quota". */
   .ss-lim { background: var(--sw-status-down, #ef4444); }
   .titlebar.inactive .sess-strip { opacity: 0.6; }

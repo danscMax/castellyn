@@ -93,7 +93,7 @@
       {#each items as it (it.label)}
         <button
           class="item"
-          class:danger={it.danger}
+          class:status-bad={it.danger}
           disabled={it.disabled}
           role="menuitem"
           title={it.title}
@@ -151,8 +151,5 @@
   .item:disabled {
     opacity: 0.45;
     cursor: not-allowed;
-  }
-  .item.danger {
-    color: var(--sw-danger);
   }
 </style>

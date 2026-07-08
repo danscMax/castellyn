@@ -162,7 +162,7 @@
           <div>{t('profiles.lcFullResult')}<span class="font-mono text-sw-text">{fmt(fullSize)}</span> {t('profiles.lcTokensUnit')}</div>
         </div>
         {#if measureErr}
-          <p class="mt-sw-2 text-sw-xs" style="color:var(--sw-warn)">{measureErr}</p>
+          <p class="mt-sw-2 text-sw-xs status-warn">{measureErr}</p>
         {/if}
         <p class="mt-sw-1 text-sw-xs text-sw-text-muted">
           {t('profiles.lcMeasureNote', { cmd: 'claude -p' })}
@@ -170,7 +170,7 @@
       </div>
 
       {#if applyErr}
-        <p class="mt-sw-2 text-sw-xs" style="color:var(--sw-danger)">{applyErr}</p>
+        <p class="mt-sw-2 text-sw-xs status-bad">{applyErr}</p>
       {/if}
 
       <div class="dlg-row">

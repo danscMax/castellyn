@@ -819,7 +819,7 @@
     display: block;
     height: 100%;
     border-radius: 5px;
-    background: var(--sw-btn-primary-bg, #3b82f6);
+    background: var(--sw-accent);
     opacity: 0.55;
     transition: width 0.2s ease, opacity 0.15s;
   }

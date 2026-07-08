@@ -72,7 +72,7 @@
             autocomplete="off"
           />
           {#if name && !nameValid}
-            <span class="err">{t('profiles.dlgNameError')}</span>
+            <span class="err status-warn">{t('profiles.dlgNameError')}</span>
           {/if}
         </label>
       {/if}
@@ -118,7 +118,6 @@
   }
   .err {
     margin-top: 4px;
-    color: var(--sw-warn);
     font-size: var(--sw-text-xs);
   }
   .colors {

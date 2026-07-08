@@ -1793,8 +1793,8 @@
       {#if statusCounts.blocked || statusCounts.working || statusCounts.done}
         <!-- herdr-style rollup: which sessions need a decision / are running / are ready to review -->
         <span class="status-sum" role="status">
-          {#if statusCounts.blocked}<span class="ss ss-blocked">● {t('sessions.sumBlocked', { n: statusCounts.blocked })}</span>{/if}
-          {#if statusCounts.working}<span class="ss ss-working">● {t('sessions.sumWorking', { n: statusCounts.working })}</span>{/if}
+          {#if statusCounts.blocked}<span class="ss ss-blocked status-bad">● {t('sessions.sumBlocked', { n: statusCounts.blocked })}</span>{/if}
+          {#if statusCounts.working}<span class="ss ss-working status-warn">● {t('sessions.sumWorking', { n: statusCounts.working })}</span>{/if}
           {#if statusCounts.done}<span class="ss ss-done">● {t('sessions.sumDone', { n: statusCounts.done })}</span>{/if}
         </span>
       {:else}
@@ -2085,7 +2085,7 @@
             <input class="sw-input font-mono text-sw-xs" style="width:170px" bind:value={srvDir} placeholder={t('sessions.dlgSshRemoteDir')} spellcheck="false" autocomplete="off" />
             <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!srvTarget.trim() || srvTesting} onclick={testServer}>{t('sessions.dlgSshTest')}</button>
             {#if srvTest === 'ok'}<span class="text-sw-xs" style="color:var(--sw-status-up)">✓ {t('sessions.dlgSshTestOk')}</span>{/if}
-            {#if srvTest === 'fail'}<span class="text-sw-xs" style="color:var(--sw-danger)">✕ {t('sessions.dlgSshTestFail')}</span>{/if}
+            {#if srvTest === 'fail'}<span class="text-sw-xs status-bad">✕ {t('sessions.dlgSshTestFail')}</span>{/if}
             <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!srvTarget.trim()} onclick={addServer}>{t('sessions.serverAdd')}</button>
           </div>
         </div>
@@ -2095,9 +2095,9 @@
   {/if}
 
   {#if globalCount >= SESSION_LIMIT}
-    <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-warn)">{t('sessions.globalLimitNote', { n: SESSION_LIMIT })}</p>
+    <p class="mb-sw-2 text-sw-xs status-warn">{t('sessions.globalLimitNote', { n: SESSION_LIMIT })}</p>
   {:else if panes.length >= MAX_PANES}
-    <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-warn)">{t('sessions.limitNote', { n: MAX_PANES })}</p>
+    <p class="mb-sw-2 text-sw-xs status-warn">{t('sessions.limitNote', { n: MAX_PANES })}</p>
   {:else if globalCount >= SESSION_LIMIT - 4}
     <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-text-muted)">{t('sessions.globalNearNote', { used: globalCount, max: SESSION_LIMIT })}</p>
   {/if}
@@ -2404,11 +2404,8 @@
     white-space: nowrap;
   }
   .ss-blocked {
-    color: var(--sw-danger);
+    /* V7: text color from the .status-bad canon (light-aware); the strip stays bold. */
     font-weight: 600;
-  }
-  .ss-working {
-    color: var(--sw-status-warn);
   }
   .ss-done {
     color: var(--sw-status-done);

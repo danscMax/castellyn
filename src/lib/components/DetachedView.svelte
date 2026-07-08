@@ -98,7 +98,8 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: var(--sw-bg, #080c18);
+    /* V3: themable surface (was the phantom --sw-bg → always dark #080c18). */
+    background: var(--sw-bg-primary);
   }
   .bar {
     display: flex;
@@ -106,7 +107,7 @@
     justify-content: space-between;
     height: 28px;
     padding: 0 8px;
-    background: #0a1124;
+    background: var(--sw-bg-secondary);
     border-bottom: 1px solid var(--sw-border, #1c2840);
     user-select: none;
   }

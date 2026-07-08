@@ -347,7 +347,7 @@
                   <span class="min-w-0">
                     <span class="flex items-center gap-sw-1 font-medium">
                       <span class="truncate" title={r.name}>{r.name}</span>
-                      {#if dirty}<span class="unsaved-pill" title={t('profiles.matrixDirtyTip')}>{t('profiles.matrixUnsaved')}</span>{/if}
+                      {#if dirty}<span class="unsaved-pill status-warn" title={t('profiles.matrixDirtyTip')}>{t('profiles.matrixUnsaved')}</span>{/if}
                     </span>
                     {#if r.description}<span class="block truncate text-sw-xs text-sw-text-muted" title={r.description}>{r.description}</span>{/if}
                   </span>
@@ -370,7 +370,7 @@
                   disabled={busy || applying}
                   title={t('profiles.matrixProxyTip')}
                 />
-                {#if !proxyValid(r.name)}<span class="warn">{t('profiles.matrixProxyInvalid')}</span>{/if}
+                {#if !proxyValid(r.name)}<span class="warn status-warn">{t('profiles.matrixProxyInvalid')}</span>{/if}
               </td>
               <td>
                 <button
@@ -433,7 +433,7 @@
                 {/if}
               </label>
             {/each}
-            <div class="warnnote">{t('profiles.matrixRelinkNote')}</div>
+            <div class="warnnote status-warn">{t('profiles.matrixRelinkNote')}</div>
           {:else if popKind === 'plugins'}
             {#each r.plugins as p (p.id)}
               <label class="poprow">
@@ -472,7 +472,7 @@
                   <span class="min-w-0 flex-1 truncate font-mono text-sw-xs" title={ex}>{ex}</span>
                   <button
                     type="button"
-                    class="xbtn"
+                    class="xbtn status-warn"
                     disabled={busy}
                     onclick={() => onMcpRemoveExtra(ex, popFor!)}
                     title={t('profiles.matrixMcpRemoveTip')}
@@ -551,7 +551,7 @@
     padding: 1px 7px;
     border-radius: 99px;
     background: color-mix(in srgb, var(--sw-warn) 22%, transparent);
-    color: var(--sw-warn);
+    /* V6: text color now from the .status-warn canon (light-aware); keep the warn-tinted fill. */
     font-size: 10px;
     font-weight: 600;
     line-height: 1.4;
@@ -600,7 +600,6 @@
     border: 1px solid var(--sw-border);
     border-radius: 6px;
     background: var(--sw-bg-secondary);
-    color: var(--sw-warn);
     font-size: 11px;
     line-height: 1;
     padding: 3px 6px;
@@ -628,7 +627,6 @@
   .warn {
     display: block;
     margin-top: 3px;
-    color: var(--sw-warn);
     font-size: var(--sw-text-xs);
   }
   .popover {
@@ -652,7 +650,6 @@
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid var(--sw-border);
-    color: var(--sw-warn);
     font-size: var(--sw-text-xs);
   }
   .applybar {

@@ -131,9 +131,9 @@
         <span>{t('providers.baseUrlLabel')}</span>
         <input class="sw-input" bind:value={baseUrl} placeholder="http://localhost:4000" spellcheck="false" autocomplete="off" title={t('providers.baseUrlInputTip')} />
         {#if matchedOpenAI}
-          <span class="warn">{t('providers.openaiWarn')}</span>
+          <span class="warn status-warn">{t('providers.openaiWarn')}</span>
         {:else if baseUrl.trim() && !isValidHttpUrl(baseUrl.trim())}
-          <span class="warn">{t('providers.invalidUrl')}</span>
+          <span class="warn status-warn">{t('providers.invalidUrl')}</span>
         {/if}
       </label>
 
@@ -190,7 +190,6 @@
   /* Inline (not block) warning, shown right under the base-URL input. */
   .warn {
     margin-top: 4px;
-    color: var(--sw-warn);
     font-size: var(--sw-text-xs);
   }
   .chk {

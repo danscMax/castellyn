@@ -111,7 +111,8 @@
     color: var(--sw-text-primary);
   }
   .star.on {
-    color: #fbbf24;
+    /* V10: one favorite-star color across the app (SessionsTab stars already use --sw-warn). */
+    color: var(--sw-warn);
   }
   .menu {
     /* position/top/left set inline by use:anchored (fixed, escapes overflow ancestors) */

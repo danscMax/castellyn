@@ -524,7 +524,7 @@
         {#if changelogLoading}
           <p class="cl-status">{t('plugins.changelogLoading')}</p>
         {:else if changelogError}
-          <p class="cl-status cl-error">{t('plugins.changelogError')}<br><span class="cl-errdetail">{changelogError}</span></p>
+          <p class="cl-status status-bad">{t('plugins.changelogError')}<br><span class="cl-errdetail">{changelogError}</span></p>
         {:else if changelogReleases && changelogReleases.length}
           {#each changelogReleases as rel (rel.tag_name)}
             <div class="cl-release">
@@ -907,9 +907,6 @@
     color: var(--sw-text-muted);
     font-size: 12px;
     padding: 32px 0;
-  }
-  .cl-error {
-    color: var(--sw-danger);
   }
   .cl-errdetail {
     font-family: 'Cascadia Code', 'Consolas', monospace;
