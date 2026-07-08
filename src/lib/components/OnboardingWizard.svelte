@@ -6,7 +6,7 @@
   import ModalShell from './ModalShell.svelte';
   import FolderField from './FolderField.svelte';
   import { t } from '$lib/i18n';
-  import { readConfig, writeConfig, appPaths, scriptsAvailable } from '$lib/ipc';
+  import { readConfig, saveConfig, appPaths, scriptsAvailable } from '$lib/ipc';
   import type { ProfileMgmtArgs } from '$lib/ipc';
 
   let {
@@ -73,8 +73,7 @@
   async function saveScripts() {
     const root = scriptsRoot.trim();
     if (!root) return;
-    const cfg = await readConfig();
-    await writeConfig({ ...cfg, scriptsRoot: root });
+    await saveConfig((c) => (c.scriptsRoot = root)); // R7: rev-safe write
     await appPaths().catch(() => {}); // nudge the backend to resolve the new root
     scriptsSaved = true;
   }

@@ -1034,6 +1034,9 @@ export type HubConfig = {
   limitMode?: string | null;
   // Wave C-5: show the native session-status strip in the title bar. Absent = default (on).
   showSessionStatusBar?: boolean | null;
+  // R7: optimistic-concurrency version (bumped by every write). Pass the value you read back as
+  // `expectedRev` to writeConfig; a stale value is rejected so no fields are silently lost.
+  rev?: number;
 };
 
 /** A single entry in the global-shortcut mapping. */
@@ -1047,7 +1050,30 @@ export type AppPaths = {
 };
 
 export const readConfig = () => invoke<HubConfig>('read_config');
-export const writeConfig = (config: HubConfig) => invoke('write_config', { config });
+// R7: pass `expectedRev` (the rev you read) for optimistic concurrency; omit it to force-write
+// (e.g. importing a whole config). Returns the new rev. Prefer `saveConfig` for read-modify-write.
+export const writeConfig = (config: HubConfig, expectedRev?: number) =>
+  invoke<number>('write_config', { config, expectedRev });
+
+/**
+ * R7: safe read-modify-write of the config. Reads the current config, applies `mutate`, and writes
+ * it back keyed on the base rev; if another writer bumped the config in between, re-reads and retries
+ * (up to 3×) so no fields are lost. Use this for ANY config field toggle instead of read-then-write.
+ */
+export async function saveConfig(mutate: (c: HubConfig) => void): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const c = await readConfig();
+    const base = c.rev ?? 0;
+    mutate(c);
+    try {
+      await writeConfig(c, base);
+      return;
+    } catch (e) {
+      if (attempt < 2 && String(e).includes('config-conflict')) continue;
+      throw e;
+    }
+  }
+}
 // Mirror the UI locale into the backend (errors/run-log/tray localize + persist to config).
 export const setLanguage = (lang: string) => invoke('set_language', { lang });
 export const appPaths = () => invoke<AppPaths>('app_paths');

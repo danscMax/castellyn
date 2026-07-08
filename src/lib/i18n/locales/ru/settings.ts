@@ -123,7 +123,7 @@ export default {
   updateAvailableMsg: 'Готова новая версия ({from} → {to}). Скачать и установить сейчас? Приложение перезапустится.',
   updateNow: 'Обновить и перезапустить',
   backupSection: 'Резервная копия настроек',
-  backupSectionDesc: 'Экспорт/импорт настроек Castellyn (config.json) — для переноса на другой ПК',
+  backupSectionDesc: 'Экспорт/импорт настроек Castellyn и реестра форков (config.json + forks.json) — для переноса на другой ПК',
   exportConfig: 'Экспорт настроек',
   exportTip: 'Сохранить текущие настройки в файл',
   importConfig: 'Импорт настроек',

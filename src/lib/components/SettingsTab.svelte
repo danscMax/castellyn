@@ -5,6 +5,7 @@
   import {
     readConfig,
     writeConfig,
+    saveConfig,
     appPaths,
     openPath,
     getAutostart,
@@ -245,7 +246,9 @@
     const prev = cfg;
     cfg = { ...cfg, ...patch };
     try {
-      await writeConfig(cfg);
+      // R7: rev-safe read-modify-write — apply the patch onto a FRESH read so a concurrent write
+      // (Sessions popover, backend ledger) isn't clobbered.
+      await saveConfig((c) => Object.assign(c, patch));
       errMsg = '';
       return true;
     } catch (e) {

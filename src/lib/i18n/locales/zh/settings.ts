@@ -123,7 +123,7 @@ export default {
   updateAvailableMsg: '新版本已就绪（{from} → {to}）。立即下载并安装？应用将重启。',
   updateNow: '更新并重启',
   backupSection: '设置备份',
-  backupSectionDesc: '导出/导入 Castellyn 设置（config.json）——用于迁移到其他电脑',
+  backupSectionDesc: '导出/导入 Castellyn 设置与 fork 注册表（config.json + forks.json）——用于迁移到其他电脑',
   exportConfig: '导出设置',
   exportTip: '将当前设置保存到文件',
   importConfig: '导入设置',

@@ -32,7 +32,7 @@
     agentStatusHookStatus,
     agentStatusHookSet,
     readConfig,
-    writeConfig,
+    saveConfig,
     type AgentStatusHookState,
     type AgentStatusEvent,
     type LimitsStatusEvent,
@@ -515,17 +515,18 @@
   });
   async function saveLimitMode() {
     try {
-      const c = await readConfig();
-      await writeConfig({ ...c, limitMode });
+      // R7: rev-safe write so a concurrent Settings-tab save of the same fields isn't clobbered.
+      await saveConfig((c) => (c.limitMode = limitMode));
     } catch (e) {
       pushToast({ kind: 'error', title: String(e) });
     }
   }
   async function saveStatusPrefs() {
     try {
-      // Read-patch-write: writeConfig persists the WHOLE config, so never send a partial.
-      const c = await readConfig();
-      await writeConfig({ ...c, statusSounds, statusNotify });
+      await saveConfig((c) => {
+        c.statusSounds = statusSounds;
+        c.statusNotify = statusNotify;
+      });
     } catch (e) {
       pushToast({ kind: 'error', title: String(e) });
     }

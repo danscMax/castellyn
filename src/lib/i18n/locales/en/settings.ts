@@ -123,7 +123,7 @@ export default {
   updateAvailableMsg: 'A new version is ready ({from} → {to}). Download and install now? The app will restart.',
   updateNow: 'Update & restart',
   backupSection: 'Settings backup',
-  backupSectionDesc: 'Export/import Castellyn settings (config.json) — to move to another PC',
+  backupSectionDesc: 'Export/import Castellyn settings and the fork registry (config.json + forks.json) — to move to another PC',
   exportConfig: 'Export settings',
   exportTip: 'Save the current settings to a file',
   importConfig: 'Import settings',

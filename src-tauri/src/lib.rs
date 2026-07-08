@@ -243,6 +243,11 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     managed_mcp: Option<ManagedMcp>,
+    /// R7: optimistic-concurrency version, bumped on every write. A save carrying a stale `rev` is
+    /// rejected ("config-conflict") so two concurrent read-modify-writes can't drop each other's
+    /// fields. `default` = 0 for a config written before versioning existed.
+    #[serde(default)]
+    rev: u64,
 }
 
 fn config_path() -> Option<String> {
@@ -8822,11 +8827,9 @@ fn run_opencode_mcp() -> Result<usize, String> {
 
     // Gap-2 reconcile: drop entries we deployed on a previous run that are no longer in canon. A
     // user-added server was never in our ledger (managed_mcp.opencode), so it's never removed.
-    let mut hub = read_config_file();
-    let prev = hub
+    let prev = read_config_file()
         .managed_mcp
-        .as_ref()
-        .and_then(|m| m.opencode.clone())
+        .and_then(|m| m.opencode)
         .unwrap_or_default();
     for stale in mcp_stale_names(&prev, &canon_names) {
         mcp.remove(&stale);
@@ -8834,9 +8837,10 @@ fn run_opencode_mcp() -> Result<usize, String> {
 
     let serialized = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     write_json_atomic(&cfg_path, &serialized).map_err(|e| format!("write opencode.json: {e}"))?;
-    // Update the ledger to the current canon (best-effort: opencode.json is already written).
-    hub.managed_mcp.get_or_insert_default().opencode = Some(canon_names);
-    let _ = write_config_file(&hub);
+    // R7: update the ledger through the atomic patch (bumps rev; can't lose a concurrent write).
+    let _ = patch_config(|c| {
+        c.managed_mcp.get_or_insert_default().opencode = Some(canon_names);
+    });
     Ok(count)
 }
 
@@ -9094,11 +9098,9 @@ fn run_codex_mcp() -> Result<serde_json::Value, String> {
         .filter(|(name, def)| codex_mcp_add_args(name, def).is_some())
         .map(|(name, _)| name.clone())
         .collect();
-    let mut hub = read_config_file();
-    let prev = hub
+    let prev = read_config_file()
         .managed_mcp
-        .as_ref()
-        .and_then(|m| m.codex.clone())
+        .and_then(|m| m.codex)
         .unwrap_or_default();
     let stale = mcp_stale_names(&prev, &canon_names);
     for name in &stale {
@@ -9125,8 +9127,10 @@ fn run_codex_mcp() -> Result<serde_json::Value, String> {
                 ledger.push(name); // remove didn't take → keep managing it
             }
         }
-        hub.managed_mcp.get_or_insert_default().codex = Some(ledger);
-        let _ = write_config_file(&hub);
+        // R7: advance the ledger through the atomic patch (bumps rev; can't lose a concurrent write).
+        let _ = patch_config(|c| {
+            c.managed_mcp.get_or_insert_default().codex = Some(ledger);
+        });
     }
 
     // Partial-honest: report per-server outcome instead of an all-or-nothing Err. The hard Errs above
@@ -12459,11 +12463,37 @@ fn write_config_file(config: &HubConfig) -> Result<(), String> {
     Ok(())
 }
 
+/// R7: serializes every config write so a read-modify-write is atomic (separate from CONFIG_CACHE's
+/// RwLock, which only guards the read cache). Both patch_config and write_config hold it.
+static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// R7: the backend's safe config mutator — read-modify-write under the write lock, bumping `rev`.
+/// Every backend writer (ledger updates, hotkeys, language) goes through this so a concurrent
+/// frontend save sees a fresh rev and can't silently lose these fields (or have them lost).
+fn patch_config(f: impl FnOnce(&mut HubConfig)) -> Result<(), String> {
+    let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cfg = read_config_file();
+    f(&mut cfg);
+    cfg.rev = cfg.rev.wrapping_add(1);
+    write_config_file(&cfg)
+}
+
 #[tauri::command]
-fn write_config(mut config: HubConfig) -> Result<(), String> {
+fn write_config(mut config: HubConfig, expected_rev: Option<u64>) -> Result<u64, String> {
+    // R7: optimistic concurrency — reject a save whose base rev is stale (someone wrote in between),
+    // so the frontend can re-read + retry instead of clobbering the other writer's fields.
+    let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let current = read_config_file();
+    if let Some(exp) = expected_rev {
+        if exp != current.rev {
+            return Err("config-conflict".to_string()); // stable sentinel the frontend matches on
+        }
+    }
     // language is owned by set_language — a generic settings save must never clobber it.
-    config.language = read_config_file().language;
-    write_config_file(&config)
+    config.language = current.language;
+    config.rev = current.rev.wrapping_add(1);
+    write_config_file(&config)?;
+    Ok(config.rev)
 }
 
 /// Mirror the UI locale into the backend: update the in-process Lang (so errors/log localize),
@@ -12472,9 +12502,7 @@ fn write_config(mut config: HubConfig) -> Result<(), String> {
 fn set_language(app: AppHandle, lang: String) -> Result<(), String> {
     let l = Lang::parse(&lang);
     set_cur_lang(l);
-    let mut cfg = read_config_file();
-    cfg.language = Some(lang);
-    write_config_file(&cfg)?;
+    patch_config(|c| c.language = Some(lang))?;
     rebuild_tray_menu(&app, l);
     update_tray_tooltip(&app);
     Ok(())
@@ -12498,19 +12526,44 @@ fn app_paths() -> serde_json::Value {
 /// file is always valid even if config.json was never written.
 #[tauri::command]
 fn export_config(dest: String) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(&read_config_file()).map_err(|e| e.to_string())?;
+    // R8: bundle the durable forks.json alongside config so a settings export carries the fork
+    // registry too (schemaVersion 2). import_config accepts both this and the legacy flat HubConfig.
+    let forks = fork_config_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(c.trim_start_matches('\u{feff}')).ok());
+    let bundle = serde_json::json!({
+        "schemaVersion": 2,
+        "config": read_config_file(),
+        "forks": forks,
+    });
+    let json = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
     std::fs::write(&dest, json).map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]))
 }
 
 /// Read + validate a config file (#117); returns the parsed HubConfig (the frontend persists it
-/// via write_config). Invalid JSON / wrong shape → Err.
+/// via write_config). R8: accepts both the new bundle {schemaVersion, config, forks} — writing the
+/// forks section to the durable path — and the legacy flat HubConfig. Invalid JSON / shape → Err.
 #[tauri::command]
 fn import_config(src: String) -> Result<HubConfig, String> {
     let text =
         std::fs::read_to_string(&src).map_err(|e| trv("err.read", cur_lang(), &[("e", &e)]))?;
     // BOM-tolerant like every other file read (PowerShell-written configs often carry one).
-    serde_json::from_str::<HubConfig>(text.trim_start_matches('\u{feff}'))
-        .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e)]))
+    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))?;
+    if v.get("schemaVersion").is_some() && v.get("config").is_some() {
+        // New bundle: restore the fork registry to its durable path, return the config for the UI.
+        if let Some(forks) = v.get("forks").filter(|f| !f.is_null()) {
+            if let (Some(fp), Ok(fj)) = (fork_config_path(), serde_json::to_string_pretty(forks)) {
+                let _ = write_json_atomic(&fp, &fj);
+            }
+        }
+        serde_json::from_value::<HubConfig>(v.get("config").cloned().unwrap_or_default())
+            .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))
+    } else {
+        // Legacy flat HubConfig (pre-R8 exports).
+        serde_json::from_value::<HubConfig>(v)
+            .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))
+    }
 }
 
 /// A profile's settings.json `env` block as (key, value) pairs. Claude Code (2.1+) applies its
@@ -13380,11 +13433,11 @@ fn set_toggle_hotkey(app: AppHandle, accel: Option<String>) -> Result<(), String
     match accel.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(a) => {
             // Also update the shortcuts map for consistency.
-            let mut cfg = read_config_file();
-            let mut m = cfg.shortcuts.clone().unwrap_or_default();
-            m.insert("toggle_window".to_string(), a.to_string());
-            cfg.shortcuts = Some(m);
-            let _ = write_config_file(&cfg);
+            let _ = patch_config(|c| {
+                let mut m = c.shortcuts.clone().unwrap_or_default();
+                m.insert("toggle_window".to_string(), a.to_string());
+                c.shortcuts = Some(m);
+            });
             register_toggle_hotkey(&app, a)
         }
         None => {
@@ -13423,11 +13476,11 @@ fn set_shortcuts(app: AppHandle, shortcuts: HashMap<String, String>) -> Result<(
             return Err(e);
         }
     }
-    // All applied cleanly → persist.
-    let mut cfg = read_config_file();
-    cfg.shortcuts = Some(shortcuts.clone());
-    cfg.toggle_hotkey = shortcuts.get("toggle_window").cloned();
-    write_config_file(&cfg)?;
+    // All applied cleanly → persist (R7: atomic patch so it bumps rev).
+    patch_config(|c| {
+        c.shortcuts = Some(shortcuts.clone());
+        c.toggle_hotkey = shortcuts.get("toggle_window").cloned();
+    })?;
     Ok(())
 }
 
