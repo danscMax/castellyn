@@ -16,26 +16,28 @@ export type ToastWithMeta = Toast & { timestamp: number };
 // stripped on save and absent after reload (the panel never renders them anyway).
 const HIST_KEY = 'cmh-notif-history';
 
-/// Highest id among restored entries (0 when there are none). `seq` must resume above this: it lives
-/// in module scope and restarts at 0 on every load, while the history it is compared against survives
-/// in localStorage. Pure so the invariant is unit-testable without a DOM.
-export function nextSeqFrom(items: readonly { id: number }[]): number {
-  return items.reduce((max, i) => (i.id > max ? i.id : max), 0);
+/// Reassign ids over a restored history so they are unique, newest-first.
+///
+/// `seq` lives in module scope and restarts at 0 on every load, so entries persisted across several
+/// runs carry colliding ids — a real history here held 50 entries with only 16 distinct ids. The panel
+/// keys its `{#each}` by id and Svelte *throws* on a duplicate key, so restored ids cannot be trusted:
+/// they are renumbered on load, and `seq` resumes above them. Descending order keeps the key of a given
+/// entry stable as newer toasts are unshifted in front of it. Pure, so the invariant is unit-testable.
+export function renumberHistory<T extends { id: number }>(items: readonly T[]): T[] {
+  const n = items.length;
+  return items.map((x, i) => ({ ...x, id: n - i }));
 }
 
 function loadHistory(): ToastWithMeta[] {
   try {
     const arr = JSON.parse(localStorage.getItem(HIST_KEY) ?? '[]') as unknown;
     if (!Array.isArray(arr)) return [];
-    // `id` is now load-bearing (the panel keys its {#each} by it), so an entry without one is dropped
-    // rather than rendered with an `undefined` key — two of those would collide exactly as timestamps did.
-    const items = (arr as ToastWithMeta[])
-      .filter(
-        (x) =>
-          x && typeof x.title === 'string' && typeof x.timestamp === 'number' && typeof x.id === 'number'
-      )
-      .slice(0, 50);
-    seq = nextSeqFrom(items);
+    const items = renumberHistory(
+      (arr as ToastWithMeta[])
+        .filter((x) => x && typeof x.title === 'string' && typeof x.timestamp === 'number')
+        .slice(0, 50)
+    );
+    seq = items.length;
     return items;
   } catch {
     return []; // no localStorage (tests) or corrupt payload — start empty
