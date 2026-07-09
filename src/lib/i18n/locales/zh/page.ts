@@ -320,6 +320,7 @@ export default {
   out_changes_any: '{name}：有可用更新',
   out_changes_detail: '在卡片上点击「更新」。',
   out_uptodate: '{name}：已是最新',
+  out_unknown_status: '{name}：未知状态“{status}”',
   out_held: '{name}：更新已保留（pin）',
   hkTitle: '键盘快捷键',
   hkPalette: '命令面板 / 跳转标签页',

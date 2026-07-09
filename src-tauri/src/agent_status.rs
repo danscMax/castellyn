@@ -410,27 +410,36 @@ pub(crate) fn attention_counts() -> (usize, usize) {
     (blocked, limited)
 }
 
-pub fn start(app: tauri::AppHandle) {
-    // Prune week-old hook files (claude session ids in them feed session restore, so we
-    // keep recent ones across app restarts).
-    if let Some(dir) = status_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for e in entries.flatten() {
-                let stale = e
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .map(|m| m.elapsed().map(|d| d.as_secs() > 7 * 86_400).unwrap_or(false))
-                    .unwrap_or(false);
-                if stale {
-                    let _ = std::fs::remove_file(e.path());
-                }
-            }
+/// Prune week-old hook files (claude session ids in them feed session restore, so recent ones are
+/// kept across app restarts). Runs on the poll thread, not on `setup()`: it is a read_dir + a
+/// metadata call per file, and the first frame should not wait on however many accumulated.
+fn prune_stale_hook_files() {
+    let Some(dir) = status_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for e in entries.flatten() {
+        let stale = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|m| m.elapsed().map(|d| d.as_secs() > 7 * 86_400).unwrap_or(false))
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(e.path());
         }
     }
-    std::thread::spawn(move || loop {
+}
+
+pub fn start(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        prune_stale_hook_files();
+        loop {
         std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
         crate::run_guarded("agent-status", || {
+        // Nothing tracked (no session panes open) → no state can change, so skip the whole tick
+        // instead of stat-ing the hook dir twice a second for the lifetime of the app.
+        if TRACKS.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+            return;
+        }
         let dir = status_dir();
         // Read hook files OUTSIDE the tracks lock: on_output() takes that lock from every
         // PTY reader thread per chunk, so fs reads (AV scans can stall them) must not
@@ -502,6 +511,7 @@ pub fn start(app: tauri::AppHandle) {
             crate::update_tray_tooltip(&app);
         }
         });
+        }
     });
 }
 

@@ -1,5 +1,9 @@
 import type { ProfileInfo, LimitsStatusEvent } from './ipc';
 
+/** A datapoint older than this is not evidence of anything: the backend polls every 300 s, so two
+ *  missed rounds mean the network (or the endpoint) has been failing and the numbers are guesses. */
+export const LIMITS_STALE_MS = 660_000; // 2 poll intervals + a minute of slack
+
 /**
  * #21e: pick the profile to resume a rate-limited conversation under.
  *
@@ -14,13 +18,18 @@ import type { ProfileInfo, LimitsStatusEvent } from './ipc';
  * instead of continuing the conversation. Both fields are optional in older profiles.last.json
  * snapshots, so absence means "don't know" and stays eligible — only a positive `false` disqualifies.
  *
+ * A datapoint must also be RECENT. A 429 emits `h5: null` deliberately (unknown ≠ zero), but a plain
+ * transport error emits nothing at all, so the store keeps the last successful reading — and a stale
+ * "12%" would send the session onto a profile that has been exhausted since. Age is the guard.
+ *
  * Pure + deterministic → unit-tested; the switch I/O (kill + respawn) lives in SessionsTab.
  */
 export function pickResumeCandidate(
   current: string,
   profiles: ProfileInfo[],
-  limits: Record<string, LimitsStatusEvent>,
-  exclude?: ReadonlySet<string>
+  limits: Record<string, LimitsStatusEvent & { receivedAt?: number }>,
+  exclude?: ReadonlySet<string>,
+  now: number = Date.now()
 ): string | null {
   const eligible = profiles
     .filter(
@@ -35,7 +44,13 @@ export function pickResumeCandidate(
     // L11: skip a profile already claimed by an earlier pane in the same auto-continue pass, so two
     // panes limited in the same tick don't both pile onto the one free profile (defeating balancing).
     .filter((p) => !exclude?.has(p.name))
-    .map((p) => ({ name: p.name, h5: limits[p.name]?.h5 ?? null }))
+    .map((p) => {
+      const l = limits[p.name];
+      // `receivedAt` is absent only for a store filled before this field existed — treat that as fresh
+      // rather than silently disabling auto-switch on first launch after an update.
+      const fresh = l != null && now - (l.receivedAt ?? now) <= LIMITS_STALE_MS;
+      return { name: p.name, h5: fresh ? (l?.h5 ?? null) : null };
+    })
     .filter((p): p is { name: string; h5: number } => p.h5 != null && p.h5 < 85)
     .sort((a, b) => a.h5 - b.h5);
   return eligible.length ? eligible[0].name : null;

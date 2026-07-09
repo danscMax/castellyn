@@ -4,7 +4,7 @@
   import { componentName } from '$lib/componentLabel';
   import { t, pUpdate, plural } from '$lib/i18n';
   import { relTime, formatAbsTime, parseTsMs } from '$lib/relativeTime';
-  import { countOf } from '$lib/envelope';
+  import { countOf, isUnknownStatus } from '$lib/envelope';
 
   // A run older than this reads as stale — the "last run" value is flagged, not silently trusted.
   const STALE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -81,6 +81,9 @@
       };
     if (st === 'changes' || changed > 0)
       return { label: `${changed} ${pUpdate(changed)}`, cls: 'badge-ok' };
+    // A status this build doesn't know (a newer envelope schema, or a script writing outside
+    // Write-StatusJson) must not read as success — "unknown" is not "up to date".
+    if (isUnknownStatus(st)) return { label: t('updates.healthUnknown', { status: st }), cls: 'badge-warn' };
     return { label: t('updates.healthUpToDate'), cls: 'badge-ok' };
   });
 

@@ -326,6 +326,7 @@ export default {
   out_changes_any: '{name}: есть обновления',
   out_changes_detail: 'Нажми «Обновить» на карточке.',
   out_uptodate: '{name}: актуально',
+  out_unknown_status: '{name}: неизвестный статус «{status}»',
   out_held: '{name}: обновление удержано (pin)',
   hkTitle: 'Горячие клавиши',
   hkPalette: 'Палитра команд / переход по вкладкам',

@@ -1507,12 +1507,14 @@ fn kill_tree(pid: u32) -> Result<(), String> {
     };
 
     // A soft kill can legitimately fail (console apps with no window ignore WM_CLOSE) — that is not
-    // an error, it just means we fall through to the forced pass below.
+    // an error, it just means we fall through to the forced pass below. Only a POSITIVE "it is gone"
+    // ends the grace window early: if the liveness probe itself failed we must not report a kill we
+    // never confirmed, so we fall through to `/F` instead.
     if let Ok(o) = taskkill(false) {
         if o.status.success() {
             for _ in 0..(GRACE_MS / POLL_MS) {
                 std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if !pid_alive(pid) {
+                if pid_alive(pid) == Some(false) {
                     return Ok(());
                 }
             }
@@ -1520,9 +1522,9 @@ fn kill_tree(pid: u32) -> Result<(), String> {
     }
 
     match taskkill(true) {
-        Ok(o) if o.status.success() || o.status.code() == Some(128) => Ok(()),
         // 128 = "process not found": it exited during the grace window, which is the success we wanted.
-        Ok(_) if !pid_alive(pid) => Ok(()),
+        Ok(o) if o.status.success() || o.status.code() == Some(128) => Ok(()),
+        Ok(_) if pid_alive(pid) == Some(false) => Ok(()),
         Ok(o) => {
             let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
             Err(trv("err.kill_failed", cur_lang(), &[("e", &msg)]))
@@ -1533,13 +1535,16 @@ fn kill_tree(pid: u32) -> Result<(), String> {
 
 /// Is `pid` still running? `tasklist` filtered by PID prints the header only when nothing matches,
 /// so the PID appearing in its own output is the liveness signal.
-fn pid_alive(pid: u32) -> bool {
+///
+/// `None` means the probe could not answer (tasklist missing, spawn refused). That is NOT "the process
+/// is gone": collapsing it to `false` let `kill_tree` report success before its force pass ever ran.
+fn pid_alive(pid: u32) -> Option<bool> {
     std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+        .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-        .unwrap_or(false)
 }
 
 /// Cancel the in-flight fork run for `path` (kills its process tree). No-op if none is running.
@@ -4013,6 +4018,15 @@ async fn read_stack_health() -> Vec<StackHealth> {
         .unwrap_or_default()
 }
 
+/// Is any stack service enabled? Reads `stack.json` only — no ports touched. The health monitor asks
+/// this before probing, so a user who never configured the stack pays nothing for it every 30 s.
+/// Re-read each tick, so enabling a service takes effect without an app restart.
+pub(crate) fn any_stack_service_enabled() -> bool {
+    stack_services()
+        .iter()
+        .any(|e| e.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true))
+}
+
 pub(crate) fn read_stack_health_blocking() -> Vec<StackHealth> {
     let s = |e: &serde_json::Value, k: &str| {
         e.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
@@ -5648,8 +5662,15 @@ fn kr_get(service: &str, user: &str) -> Option<String> {
     // name and returned, so the rename never loses stored API keys / dashboard tokens. No recursion
     // (kr_set hits keyring::Entry directly).
     let old = legacy_kr_service(service)?;
-    let v = keyring::Entry::new(&old, user).ok()?.get_password().ok()?;
-    let _ = kr_set(service, user, &v);
+    let legacy = keyring::Entry::new(&old, user).ok()?;
+    let v = legacy.get_password().ok()?;
+    // Drop the legacy copy once the secret is safely re-homed. Keeping it meant a later rotation
+    // rewrote only `castellyn.*`, leaving the PRE-rotation secret readable under `agenthub.*`
+    // indefinitely. `kr_delete` already purged both names — only this read path was inconsistent.
+    // If the re-home failed, leave the legacy entry alone: it is the only copy left.
+    if kr_set(service, user, &v).is_ok() {
+        let _ = legacy.delete_credential();
+    }
     Some(v)
 }
 fn kr_set(service: &str, user: &str, secret: &str) -> Result<(), String> {

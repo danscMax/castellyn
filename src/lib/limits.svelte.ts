@@ -6,12 +6,17 @@
 
 import type { LimitsStatusEvent } from '$lib/ipc';
 
-export const limitsStore = $state<{ byProfile: Record<string, LimitsStatusEvent> }>({
+/** A stored reading plus the moment it arrived. A transport error emits no event at all, so without
+ *  an arrival stamp the last successful numbers look current forever — and auto-switch would trust
+ *  them (see `LIMITS_STALE_MS` in limitSwitch.ts). */
+export type LimitsEntry = LimitsStatusEvent & { receivedAt: number };
+
+export const limitsStore = $state<{ byProfile: Record<string, LimitsEntry> }>({
   byProfile: {}
 });
 
 export function pushLimits(e: LimitsStatusEvent) {
-  limitsStore.byProfile[e.profile] = e;
+  limitsStore.byProfile[e.profile] = { ...e, receivedAt: Date.now() };
 }
 
 /** Peak utilization across all polled profiles (max of every 5h/7d %), or null if nothing polled.

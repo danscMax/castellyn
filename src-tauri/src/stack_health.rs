@@ -91,6 +91,12 @@ pub fn start(app: AppHandle) {
             if !crate::read_config_file().stack_health_monitor.unwrap_or(true) {
                 return;
             }
+            // No stack.json, or every service disabled → nothing to probe. Skips ~9 TCP connects and
+            // as many thread spawns per tick for anyone who does not use the llm-stack.
+            if !crate::any_stack_service_enabled() {
+                STACK_DOWN_COUNT.store(0, Ordering::Relaxed);
+                return;
+            }
             let health = crate::read_stack_health_blocking();
             // Only enabled services count as "outages"; a disabled service being down is expected.
             let curr: Vec<(String, bool)> = health

@@ -138,4 +138,28 @@ describe('deriveOutcome', () => {
     });
     expect(o.detail).not.toBe('резюме');
   });
+
+  it('U10: a status this build does not know is a warning, never a green "up to date"', () => {
+    // A newer envelope schema, or a script that wrote the file without Write-StatusJson.
+    const o = deriveOutcome({
+      id: 'rtk',
+      name: 'RTK CLI',
+      code: 0,
+      mode: 'check',
+      status: { status: 'partially-applied', timestamp: '2026-07-08T10:00:05Z' }
+    });
+    expect(o.kind).toBe('warn');
+    expect(o.title).toContain('partially-applied');
+  });
+
+  it('U10b: a known status still resolves normally', () => {
+    const o = deriveOutcome({
+      id: 'rtk',
+      name: 'RTK CLI',
+      code: 0,
+      mode: 'check',
+      status: { status: 'ok', timestamp: '2026-07-08T10:00:05Z' }
+    });
+    expect(o.kind).toBe('success');
+  });
 });

@@ -29,6 +29,7 @@ export default {
   healthNeedsAttentionOne: '{count} требует внимания',
   healthNeedsAttentionMany: '{count} требуют внимания',
   healthUpToDate: 'актуально',
+  healthUnknown: 'статус «{status}» неизвестен',
 
   // ── ComponentCard: details ──
   lastRun: 'Последний запуск',

@@ -326,6 +326,7 @@ export default {
   out_changes_any: '{name}: updates available',
   out_changes_detail: 'Press “Update” on the card.',
   out_uptodate: '{name}: up to date',
+  out_unknown_status: '{name}: unknown status “{status}”',
   out_held: '{name}: update held (pin)',
   hkTitle: 'Keyboard shortcuts',
   hkPalette: 'Command palette / jump to tab',

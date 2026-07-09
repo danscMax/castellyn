@@ -29,6 +29,7 @@ export default {
   healthNeedsAttentionOne: '{count} needs attention',
   healthNeedsAttentionMany: '{count} need attention',
   healthUpToDate: 'up to date',
+  healthUnknown: 'unknown status “{status}”',
 
   // ── ComponentCard: details ──
   lastRun: 'Last run',

@@ -29,6 +29,7 @@ export default {
   healthNeedsAttentionOne: '{count} 项需要关注',
   healthNeedsAttentionMany: '{count} 项需要关注',
   healthUpToDate: '最新',
+  healthUnknown: '未知状态“{status}”',
 
   // ── ComponentCard: details ──
   lastRun: '上次运行',

@@ -3,7 +3,7 @@
 // mapping logic stays deterministic given the current locale (unit-tested with a fixed locale).
 
 import { t } from '$lib/i18n';
-import { countOf } from '$lib/envelope';
+import { countOf, isUnknownStatus } from '$lib/envelope';
 
 export type OutcomeKind = 'success' | 'warn' | 'error' | 'info';
 export type OutcomeAction = { kind: 'log' | 'tab'; label: string; target?: string };
@@ -136,6 +136,16 @@ export function deriveOutcome(input: DeriveInput): Outcome {
           ? t('page.out_changes_count', { name, changed })
           : t('page.out_changes_any', { name }),
       detail: summaryStr ?? t('page.out_changes_detail')
+    };
+  }
+
+  // A status this build doesn't know (newer envelope schema, or a writer that bypassed
+  // Write-StatusJson) is not success. Say so instead of reporting a green "up to date".
+  if (isUnknownStatus(st)) {
+    return {
+      kind: 'warn',
+      title: t('page.out_unknown_status', { name, status: st }),
+      detail: summaryStr ?? durationText(status)
     };
   }
 

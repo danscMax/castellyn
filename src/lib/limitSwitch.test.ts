@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickResumeCandidate } from './limitSwitch';
+import { pickResumeCandidate, LIMITS_STALE_MS } from './limitSwitch';
 import type { ProfileInfo, LimitsStatusEvent } from './ipc';
 
 const prof = (name: string, over: Partial<ProfileInfo> = {}): ProfileInfo => ({
@@ -93,5 +93,22 @@ describe('pickResumeCandidate (#21e)', () => {
     expect(pickResumeCandidate('cur', profiles, limits, new Set(['a', 'b']))).toBeNull();
     // no exclude set → unchanged behaviour (picks b).
     expect(pickResumeCandidate('cur', profiles, limits)).toBe('b');
+  });
+
+  it('ignores a reading older than LIMITS_STALE_MS — a transport error freezes the last numbers', () => {
+    const profiles = [prof('cur'), prof('a')];
+    const now = 10_000_000;
+    // "a" looks free at 12%, but that datapoint predates two whole poll intervals: the poller has been
+    // failing, and the real utilisation is unknown. Switching onto it would resume into a dead profile.
+    const stale = { a: { ...lim('a', 12), receivedAt: now - LIMITS_STALE_MS - 1 } };
+    expect(pickResumeCandidate('cur', profiles, stale, undefined, now)).toBeNull();
+
+    const fresh = { a: { ...lim('a', 12), receivedAt: now - 1_000 } };
+    expect(pickResumeCandidate('cur', profiles, fresh, undefined, now)).toBe('a');
+  });
+
+  it('treats a reading with no receivedAt as fresh, so an upgrade does not disable auto-switch', () => {
+    const profiles = [prof('cur'), prof('a')];
+    expect(pickResumeCandidate('cur', profiles, { a: lim('a', 5) })).toBe('a');
   });
 });
