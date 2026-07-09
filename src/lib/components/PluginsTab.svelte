@@ -356,7 +356,7 @@
         {#if col.key === 'name'}
           {@const av = avatar(split(p.id).name)}
           <span class="namecell">
-            <span class="avatar" style="background:{av.color}22;color:{av.color}">{av.ch}</span>
+            <span class="avatar" style="--av:{av.color}">{av.ch}</span>
             <span class="font-medium truncate" title={p.id}>{split(p.id).name}</span>
             {#if p.mine}<span class="srcbadge own" title={t('plugins.mineTip')}>{t('plugins.sourceOwn')}</span>{/if}
           </span>
@@ -487,7 +487,7 @@
         {#if col.key === 'name'}
           {@const av = avatar(s.name)}
           <span class="namecell">
-            <span class="avatar" style="background:{av.color}22;color:{av.color}">{av.ch}</span>
+            <span class="avatar" style="--av:{av.color}">{av.ch}</span>
             <span class="font-medium truncate">{s.name}</span>
           </span>
         {:else if col.key === 'source'}
@@ -617,6 +617,14 @@
     font-size: 10px;
     font-weight: 700;
     letter-spacing: -0.02em;
+    /* --av is the per-plugin accent, set inline from the AV palette. */
+    background: color-mix(in srgb, var(--av) 13%, transparent);
+    color: var(--av);
+  }
+  /* The palette is tuned for the dark surface. On the light theme those pastels sit at ~2:1 against
+     their own 13% tint — the initials were barely legible. Darken the glyph, keep the tint. */
+  :global(html.light) .avatar {
+    color: color-mix(in srgb, var(--av) 55%, #0f172a);
   }
   .src {
     display: inline-block;
