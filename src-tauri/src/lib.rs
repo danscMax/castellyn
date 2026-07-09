@@ -14179,12 +14179,14 @@ fn parse_ssh_config(text: &str) -> Vec<SshHost> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (key, val) = match line.find(|c: char| c.is_whitespace() || c == '=') {
-            Some(i) => (
-                line[..i].trim(),
-                line[i + 1..]
-                    .trim_matches(|c: char| c.is_whitespace() || c == '=')
-                    .trim(),
+        // `split_once` cuts on char boundaries. The old `find(..)` + `line[i + 1..]` assumed the
+        // separator was one byte, but `char::is_whitespace()` is true for NBSP (U+00A0), U+2000-200A
+        // and U+3000 — a `~/.ssh/config` pasted from a web page panics the byte slice mid-char. Same
+        // class as the `expand_ssh_config` panic fixed via `str::get`; this sibling parser was missed.
+        let (key, val) = match line.split_once(|c: char| c.is_whitespace() || c == '=') {
+            Some((k, rest)) => (
+                k.trim(),
+                rest.trim_matches(|c: char| c.is_whitespace() || c == '=').trim(),
             ),
             None => (line, ""),
         };
@@ -14471,6 +14473,17 @@ Host *\n\
         );
         assert!(out.contains("# рабочий сервер"), "Cyrillic line passed through");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_ssh_config_survives_multibyte_whitespace_separator() {
+        // Regression (sibling of the expand_ssh_config panic): `char::is_whitespace()` matches NBSP
+        // and other multi-byte spaces, so the old `line[i + 1..]` sliced mid-char. A config pasted
+        // from a web page carries U+00A0; parsing it must not panic and must still read the value.
+        let hosts = parse_ssh_config("Host box\n  HostName\u{00a0}10.0.0.7\n  Port\u{3000}2222\n");
+        assert_eq!(hosts.len(), 1, "the Host block is still recognized");
+        assert_eq!(hosts[0].host, "10.0.0.7", "HostName parsed across an NBSP separator");
+        assert_eq!(hosts[0].port, Some(2222), "Port parsed across an ideographic space");
     }
 }
 
