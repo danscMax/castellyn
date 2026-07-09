@@ -3471,7 +3471,13 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                 match native_wait_ready(&svc).await {
                     Readiness::Cancelled => {
                         // Stop preempted this start mid-wait — abort cleanly, not a failure (CAST-5).
+                        // Tear down what THIS run spawned: the preempting Stop snapshotted the process
+                        // set before our `procs.insert` above, and if the service is not listening yet
+                        // its port-based fallback misses it too — so it would survive as an orphan
+                        // holding a stack port. Unconditional (unlike the failure path's opt-in
+                        // teardown): the user asked for a stop, not for a half-started stack.
                         stack_emit(app, format!("[cancel] {name}: start aborted"));
+                        teardown_started(app, procs, &name, &started_pids);
                         break;
                     }
                     Readiness::Down => {
