@@ -108,4 +108,6 @@ App icon master is `src-tauri/icons/icon.png` (1024). Regenerate all formats wit
 - `docs/ARCHITECTURE.md` — layout, IPC, tabs, status envelope, profiles model.
 - `docs/I18N.md` — how localization works + adding strings/locales.
 - `docs/BUILD.md` — build, release, icon, troubleshooting.
-- `plans/` — design specs (historical).
+- `plans/` — local working directory for design specs, audit reports and agent artifacts.
+  **Gitignored and untracked**: write here freely, nothing is committed. Older plans live in the
+  history (before the untracking commit) if you need them.
