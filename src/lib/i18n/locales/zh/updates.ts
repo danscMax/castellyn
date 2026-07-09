@@ -49,6 +49,6 @@ export default {
   updateTip: '安装此组件的可用更新（需确认）',
   applyBtn: '应用',
   applyTip: '运行更新（尚未检查状态 — 点击「检查」以了解是否有可更新内容）',
-  upToDate: '最新',
+  upToDate: '无可用更新',
   upToDateTip: '没有更新 — 一切都是最新的'
 };

@@ -300,6 +300,11 @@
   const claudePctClass = (p: number | null) =>
     p == null ? '' : p >= 99 ? 'status-bad' : p >= 85 ? 'status-warn' : 'status-ok';
 
+  // Success rate reads the other way round: high is good. A third of requests failing was rendered in
+  // the same muted grey as "you saved $0.04", so the bad news was the easiest thing on screen to miss.
+  const successClass = (p: number | null | undefined) =>
+    p == null ? '' : p >= 95 ? 'status-ok' : p >= 70 ? 'status-warn' : 'status-bad';
+
   // --- Maintenance panel (Wave C-4): per-component run stats from the persisted runHistory ---
   type CompStat = { component: string; runs: number; ok: number; fail: number; avgSec: number; lastTs: number };
   const maintStats = $derived.by<CompStat[]>(() => {
@@ -597,7 +602,8 @@
         <p class="text-sw-xs text-sw-text-muted">{t('analytics.totalRequests')}</p>
         <p class="mt-1 text-2xl font-semibold">{fmt(totals?.totalRequests ?? 0)}</p>
         <p class="mt-1 text-sw-xs text-sw-text-secondary">
-          {t('analytics.successRate')}: {pct(totals?.successRate ?? 0)}
+          {t('analytics.successRate')}:
+          <span class={successClass(totals?.successRate)}>{pct(totals?.successRate ?? 0)}</span>
         </p>
       </div>
       <div class="sw-card">

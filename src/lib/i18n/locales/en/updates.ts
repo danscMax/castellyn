@@ -50,6 +50,6 @@ export default {
   applyBtn: 'Apply',
   applyTip:
     'Run the update (status not checked yet — click “Check” to find out whether there is anything to update)',
-  upToDate: 'up to date',
+  upToDate: 'no updates',
   upToDateTip: 'No updates — everything is up to date'
 };

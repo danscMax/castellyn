@@ -238,7 +238,19 @@
     {/each}
   </div>
   <div class="notif-area">
-    <button class="notif-btn" bind:this={notifAnchor} onclick={onToggleNotif} title={t('common.notifications')} aria-label={t('common.notifications')}>
+    <!-- A popup trigger, not a tab: say so, so a screen reader announces the panel's open state and
+         the button does not read as another page in the nav. `.open` keeps the highlight tied to the
+         panel rather than to whatever last had focus. -->
+    <button
+      class="notif-btn"
+      class:open={notifOpen}
+      bind:this={notifAnchor}
+      onclick={onToggleNotif}
+      title={t('common.notifications')}
+      aria-label={t('common.notifications')}
+      aria-haspopup="dialog"
+      aria-expanded={notifOpen}
+    >
       <span class="nav-icon">{@html NOTIF_ICON}</span>
       <span class="nav-label">{t('common.notifications')}</span>
       {#if notifCount}
@@ -492,7 +504,8 @@
     text-align: left;
     transition: all 0.15s ease;
   }
-  .notif-btn:hover {
+  .notif-btn:hover,
+  .notif-btn.open {
     background: var(--sw-sidebar-item-hover);
     color: var(--sw-text-primary);
   }
