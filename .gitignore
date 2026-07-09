@@ -8,14 +8,9 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
-plans/audit/
-
 # Runtime output of the vendored fork-updater (written next to its script)
 tools/fork-updater/fork-sync.last.json
 tools/fork-updater/logs/
-
-# UI review working artifacts (screenshots + intermediate findings)
-plans/ui-review/
 
 # Playwright MCP scratch output
 .playwright-mcp/
@@ -23,7 +18,9 @@ plans/ui-review/
 # Windows Explorer folder-view turds
 desktop.ini
 
-# Local audit/report artifacts (kept on disk, never committed)
+# Audit/design/report working artifacts: written here by tooling and agents, kept on disk, never
+# committed. Plans already in the index stay tracked (gitignore does not affect tracked files); a
+# genuinely durable new plan needs an explicit `git add -f`.
+plans/
+providers-snap.md
 canon-audit-report.md
-plans/redesign/screens/
-plans/plugin-detail/mockups/
