@@ -52,7 +52,10 @@
         <EmptyState icon={BellOff} description={t('page.notifEmpty')} />
       {:else}
         <div class="list">
-          {#each history.items as item, i (item.timestamp)}
+          <!-- Keyed by id, never timestamp: dismissAll() pushes the whole stack to history in one
+               synchronous loop, so several entries share a Date.now() and Svelte throws on the
+               duplicate key. `id` is unique per entry and resumes above the restored history. -->
+          {#each history.items as item, i (item.id)}
             {@const Icon = kindIcon[item.kind]}
             <div class="entry {item.kind}">
               <span class="icon" class:icon-success={item.kind === 'success'} class:icon-warn={item.kind === 'warn'} class:icon-error={item.kind === 'error'} class:icon-info={item.kind === 'info'}><Icon size={11} aria-hidden="true" /></span>
