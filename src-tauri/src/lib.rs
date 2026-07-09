@@ -2437,6 +2437,21 @@ fn write_file_no_bom(path: &str, content: &str) -> std::io::Result<()> {
 /// then atomically rename it over the target (`std::fs::rename` replaces on Windows). A crash mid-
 /// write leaves either the old file or the temp behind — never a half-written/blanked target.
 /// Single DRY entry for every Castellyn config writer (myproviders/engines/router/opencode/config).
+/// Does this file name carry a cleartext secret, so it must never get an in-place `.bak`?
+///
+/// A profile's `settings.json` holds the ANTHROPIC_AUTH_TOKEN, `opencode.json` a literal apiKey, and
+/// `.claude.json` the auth token plus per-server MCP `env` blocks. `.mcp.json` is the SOURCE of those
+/// same env blocks — it belongs here for exactly the reason `.claude.json` does. All of them live
+/// outside Castellyn's own directory, in the Syncthing-synced settings tree, so a `.bak` would strand
+/// the pre-rotation secret on every machine. The atomic temp+rename below already guarantees the
+/// target is never blanked, so skipping the backup costs no crash safety.
+fn is_secret_file(name: &str) -> bool {
+    name.eq_ignore_ascii_case("settings.json")
+        || name.eq_ignore_ascii_case("opencode.json")
+        || name.eq_ignore_ascii_case(".claude.json")
+        || name.eq_ignore_ascii_case(".mcp.json")
+}
+
 fn write_json_atomic(path: &str, content: &str) -> std::io::Result<()> {
     let p = std::path::Path::new(path);
     if let Some(dir) = p.parent() {
@@ -2457,22 +2472,19 @@ fn write_json_atomic(path: &str, content: &str) -> std::io::Result<()> {
         .map(|m| m.permissions().readonly())
         .unwrap_or(false);
     // Back up the prior good copy before we touch anything (best-effort, mirrors the old writers) —
-    // EXCEPT for secret-bearing files: a profile's settings.json carries the ANTHROPIC_AUTH_TOKEN and
-    // opencode.json a literal apiKey, both living outside Castellyn's own dir where they may be synced.
-    // An in-place .bak would strand a prior cleartext secret after rotation. The atomic temp+rename
-    // below already guarantees the target is never blanked, so skipping the .bak costs no crash safety.
-    let is_secret_file = p
+    // EXCEPT for secret-bearing files (see `is_secret_file`).
+    let is_secret = p
         .file_name()
         .and_then(|n| n.to_str())
-        .map(|n| {
-            // .claude.json carries the ANTHROPIC auth token + per-server MCP env (may hold keys).
-            n.eq_ignore_ascii_case("settings.json")
-                || n.eq_ignore_ascii_case("opencode.json")
-                || n.eq_ignore_ascii_case(".claude.json")
-        })
+        .map(is_secret_file)
         .unwrap_or(false);
-    if p.exists() && !is_secret_file {
+    if p.exists() && !is_secret {
         let _ = std::fs::copy(path, format!("{path}.bak"));
+    } else if is_secret {
+        // A .bak may already exist from before this file was recognised as secret-bearing (or from an
+        // older build). Leaving it would strand the pre-rotation secret forever, which is exactly what
+        // skipping the backup is meant to prevent. Removing OUR OWN backup of this file, nothing else.
+        let _ = std::fs::remove_file(format!("{path}.bak"));
     }
     if was_hidden || was_ro {
         run_attrib(&["-h", "-r"], path);
@@ -15374,6 +15386,20 @@ mod tests {
         std::fs::write(&bad, "{ not json").unwrap();
         assert!(read_config_at(Some(bad.display().to_string())).is_none());
         let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn secret_files_never_get_a_bak() {
+        // `.mcp.json` was the gap: it is the source of the per-server MCP `env` blocks that
+        // `.claude.json` is protected for, and it lives in the Syncthing-synced settings tree.
+        for name in [".mcp.json", "settings.json", "opencode.json", ".claude.json"] {
+            assert!(is_secret_file(name), "{name} must be excluded from .bak");
+        }
+        assert!(is_secret_file(".MCP.JSON"), "the check is case-insensitive");
+        // Castellyn's own non-secret state keeps its crash-safety backup.
+        for name in ["config.json", "forks.json", "schedules.json", "sessions.json"] {
+            assert!(!is_secret_file(name), "{name} should keep its .bak");
+        }
     }
 
     #[test]
