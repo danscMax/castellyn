@@ -32,7 +32,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to a commit SHA, not @master: this job also holds TAURI_SIGNING_PRIVATE_KEY below, so a
+      # compromise of the action's maintainer account would run with access to the update-signing key.
+      # (The action publishes a `v1` tag, but that tag moves — a SHA is the only immutable ref.)
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-06-30
         with:
           toolchain: "1.93.0"   # match rust-toolchain.toml (1.94 breaks the `time` crate)
       - uses: Swatinem/rust-cache@v2
