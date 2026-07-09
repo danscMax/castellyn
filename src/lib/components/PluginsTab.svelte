@@ -284,7 +284,12 @@
         </span>
       {/if}
       <label class="synctoggle" title={t('plugins.syncHookTip')}>
-        <Toggle checked={syncHookOn} disabled={busy || !syncStatus} onCheckedChange={onSyncHookToggle} />
+        <Toggle
+          checked={syncHookOn}
+          disabled={busy || !syncStatus}
+          onCheckedChange={onSyncHookToggle}
+          ariaLabel={t('plugins.syncHookLabel')}
+        />
         <span>{t('plugins.syncHookLabel')}</span>
       </label>
       <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onSyncNow} title={t('plugins.syncNowTip')}>

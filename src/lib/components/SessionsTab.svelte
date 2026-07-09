@@ -1824,7 +1824,7 @@
           onkeydown={(e) => e.key === 'Enter' && sendToAll()} />
         <span class="text-sw-text-muted">·</span>
         <label class="flex cursor-pointer items-center gap-1" title={t('sessions.broadcastTip')}>
-          <Toggle bind:checked={broadcast} />
+          <Toggle bind:checked={broadcast} ariaLabel={t('sessions.broadcast')} />
           <span class="text-sw-xs" class:broadcast-armed={broadcast} class:text-sw-text-secondary={!broadcast}
             >{broadcast ? t('sessions.broadcastArmed', { count: spacePanes.length }) : t('sessions.broadcast')}</span>
         </label>
@@ -2054,11 +2054,11 @@
           {/if}
           <span class="text-sw-text-muted">·</span>
           <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusSoundHint')}>
-            <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} />
+            <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusSound')} />
             {t('sessions.statusSound')}
           </label>
           <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusToastHint')}>
-            <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} />
+            <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusToast')} />
             {t('sessions.statusToast')}
           </label>
         </div>
