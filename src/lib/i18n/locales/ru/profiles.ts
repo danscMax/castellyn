@@ -65,6 +65,14 @@ export default {
   usageTip: 'Остаток лимитов Claude Code: 5-часовое и недельное окно (процент свободно). Сброс недельного через указанное время.',
   noLogin: 'нет входа',
   noLoginTip: 'Нет сохранённого входа — потребуется авторизация',
+  staleLogin: 'вход истёк',
+  staleLoginTip:
+    'Файл .credentials.json есть, но токены мертвы: access-токен просрочен, а живого refresh-токена нет. Профиль потребует авторизацию — лимиты не показываются, автопереключение по лимиту его не выберет',
+  needsOnboarding: 'нужен онбординг',
+  needsOnboardingTip:
+    'Вход сохранён, но в .claude.json стоит hasCompletedOnboarding = false — Claude Code при каждом запуске покажет мастер и потребует авторизацию заново, игнорируя валидный токен',
+  needsOnboardingLogoutTip:
+    'Профиль разлогинен командой /logout: она сбросила hasCompletedOnboarding, а повторный вход этот флаг не восстанавливает. Меню → «Починить онбординг» вернёт его без новой авторизации',
   lean: 'лёгкий',
   leanTip: 'Запуск в лёгком режиме ({flag}) — урезанный системный промпт',
   links: 'папки {linked}/{total}',
@@ -117,6 +125,9 @@ export default {
   menuViewConfigTip: 'Открыть CLAUDE.md / settings.json профиля (только чтение)',
   viewSettings: 'settings.json',
   viewClaudeMd: 'CLAUDE.md',
+  menuFixOnboarding: 'Починить онбординг',
+  menuFixOnboardingTip:
+    'Вернуть hasCompletedOnboarding = true в .claude.json профиля. Сохранённый вход не трогается, повторная авторизация не нужна. Файл бэкапится, запись сверяется чтением',
   menuRepair: 'Починить связи',
   menuRepairTip:
     'Пересоздать битые/отсутствующие junction/symlink без полной переустановки',

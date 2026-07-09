@@ -755,6 +755,15 @@
   function onProfileAction(action: ProfileAction, name?: string) {
     if (action === 'repair') {
       startProfiles('repair', name);
+    } else if (action === 'fix-onboarding') {
+      // Writes into the profile's .claude.json. Backed up + read-back verified by the script, but a
+      // live session of that profile races the write — so the user gets a say first.
+      askConfirm(
+        t('page.confirm_fix_onboarding_title'),
+        t('page.confirm_fix_onboarding_msg', { name: name ?? '' }),
+        t('page.confirm_fix_onboarding_btn'),
+        () => startProfiles('fix-onboarding', name)
+      );
     } else if (action === 'create') {
       // Additive (creates one missing profile) — no destructive-reinstall confirmation.
       startProfiles('create', name);

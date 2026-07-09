@@ -199,6 +199,10 @@ export default {
   confirm_clean_msg:
     'Duplicate *.sync-conflict-* files will be removed (originals are untouched; Syncthing keeps versions). Continue?',
   confirm_clean_btn: 'Delete',
+  confirm_fix_onboarding_title: 'Fix the profile’s onboarding?',
+  confirm_fix_onboarding_msg:
+    '{name}\\.claude.json will get hasCompletedOnboarding = true, and the /logout residue will be dropped. The saved login is untouched — no re-authentication. The file is backed up first. Better close running sessions of this profile: they write to the same file. Continue?',
+  confirm_fix_onboarding_btn: 'Fix',
   confirm_keepother_msg:
     'The local file will be replaced with the other machine’s version (the current one is kept as *.pre-conflict.bak). Continue?',
   confirm_fanout_title: 'Write into {target}?',

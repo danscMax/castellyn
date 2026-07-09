@@ -65,6 +65,14 @@ export default {
   usageTip: 'Claude Code budget left: 5-hour and weekly window (percent remaining). Weekly resets in the shown time.',
   noLogin: 'not logged in',
   noLoginTip: 'No saved login — authorization required',
+  staleLogin: 'login expired',
+  staleLoginTip:
+    '.credentials.json exists but its tokens are dead: the access token expired and there is no live refresh token. The profile will ask for authorization — usage is hidden and the limit auto-switch skips it',
+  needsOnboarding: 'onboarding needed',
+  needsOnboardingTip:
+    'Login is saved, but .claude.json has hasCompletedOnboarding = false — Claude Code replays the wizard on every start and demands a fresh login, ignoring the valid token',
+  needsOnboardingLogoutTip:
+    'This profile was signed out with /logout: it cleared hasCompletedOnboarding, and signing back in does not restore that flag. Menu → "Fix onboarding" restores it without a new login',
   lean: 'lean',
   leanTip: 'Launches in lean mode ({flag}) — trimmed system prompt',
   links: 'folders {linked}/{total}',
@@ -116,6 +124,9 @@ export default {
   menuViewConfigTip: "Open the profile's CLAUDE.md / settings.json (read-only)",
   viewSettings: 'settings.json',
   viewClaudeMd: 'CLAUDE.md',
+  menuFixOnboarding: 'Fix onboarding',
+  menuFixOnboardingTip:
+    "Restore hasCompletedOnboarding = true in the profile's .claude.json. The saved login is untouched — no re-authentication. The file is backed up and the write is verified by reading it back",
   menuRepair: 'Repair links',
   menuRepairTip: 'Recreate broken/missing junctions/symlinks without a full reinstall',
   menuResetProvider: 'Reset provider',

@@ -64,6 +64,14 @@ export default {
   usageTip: 'Claude Code 剩余额度：5 小时和每周窗口（剩余百分比）。每周窗口将在所示时间后重置。',
   noLogin: '未登录',
   noLoginTip: '无已保存登录——需要授权',
+  staleLogin: '登录已过期',
+  staleLoginTip:
+    '.credentials.json 存在，但令牌已失效：访问令牌已过期，且没有有效的刷新令牌。该配置将要求重新授权——不显示用量，限额自动切换也会跳过它',
+  needsOnboarding: '需要引导',
+  needsOnboardingTip:
+    '已保存登录，但 .claude.json 中 hasCompletedOnboarding = false——Claude Code 每次启动都会重播引导向导并要求重新登录，无视有效令牌',
+  needsOnboardingLogoutTip:
+    '该配置曾用 /logout 退出：它清除了 hasCompletedOnboarding，而重新登录并不会恢复该标志。菜单 →「修复引导」可在无需重新授权的情况下恢复',
   lean: '精简',
   leanTip: '以精简模式启动（{flag}）——裁剪系统提示',
   links: '文件夹 {linked}/{total}',
@@ -111,6 +119,9 @@ export default {
   menuViewConfigTip: '打开该配置的 CLAUDE.md / settings.json（只读）',
   viewSettings: 'settings.json',
   viewClaudeMd: 'CLAUDE.md',
+  menuFixOnboarding: '修复引导',
+  menuFixOnboardingTip:
+    '将配置的 .claude.json 中 hasCompletedOnboarding 恢复为 true。不触碰已保存的登录，无需重新授权。文件会先备份，写入后回读校验',
   menuRepair: '修复链接',
   menuRepairTip: '重建损坏/缺失的 junction/符号链接，无需完全重新安装',
   menuResetProvider: '重置提供商',

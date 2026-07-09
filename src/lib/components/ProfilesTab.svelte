@@ -297,6 +297,17 @@
         disabled: busy
       });
     }
+    // Only offered on the damaged shape — on a healthy profile the script is a no-op, on a
+    // never-logged-in one it refuses, and with dead tokens restoring the flag wouldn't spare the
+    // user the login anyway. Any of those would make the entry noise.
+    if (p.needsOnboarding && p.credentialsValid !== false) {
+      items.push({
+        label: t('profiles.menuFixOnboarding'),
+        title: busy ? t('common.busyDisabled') : t('profiles.menuFixOnboardingTip'),
+        onClick: () => onAction('fix-onboarding', p.name),
+        disabled: busy
+      });
+    }
     // Reset a custom provider back to the Anthropic default lives in the menu (kept off the card to
     // keep every card the same height) and only when there's a custom provider to reset.
     if (p.exists && providerByName.get(p.name)?.baseUrl) {
@@ -351,7 +362,13 @@
     ).length;
   }
   function profSort(p: Prof, key: string): string | number {
-    if (key === 'status') return p.exists ? (p.credentialsPresent ? 0 : 1) : 2;
+    // Broken-but-signed-in sorts BELOW healthy and ABOVE never-logged-in: those rows want attention,
+    // but a missing dir is still worse.
+    if (key === 'status') {
+      if (!p.exists) return 3;
+      const broken = p.needsOnboarding || (p.credentialsPresent && p.credentialsValid === false);
+      return broken ? 1 : p.credentialsPresent ? 0 : 2;
+    }
     if (key === 'provider') return (providerLabelByName.get(p.name) ?? t('profiles.providerDefault')).toLowerCase();
     if (key === 'links') return linkedCount(p);
     return p.name.toLowerCase();
@@ -538,6 +555,15 @@
           <span class="flex flex-wrap items-center gap-sw-1">
             {#if !p.exists}
               <span class="badge badge-err" title={t('profiles.noDirTip', { name: p.name })}>{t('profiles.noDir')}</span>
+            {:else if p.credentialsPresent && p.credentialsValid === false}
+              <!-- Checked before needsOnboarding: with dead tokens the wizard is unavoidable, so
+                   "fix onboarding" would be a lie — this profile needs a real login. -->
+              <span class="badge badge-warn" title={t('profiles.staleLoginTip')}>{t('profiles.staleLogin')}</span>
+            {:else if p.needsOnboarding}
+              <span class="badge badge-warn"
+                title={p.logoutResidue ? t('profiles.needsOnboardingLogoutTip') : t('profiles.needsOnboardingTip')}>
+                {t('profiles.needsOnboarding')}
+              </span>
             {:else}
               <span class="badge {p.credentialsPresent ? 'badge-ok' : 'badge-muted'}"
                 title={p.credentialsPresent ? t('profiles.loggedInTip') : t('profiles.noLoginTip')}>
@@ -549,7 +575,7 @@
             {/if}
           </span>
         {:else if col.key === 'usage'}
-          {#if p.exists && p.credentialsPresent}
+          {#if p.exists && p.credentialsPresent && p.credentialsValid !== false}
             <ProfileUsageBadge profile={p.name} />
           {:else}
             <span class="text-sw-text-muted">—</span>

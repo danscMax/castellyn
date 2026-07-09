@@ -199,6 +199,10 @@ export default {
   confirm_clean_msg:
     'Будут удалены файлы-дубли *.sync-conflict-* (оригиналы не тронутся; Syncthing хранит версии). Продолжить?',
   confirm_clean_btn: 'Удалить',
+  confirm_fix_onboarding_title: 'Починить онбординг профиля?',
+  confirm_fix_onboarding_msg:
+    'В {name}\\.claude.json будет выставлено hasCompletedOnboarding = true и удалены следы /logout. Сохранённый вход не трогается — авторизация заново не потребуется. Файл будет забэкаплен. Лучше закрыть запущенные сессии этого профиля: они пишут в тот же файл. Продолжить?',
+  confirm_fix_onboarding_btn: 'Починить',
   confirm_keepother_msg:
     'Локальный файл будет заменён версией с другой машины (текущий сохранится как *.pre-conflict.bak). Продолжить?',
   confirm_fanout_title: 'Записать в {target}?',

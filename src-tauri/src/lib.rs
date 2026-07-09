@@ -1834,6 +1834,7 @@ async fn run_backup(
 const PROFILES_SCRIPT_REL: &str = "{{PROFILES}}\\Get-ProfilesStatus.ps1";
 const INSTALL_SCRIPT_REL: &str = "{{PROFILES}}\\Install-ClaudeProfiles.ps1";
 const REPAIR_SCRIPT_REL: &str = "{{PROFILES}}\\Repair-ProfileLinks.ps1";
+const ONBOARDING_SCRIPT_REL: &str = "{{PROFILES}}\\Repair-Onboarding.ps1";
 const PROFILES_JSON_REL: &str = "{{PROFILES}}\\profiles.last.json";
 // Config-drift (FUN-7): shared-config FILE link health. links.last.json is written by
 // Check-Integrity.ps1; Relink self-elevates; sync-now reuses the Backup mirror.
@@ -1871,8 +1872,9 @@ fn read_profiles() -> Result<Option<serde_json::Value>, String> {
 }
 
 /// Run a Profiles-tab action: refresh status, clean sync-conflict files, reinstall all profiles,
-/// create a single missing profile (`create`), or repair the links of a single profile (`repair`).
-/// `create` and `repair` require `name`.
+/// create a single missing profile (`create`), repair the links of a single profile (`repair`), or
+/// restore a single profile's onboarding flag after `/logout` (`fix-onboarding`).
+/// `create`, `repair` and `fix-onboarding` require `name`.
 #[tauri::command]
 async fn run_profiles(
     app: AppHandle,
@@ -1896,6 +1898,19 @@ async fn run_profiles(
                 return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
             }
             (REPAIR_SCRIPT_REL, vec!["-Name".to_string(), n])
+        }
+        // Restore `hasCompletedOnboarding` after a /logout stranded the profile in the onboarding
+        // wizard (see Repair-Onboarding.ps1). Same charset + membership gate as `repair`: the name
+        // becomes a -Name argv.
+        "fix-onboarding" => {
+            let n = name.unwrap_or_default();
+            if !valid_profile_name(&n) {
+                return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &n)]));
+            }
+            if !profile_names().iter().any(|x| x == &n) {
+                return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
+            }
+            (ONBOARDING_SCRIPT_REL, vec!["-Name".to_string(), n])
         }
         "create" => {
             let n = name.unwrap_or_default();

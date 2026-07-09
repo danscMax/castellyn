@@ -198,6 +198,10 @@ export default {
   confirm_clean_msg:
     '将删除重复的 *.sync-conflict-* 文件（原始文件不受影响；Syncthing 会保留版本）。是否继续？',
   confirm_clean_btn: '删除',
+  confirm_fix_onboarding_title: '修复该配置的引导？',
+  confirm_fix_onboarding_msg:
+    '将在 {name}\\.claude.json 中设置 hasCompletedOnboarding = true，并清除 /logout 残留。已保存的登录不受影响——无需重新授权。文件会先备份。建议先关闭该配置正在运行的会话：它们会写入同一文件。是否继续？',
+  confirm_fix_onboarding_btn: '修复',
   confirm_keepother_msg:
     '本地文件将被另一台机器的版本替换（当前文件保留为 *.pre-conflict.bak）。是否继续？',
   confirm_fanout_title: '写入 {target}？',

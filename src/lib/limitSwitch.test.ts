@@ -54,6 +54,26 @@ describe('pickResumeCandidate (#21e)', () => {
     expect(pickResumeCandidate('cur', profiles, limits)).toBe('ok');
   });
 
+  it('excludes a profile whose stored tokens are dead, even though the file exists', () => {
+    // .credentials.json survives a wipe with empty tokens — resuming there lands in a login prompt.
+    const profiles = [prof('dead', { credentialsValid: false }), prof('ok')];
+    const limits = { dead: lim('dead', 1), ok: lim('ok', 50) };
+    expect(pickResumeCandidate('cur', profiles, limits)).toBe('ok');
+  });
+
+  it('excludes a profile stranded in the onboarding wizard by /logout', () => {
+    const profiles = [prof('stranded', { needsOnboarding: true }), prof('ok')];
+    const limits = { stranded: lim('stranded', 1), ok: lim('ok', 50) };
+    expect(pickResumeCandidate('cur', profiles, limits)).toBe('ok');
+  });
+
+  it('keeps profiles from an older snapshot that carries neither health field', () => {
+    // Absent (undefined) means "unknown", not "broken" — only a positive false disqualifies.
+    const profiles = [prof('legacy')];
+    const limits = { legacy: lim('legacy', 10) };
+    expect(pickResumeCandidate('cur', profiles, limits)).toBe('legacy');
+  });
+
   it('excludes a profile with unknown (null / absent) utilisation', () => {
     const profiles = [prof('nulled'), prof('absent')];
     const limits = { nulled: lim('nulled', null) }; // 'absent' has no datapoint at all

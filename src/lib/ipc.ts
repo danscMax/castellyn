@@ -182,7 +182,13 @@ export const runBackup = (action: BackupAction, opts: RestoreOpts = {}) =>
   });
 
 // --- Profiles tab ---
-export type ProfileAction = 'check' | 'clean-conflicts' | 'reinstall' | 'repair' | 'create';
+export type ProfileAction =
+  | 'check'
+  | 'clean-conflicts'
+  | 'reinstall'
+  | 'repair'
+  | 'create'
+  | 'fix-onboarding';
 
 export type ProfileInfo = {
   name: string;
@@ -190,7 +196,16 @@ export type ProfileInfo = {
   color: string;
   exists: boolean;
   credentialsPresent: boolean;
+  // The file existing proves nothing: a wiped profile keeps .credentials.json with empty tokens.
+  // False = the OAuth blob is positively dead (no live access token, no live refresh token).
+  credentialsValid?: boolean;
   settingsPresent: boolean;
+  // Claude Code refuses to start past its wizard while `hasCompletedOnboarding` is false, even with
+  // a valid token — so a token alone never proves the profile is usable. `/logout` sets the flag
+  // false and a later `/login` does not restore it (logoutResidue marks that fingerprint).
+  onboardingComplete?: boolean;
+  needsOnboarding?: boolean;
+  logoutResidue?: boolean;
   sharedLinks: Record<string, string | null>;
   linksIntact: boolean;
 };
