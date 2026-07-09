@@ -516,6 +516,7 @@
                 <td class="px-sw-3 py-sw-2 font-medium">
                   {r.profile}
                   {#if r.expired}<span class="badge badge-warn ml-sw-2">{t('analytics.claudeExpired')}</span>
+                  {:else if r.rateLimited}<span class="badge badge-warn ml-sw-2" title={t('analytics.claudeRateLimitedTip')}>{t('analytics.claudeRateLimited')}</span>
                   {:else if i === 0 && r.peak >= 85}<span class="badge badge-err ml-sw-2">{t('analytics.claudeNearLimit')}</span>{/if}
                 </td>
                 <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.h5)}">{r.h5 == null ? '—' : pct(r.h5)}</td>

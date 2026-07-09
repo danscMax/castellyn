@@ -76,6 +76,8 @@ export default {
   claude7d: '7天',
   claudeReset: '5小时重置',
   claudeExpired: '已登出',
+  claudeRateLimited: '请求受限',
+  claudeRateLimitedTip: 'Anthropic 在轮询时返回 429 — 本轮的百分比未知，将在下次轮询时刷新。',
   claudeNearLimit: '接近上限',
   claudeFootnote: 'Anthropic OAuth 提供利用率百分比而非原始 token——无法获得每个配置的精确 token 数。',
   claudeEmptyTitle: '暂无 Claude 用量',

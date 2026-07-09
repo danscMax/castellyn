@@ -19,7 +19,8 @@ const lim = (profile: string, h5: number | null): LimitsStatusEvent => ({
   d7: null,
   h5Reset: null,
   d7Reset: null,
-  expired: false
+  expired: false,
+  rateLimited: false
 });
 
 describe('pickResumeCandidate (#21e)', () => {

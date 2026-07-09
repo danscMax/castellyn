@@ -77,6 +77,9 @@ export default {
   claude7d: '7d',
   claudeReset: '5h resets',
   claudeExpired: 'signed out',
+  claudeRateLimited: 'rate-limited',
+  claudeRateLimitedTip:
+    'Anthropic answered 429 while polling — this round\'s percentages are unknown. They refresh on the next poll.',
   claudeNearLimit: 'near limit',
   claudeFootnote: 'Anthropic OAuth reports utilization %, not raw tokens — exact per-profile token counts are not available.',
   claudeEmptyTitle: 'No Claude usage yet',

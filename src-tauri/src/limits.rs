@@ -7,11 +7,18 @@
 //! logged or emitted. A `limits-status` event carries the raw percentages (no token) to the UI, and
 //! a `limits-alert` fires once per profile per window when utilization crosses 85% / 99% (the 99%
 //! alert also rings + shows an OS toast). A 401 marks the token expired; we do NOT refresh it.
+//!
+//! `usage_cached` is the ONE network path to the usage endpoint for the whole app: this poller and
+//! the per-profile badge (`fetch_profile_usage` in lib.rs) both go through it, keyed by the
+//! credentials path they share. Before this, each had its own copy of the request and hit Anthropic
+//! on its own cadence — together often enough to earn a real 429. Rate-limiting is now surfaced
+//! (`rateLimited`) rather than collapsed into "some transient error", so the UI can say the numbers
+//! are stale instead of quietly showing the last ones forever.
 
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const POLL_SECS: u64 = 300; // 5 minutes
@@ -19,6 +26,34 @@ const HTTP_TIMEOUT_SECS: u64 = 5; // P5: was 8; a stalled profile shouldn't hold
 const WARN_PCT: f64 = 85.0;
 const CRIT_PCT: f64 = 99.0;
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+/// Matches `POLL_SECS` so the badge's tick and this poller's round, whichever lands first, serve the
+/// other from cache instead of making a second identical request for the same profile.
+const CACHE_TTL_SECS: u64 = 300;
+
+/// Deduplicates usage requests across every caller, keyed by the profile's `.credentials.json` path
+/// (both callers derive the same path). Errors are cached too — a 429 must not trigger a retry storm.
+#[allow(clippy::type_complexity)]
+static USAGE_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Result<serde_json::Value, u16>)>>> =
+    LazyLock::new(Default::default);
+
+/// The single entry point to the usage endpoint. `None` = this profile has no OAuth token at all
+/// (never logged in) — distinct from `Some(Err(401))`, which means Anthropic rejected the token we
+/// do have. `Some(Err(429))` = rate-limited; `Some(Err(0))` = transport failure.
+pub(crate) fn usage_cached(cred_path: &str) -> Option<Result<serde_json::Value, u16>> {
+    let token = read_access_token(cred_path)?;
+    {
+        let cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, res)) = cache.get(cred_path) {
+            if at.elapsed().as_secs() < CACHE_TTL_SECS {
+                return Some(res.clone());
+            }
+        }
+    }
+    let res = fetch_usage(&token);
+    let mut cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    cache.insert(cred_path.to_string(), (Instant::now(), res.clone()));
+    Some(res)
+}
 
 /// Raw per-profile utilization pushed to the UI every poll (never includes the token).
 #[derive(Serialize, Clone)]
@@ -32,6 +67,10 @@ struct LimitsStatus {
     d7_reset: Option<String>,
     /// The OAuth token was rejected (401) — the user must re-auth this profile.
     expired: bool,
+    /// Anthropic answered 429: the percentages above are unknown for this round, NOT zero. Kept
+    /// separate from `expired` and from a plain network error so the UI can say "rate-limited" and
+    /// `pickResumeCandidate` skips the profile rather than switching to it on stale numbers.
+    rate_limited: bool,
 }
 
 /// Fired only when a window newly crosses a threshold (UI toast + at 99% sound/OS).
@@ -98,6 +137,8 @@ fn read_access_token(cred_path: &str) -> Option<String> {
 fn fetch_usage(token: &str) -> Result<serde_json::Value, u16> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(HTTP_TIMEOUT_SECS)))
+        // V-12: this request carries a bearer token — never follow a redirect to another host.
+        .max_redirects(0)
         .build()
         .into();
     match agent
@@ -121,7 +162,7 @@ fn fetch_usage(token: &str) -> Result<serde_json::Value, u16> {
 /// `response.<field>.utilization` / `.resets_at` — tolerant of a missing branch. `resets_at` is
 /// coerced to a string whether the API sends it as an ISO string or a numeric timestamp, so the
 /// antispam window-id (which keys off it) is stable and re-arms per window either way.
-fn util_of(resp: &serde_json::Value, field: &str) -> (Option<f64>, Option<String>) {
+pub(crate) fn util_of(resp: &serde_json::Value, field: &str) -> (Option<f64>, Option<String>) {
     let b = resp.get(field);
     let util = b.and_then(|x| x.get("utilization")).and_then(|x| x.as_f64());
     let reset = b.and_then(|x| x.get("resets_at")).and_then(json_scalar_str);
@@ -206,10 +247,10 @@ fn fire_alert(app: &AppHandle, profile: &str, window: &str, level: u8, util: f64
 /// Poll one profile once: read its token, fetch usage, emit status, and fire any newly-crossed
 /// threshold alerts. Profiles without OAuth creds are skipped (return without emitting).
 fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
-    let Some(token) = read_access_token(cred_path) else {
+    let Some(result) = usage_cached(cred_path) else {
         return; // no OAuth on this profile — N/A
     };
-    match fetch_usage(&token) {
+    match result {
         Ok(resp) => {
             let (h5, h5_reset) = util_of(&resp, "five_hour");
             let (d7, d7_reset) = util_of(&resp, "seven_day");
@@ -222,6 +263,7 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     h5_reset: h5_reset.clone(),
                     d7_reset: d7_reset.clone(),
                     expired: false,
+                    rate_limited: false,
                 },
             );
             let mut fired = FIRED.lock().unwrap_or_else(|e| e.into_inner());
@@ -247,6 +289,25 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     h5_reset: None,
                     d7_reset: None,
                     expired: true,
+                    rate_limited: false,
+                },
+            );
+        }
+        Err(429) => {
+            // Rate-limited. Emitting None percentages (rather than staying silent) is deliberate:
+            // silence left the UI showing the previous round's numbers as if they were current, and
+            // left `pickResumeCandidate` free to switch onto a profile using utilization we can no
+            // longer vouch for. Unknown must read as unknown.
+            let _ = app.emit(
+                "limits-status",
+                LimitsStatus {
+                    profile: profile.to_string(),
+                    h5: None,
+                    d7: None,
+                    h5_reset: None,
+                    d7_reset: None,
+                    expired: false,
+                    rate_limited: true,
                 },
             );
         }

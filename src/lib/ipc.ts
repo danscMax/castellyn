@@ -991,6 +991,9 @@ export type LimitsStatusEvent = {
   h5Reset: string | null;
   d7Reset: string | null;
   expired: boolean;
+  // Anthropic answered 429 this round: h5/d7 are null because the numbers are UNKNOWN, not zero.
+  // Distinct from `expired` (token rejected) and from a plain network error (no event at all).
+  rateLimited: boolean;
 };
 /** Backend `limits-alert` event: a window newly crossed a threshold (85 or 99). The UI toasts it;
  * the backend also rings + OS-notifies at 99. `window` is "5h" | "7d". */

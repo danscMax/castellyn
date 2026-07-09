@@ -1486,19 +1486,60 @@ async fn run_fork_repo(
 /// taskkill /T /F a process tree by PID. Exit 128 = "process not found" (already exited) is benign;
 /// any other failure (e.g. a non-elevated app can't kill an elevated child → Access denied) is
 /// surfaced instead of a false Ok. Shared by cancel_run / cancel_fork_repo / measure_context timeout.
+/// Ask the tree to close, then force it. The soft `/T` pass gives a script the moment it needs to
+/// finish writing its `<id>.last.json` status envelope; a straight `/T /F` could tear the file in
+/// half mid-write, and a cancelled run would then read back as "corrupt" instead of "cancelled".
+/// `GRACE_MS` is the whole budget, not per-poll — a wedged tree still dies, just a beat later.
 fn kill_tree(pid: u32) -> Result<(), String> {
-    match std::process::Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
+    const GRACE_MS: u64 = 600;
+    const POLL_MS: u64 = 120;
+
+    let taskkill = |force: bool| {
+        let pid_s = pid.to_string();
+        let mut args = vec!["/PID", &pid_s, "/T"];
+        if force {
+            args.push("/F");
+        }
+        std::process::Command::new("taskkill")
+            .args(&args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    };
+
+    // A soft kill can legitimately fail (console apps with no window ignore WM_CLOSE) — that is not
+    // an error, it just means we fall through to the forced pass below.
+    if let Ok(o) = taskkill(false) {
+        if o.status.success() {
+            for _ in 0..(GRACE_MS / POLL_MS) {
+                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+                if !pid_alive(pid) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    match taskkill(true) {
         Ok(o) if o.status.success() || o.status.code() == Some(128) => Ok(()),
+        // 128 = "process not found": it exited during the grace window, which is the success we wanted.
+        Ok(_) if !pid_alive(pid) => Ok(()),
         Ok(o) => {
             let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
             Err(trv("err.kill_failed", cur_lang(), &[("e", &msg)]))
         }
         Err(e) => Err(trv("err.kill_failed", cur_lang(), &[("e", &e)])),
     }
+}
+
+/// Is `pid` still running? `tasklist` filtered by PID prints the header only when nothing matches,
+/// so the PID appearing in its own output is the liveness signal.
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+        .unwrap_or(false)
 }
 
 /// Cancel the in-flight fork run for `path` (kills its process tree). No-op if none is running.
@@ -2424,6 +2465,13 @@ fn write_json_atomic(path: &str, content: &str) -> std::io::Result<()> {
     // Temp in the SAME dir so the rename is a same-volume atomic replace.
     let tmp = format!("{path}.tmp");
     write_file_no_bom(&tmp, content)?;
+    // Force the temp file's bytes to disk BEFORE the rename. The rename is atomic for metadata, but
+    // without this the directory entry can land while the contents are still only in the page cache:
+    // a power loss at that instant leaves a correctly-named, EMPTY config. Best-effort — a failed
+    // flush still leaves the old file intact, which is the guarantee the rename already gives us.
+    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&tmp) {
+        let _ = f.sync_all();
+    }
     // rename() overwrites the destination on Windows (unlike POSIX hard semantics, std handles this).
     if let Err(e) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp); // don't leave a stray .tmp on failure
@@ -6866,51 +6914,20 @@ const USAGE_STALE_MAX_SECS: u64 = 900; // 15 min
 
 /// Blocking: read a profile's OAuth token and query the usage endpoint. None on any failure
 /// (not logged in / token expired / offline) so the UI just omits the badge.
-fn fetch_profile_usage(profile: &str) -> Option<ProfileUsage> {
-    let home = std::env::var("USERPROFILE").ok()?;
+fn fetch_profile_usage(profile: &str) -> Result<ProfileUsage, u16> {
+    let home = std::env::var("USERPROFILE").map_err(|_| 0u16)?;
     let creds = format!("{home}\\.claude-{profile}\\.credentials.json");
-    let content = std::fs::read_to_string(&creds).ok()?;
-    let v: serde_json::Value = serde_json::from_str(content.trim_start_matches('\u{feff}')).ok()?;
-    let token = v
-        .get("claudeAiOauth")?
-        .get("accessToken")?
-        .as_str()?
-        .to_string();
-    if token.is_empty() {
-        return None;
-    }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(10)))
-        .max_redirects(0) // single-shot API GET carrying a token — no cross-host redirects (V-12)
-        .build()
-        .into();
-    let body = agent
-        .get("https://api.anthropic.com/api/oauth/usage")
-        .header("Authorization", &format!("Bearer {token}"))
-        .header("anthropic-beta", "oauth-2025-04-20")
-        .header("Accept", "application/json")
-        .call()
-        .ok()?
-        .body_mut()
-        .read_to_string()
-        .ok()?;
-    let r: serde_json::Value = serde_json::from_str(&body).ok()?;
-    let pct = |k: &str| {
-        r.get(k)
-            .and_then(|x| x.get("utilization"))
-            .and_then(|x| x.as_f64())
-    };
-    let reset = |k: &str| {
-        r.get(k)
-            .and_then(|x| x.get("resets_at"))
-            .and_then(|x| x.as_str())
-            .map(String::from)
-    };
-    Some(ProfileUsage {
-        five_hour_pct: pct("five_hour"),
-        seven_day_pct: pct("seven_day"),
-        five_hour_resets_at: reset("five_hour"),
-        seven_day_resets_at: reset("seven_day"),
+    // Same credentials path `limits::poll_profile` uses, so both share one cached request per profile
+    // instead of each hitting Anthropic on its own cadence. No token at all reads as 401: there is
+    // nothing to show and nothing to wait for, so the badge should clear rather than go stale.
+    let resp = crate::limits::usage_cached(&creds).ok_or(401u16)??;
+    let (five_hour_pct, five_hour_resets_at) = crate::limits::util_of(&resp, "five_hour");
+    let (seven_day_pct, seven_day_resets_at) = crate::limits::util_of(&resp, "seven_day");
+    Ok(ProfileUsage {
+        five_hour_pct,
+        seven_day_pct,
+        five_hour_resets_at,
+        seven_day_resets_at,
     })
 }
 
@@ -6934,21 +6951,24 @@ async fn read_profile_usage(
     let p = profile.clone();
     let fetched = tokio::task::spawn_blocking(move || fetch_profile_usage(&p))
         .await
-        .ok()
-        .flatten();
+        .unwrap_or(Err(0));
     let mut map = cache.0.lock().unwrap_or_else(|e| e.into_inner());
     match fetched {
-        Some(u) => {
+        Ok(u) => {
             map.insert(profile, (std::time::Instant::now(), u.clone()));
             Ok(Some(u))
         }
-        // A transient re-fetch failure (rate-limit / offline / a busy account under load) must NOT
-        // blank the badge — that oscillation was the flicker (live-smoke 2026-07-03). Serve the
-        // last-good value until it ages past USAGE_STALE_MAX_SECS, then a truly gone profile clears.
-        // ponytail: 401 is treated like any transient error here (stale ≤15 min, then clears); a
-        // precise "token revoked → clear now" would need fetch to return Ok/expired/transient rather
-        // than collapsing every error to None. Not worth the surface for the flicker fix.
-        None => Ok(map
+        // Token gone or rejected: there is no live budget to show, so drop the cached copy instead of
+        // serving numbers from an account the user can no longer reach. (Previously every error
+        // collapsed to None and a revoked token kept showing its last figures for 15 minutes.)
+        Err(401) => {
+            map.remove(&profile);
+            Ok(None)
+        }
+        // A transient re-fetch failure (429 / offline / a busy account under load) must NOT blank the
+        // badge — that oscillation was the flicker (live-smoke 2026-07-03). Serve the last-good value
+        // until it ages past USAGE_STALE_MAX_SECS, then a truly gone profile clears.
+        Err(_) => Ok(map
             .get(&profile)
             .filter(|(at, _)| at.elapsed().as_secs() < USAGE_STALE_MAX_SECS)
             .map(|(_, u)| u.clone())),

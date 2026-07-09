@@ -76,6 +76,9 @@ export default {
   claude7d: '7д',
   claudeReset: 'Сброс 5ч',
   claudeExpired: 'разлогинен',
+  claudeRateLimited: 'лимит запросов',
+  claudeRateLimitedTip:
+    'Anthropic ответил 429 при опросе — проценты за этот круг неизвестны. Данные обновятся на следующем опросе.',
   claudeNearLimit: 'у лимита',
   claudeFootnote: 'Anthropic OAuth отдаёт процент загрузки, а не сырые токены — точный подсчёт токенов по профилю недоступен.',
   claudeEmptyTitle: 'Данных Claude пока нет',

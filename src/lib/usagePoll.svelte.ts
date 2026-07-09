@@ -1,9 +1,14 @@
 // P6: one shared usage poll per profile (ref-counted), so N ProfileUsageBadges of the same profile
-// don't each fire their own interval. Poll cadence sits just past the backend's 60s cache TTL so each
-// tick gets fresh data rather than the cached copy.
+// don't each fire their own interval.
+//
+// The cadence matches the backend's limits poller (300s) and its shared request cache. It used to be
+// 70s against a 60s cache TTL — every tick missed the cache by ten seconds, so each visible badge was
+// its own stream of requests to Anthropic, on top of the limits poller and the user's statusline.
+// Together they earned a real 429. Usage figures move on the scale of hours; polling them five times
+// as often bought nothing.
 import { readProfileUsage, type ProfileUsage } from '$lib/ipc';
 
-const POLL_MS = 70_000;
+const POLL_MS = 300_000;
 
 // Reactive per-profile usage — components read `usageStore[profile]` in a $derived to stay live.
 export const usageStore = $state<Record<string, ProfileUsage | null>>({});
