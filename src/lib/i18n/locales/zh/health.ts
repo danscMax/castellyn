@@ -7,6 +7,7 @@ export default {
   ovOk: '正常',
   ovDegraded: '部分故障',
   ovStopped: '部分已停止',
+  ovNotRunning: '堆栈未启动',
   ovDown: '网关不可用',
   summary: '{up}/{total} 运行中',
   svUp: '运行中',

@@ -49,12 +49,36 @@ pub(crate) fn newly_down(prev_down: &mut HashSet<String>, curr: &[(String, bool)
     fired
 }
 
+/// Of the ids that went down this tick, only those we ever observed LISTENING this session deserve an
+/// alarm. A service the user never started is not an outage — it is simply off, and firing "service
+/// down" for it on the first poll (where `prev_down` is empty, so everything looks newly-down) is the
+/// false alarm this filter removes. Pure + testable.
+pub(crate) fn alarmable(fired: &[String], seen_up: &HashSet<String>) -> Vec<String> {
+    fired
+        .iter()
+        .filter(|id| seen_up.contains(*id))
+        .cloned()
+        .collect()
+}
+
+/// Ids currently listening — the session's "we saw it alive" evidence, accumulated across ticks.
+fn note_seen_up(seen_up: &mut HashSet<String>, curr: &[(String, bool)]) {
+    for (id, down) in curr {
+        if !*down {
+            seen_up.insert(id.clone());
+        }
+    }
+}
+
 /// Start the stack-health poll thread. Called once from `setup()`. Respects the
 /// `stackHealthMonitor` config toggle (default on). First poll runs after one interval so startup
 /// isn't blocked; the health card already loads once on mount.
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
         let mut prev_down: HashSet<String> = HashSet::new();
+        // Services observed listening at some point THIS session. A service we never saw up was never
+        // started, so its being down is not an outage — see `alarmable`.
+        let mut seen_up: HashSet<String> = HashSet::new();
         // P8: last-emitted snapshot + ticks since the last emit, so we push only on a real change
         // (plus a keep-alive) instead of a full payload every 30s.
         let mut prev_emit: Option<String> = None;
@@ -74,8 +98,16 @@ pub fn start(app: AppHandle) {
                 .filter(|h| h.enabled)
                 .map(|h| (h.id.clone(), !h.port_open || h.healthy == Some(false)))
                 .collect();
-            let fired = newly_down(&mut prev_down, &curr);
-            STACK_DOWN_COUNT.store(curr.iter().filter(|(_, down)| *down).count(), Ordering::Relaxed);
+            note_seen_up(&mut seen_up, &curr);
+            let fired = alarmable(&newly_down(&mut prev_down, &curr), &seen_up);
+            // The tray's "needs attention" count must mean a real outage too: a stack the user never
+            // started would otherwise report every one of its services as a problem.
+            STACK_DOWN_COUNT.store(
+                curr.iter()
+                    .filter(|(id, down)| *down && seen_up.contains(id))
+                    .count(),
+                Ordering::Relaxed,
+            );
             // P8: push the list only when it changed since the last emit, plus a periodic keep-alive.
             let snap = serde_json::to_string(&health).unwrap_or_default();
             ticks_since_emit += 1;
@@ -125,6 +157,32 @@ mod tests {
         assert_eq!(newly_down(&mut prev, &up(&[("gateway", true), ("qwen", false)])), vec!["gateway"]);
         // A second service drops in the same tick → only the newly-down one.
         assert_eq!(newly_down(&mut prev, &up(&[("gateway", true), ("qwen", true)])), vec!["qwen"]);
+    }
+
+    #[test]
+    fn never_started_service_is_not_an_outage_but_a_crashed_one_is() {
+        let tick = |ids: &[(&str, bool)]| ids.iter().map(|(i, d)| (i.to_string(), *d)).collect::<Vec<_>>();
+        let mut prev: HashSet<String> = HashSet::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        // First poll of a stack nobody started: everything looks "newly down" because the baseline is
+        // empty. Nothing was ever seen listening, so nothing alarms. This is the owner-reported bug.
+        let t1 = tick(&[("gateway", true), ("qwen", true)]);
+        note_seen_up(&mut seen, &t1);
+        assert_eq!(alarmable(&newly_down(&mut prev, &t1), &seen), Vec::<String>::new());
+
+        // The user starts the gateway; it comes up. Still silent.
+        let t2 = tick(&[("gateway", false), ("qwen", true)]);
+        note_seen_up(&mut seen, &t2);
+        assert_eq!(alarmable(&newly_down(&mut prev, &t2), &seen), Vec::<String>::new());
+
+        // The gateway dies. We saw it alive, so this IS an outage and must alarm.
+        let t3 = tick(&[("gateway", true), ("qwen", true)]);
+        note_seen_up(&mut seen, &t3);
+        assert_eq!(alarmable(&newly_down(&mut prev, &t3), &seen), vec!["gateway"]);
+
+        // qwen was never started this session — it stays silent even now.
+        assert!(!seen.contains("qwen"), "a service never observed listening is not 'seen up'");
     }
 
     #[test]

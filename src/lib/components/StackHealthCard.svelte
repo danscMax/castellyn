@@ -65,11 +65,13 @@
   const total = $derived(enabled.length);
   const criticals = $derived(enabled.filter((i) => i.critical));
   const anySick = $derived(enabled.some((i) => statusOf(i) === 'degraded'));
-  // ok=all up · degraded=a service is sick (port open, /health fails) · stopped=some backends are
-  // just off (normal) · down=a critical front is unreachable (the only real outage).
+  // ok=all up · degraded=a service is sick (port open, /health fails) · stopped=backends are just off
+  // (normal) · down=a critical front is unreachable while the rest of the stack lives — the only real
+  // outage. A stack nobody started has zero services up: that is `stopped`, not an alarm. Checking it
+  // FIRST matters, otherwise a critical service that was merely never launched reads as `down`.
   const overall = $derived<'ok' | 'degraded' | 'stopped' | 'down'>(
-    total === 0
-      ? 'down'
+    total === 0 || ups === 0
+      ? 'stopped'
       : criticals.some((c) => statusOf(c) !== 'up')
         ? 'down'
         : anySick
@@ -87,7 +89,10 @@
       : overall === 'degraded'
         ? t('health.ovDegraded')
         : overall === 'stopped'
-          ? t('health.ovStopped')
+          ? // "Some stopped" would misdescribe a stack where nothing runs at all.
+            ups === 0
+            ? t('health.ovNotRunning')
+            : t('health.ovStopped')
           : t('health.ovDown')
   );
   function svcLabel(s: StackHealth): string {

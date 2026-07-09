@@ -7,6 +7,7 @@ export default {
   ovOk: 'Healthy',
   ovDegraded: 'Some degraded',
   ovStopped: 'Some stopped',
+  ovNotRunning: 'Stack not running',
   ovDown: 'Gateway down',
   summary: '{up}/{total} running',
   svUp: 'running',

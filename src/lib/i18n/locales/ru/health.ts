@@ -7,6 +7,7 @@ export default {
   ovOk: 'В норме',
   ovDegraded: 'Часть сбоит',
   ovStopped: 'Часть остановлена',
+  ovNotRunning: 'Стек не запущен',
   ovDown: 'Шлюз недоступен',
   summary: '{up}/{total} работает',
   svUp: 'работает',
