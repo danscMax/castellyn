@@ -184,6 +184,7 @@
   import { pushRun } from '$lib/runHistory.svelte';
   import { deriveOutcome } from '$lib/outcome';
   import { t, locale } from '$lib/i18n';
+  import { componentName } from '$lib/componentLabel';
   import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, type EnvInfo, type SkillRow } from '$lib/ipc';
 
   let components = $state<Component[]>([]);
@@ -514,7 +515,7 @@
   function onApply(comp: Component) {
     askConfirm(
       t('page.confirm_apply_title'),
-      t('page.confirm_apply_msg', { name: comp.name }),
+      t('page.confirm_apply_msg', { name: componentName(comp.id, comp.name) }),
       t('page.confirm_apply_btn'),
       () => startRun(comp.id, 'apply')
     );
@@ -2119,11 +2120,12 @@
     { id: 'act:hotkeys', label: t('page.hkTitle'), run: () => (hotkeyHelpOpen = true) },
     // Per-component check/apply so "check rtk" / "apply plugins" are one Ctrl+K away, not a tab hunt.
     ...components.flatMap((c) => {
+      const cname = componentName(c.id, c.name);
       const verbs = [
-        { id: `check:${c.id}`, label: `${t('common.check')}: ${c.name}`, run: () => runOrToast(() => startRun(c.id, 'check')) }
+        { id: `check:${c.id}`, label: `${t('common.check')}: ${cname}`, run: () => runOrToast(() => startRun(c.id, 'check')) }
       ];
       if (c.supportsApply) {
-        verbs.push({ id: `apply:${c.id}`, label: `${t('common.apply')}: ${c.name}`, run: () => runOrToast(() => startRun(c.id, 'apply')) });
+        verbs.push({ id: `apply:${c.id}`, label: `${t('common.apply')}: ${cname}`, run: () => runOrToast(() => startRun(c.id, 'apply')) });
       }
       return verbs;
     }),
@@ -2386,7 +2388,7 @@
             // Update/forks components: rich outcome from the status envelope.
             const out = deriveOutcome({
               id,
-              name: c.name,
+              name: componentName(c.id, c.name),
               code,
               mode: wasApply ? 'apply' : 'check',
               status: statuses[id],

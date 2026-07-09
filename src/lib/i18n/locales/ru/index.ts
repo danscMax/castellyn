@@ -22,6 +22,7 @@ import updates from './updates';
 import glossary from './glossary';
 import schedule from './schedule';
 import environments from './environments';
+import components from './components';
 
 const ru = {
   common,
@@ -45,7 +46,8 @@ const ru = {
   updates,
   glossary,
   schedule,
-  environments
+  environments,
+  components
 };
 
 export default ru;

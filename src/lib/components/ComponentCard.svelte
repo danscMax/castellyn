@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from '$lib/ipc';
   import { glossaryText } from '$lib/glossary';
+  import { componentName } from '$lib/componentLabel';
   import { t, pUpdate, plural } from '$lib/i18n';
   import { relTime, formatAbsTime, parseTsMs } from '$lib/relativeTime';
   import { countOf } from '$lib/envelope';
@@ -106,7 +107,7 @@
 <div class="sw-card flex flex-col gap-sw-3" class:busy>
   <div class="flex items-start justify-between gap-sw-2">
     <div class="min-w-0">
-      <h3 class="font-medium">{comp.name}</h3>
+      <h3 class="font-medium">{componentName(comp.id, comp.name)}</h3>
       <p class="text-sw-xs text-sw-text-muted">{comp.group}</p>
     </div>
     <span class="badge {health.cls} shrink-0">{health.label}</span>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t, plural, pFile } from '$lib/i18n';
+  import { componentName } from '$lib/componentLabel';
   import { statusTextClass } from '$lib/statusColor';
   import { agentSummary } from '$lib/agentStatus.svelte';
   import { Check, X, Info } from '@lucide/svelte';
@@ -217,7 +218,7 @@
   type Run = { id: string; name: string; level: Level; when: string; summary: string };
   const runs = $derived.by<Run[]>(() => {
     if (!statuses) return [];
-    const names = new Map((components ?? []).map((c) => [c.id, c.name]));
+    const names = new Map((components ?? []).map((c) => [c.id, componentName(c.id, c.name)]));
     return Object.entries(statuses)
       .map(([id, s]) => ({ id, s, ts: Date.parse(s?.timestamp ?? s?.generatedAt ?? '') }))
       .filter((x) => x.s && Number.isFinite(x.ts))
