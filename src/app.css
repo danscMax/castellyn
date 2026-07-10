@@ -97,6 +97,10 @@
   --sw-accent-hover: #2563eb;
   /* Accent used as TEXT (needs more contrast than accent-as-fill). Dark: same blue is fine. */
   --sw-accent-text: #3b82f6;
+  /* Accent used as a FILL UNDER WHITE TEXT. --sw-accent is a ring/tint colour: white on it is
+     3.68:1, under the 4.5 minimum. Not overridden in light — white-on-blue does not care about
+     the page behind it. */
+  --sw-accent-solid: #2563eb;
   --sw-accent-glow: rgba(59, 130, 246, 0.2);
   --sw-input-bg: rgba(30, 41, 59, 0.5);
   --sw-input-border: rgba(71, 85, 105, 0.5);
@@ -112,6 +116,9 @@
   /* Error/failure text token (matches the .status-bad red-400 canon); light theme darkens it for AA. */
   --sw-status-bad: #f87171;
   --sw-danger: #f87171;
+  /* Danger as a FILL UNDER WHITE TEXT. --sw-danger is red-400, a TEXT colour: white on it is
+     2.77:1. Anything painting a white label on red uses this instead. */
+  --sw-danger-solid: #dc2626;
   --sw-warn: #f59e0b;
   --sw-success: #34d399;
   /* Agent-status dots (Sessions): warn = working/connecting, done = a session finished but
@@ -245,12 +252,14 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+  /* Filled buttons DARKEN on hover. Brightening a saturated fill drags its white label back under
+     the contrast floor — the hover state was the least readable state of the loudest control. */
   .sw-btn-primary {
-    background: linear-gradient(135deg, var(--sw-accent), var(--sw-accent-hover));
+    background: linear-gradient(135deg, var(--sw-accent-solid), #1d4ed8);
     color: #fff;
   }
   .sw-btn-primary:not(:disabled):hover {
-    filter: brightness(1.08);
+    filter: brightness(0.92);
     box-shadow: 0 0 16px var(--sw-accent-glow);
   }
   .sw-btn-ghost {
@@ -264,11 +273,11 @@
   /* Destructive / irreversible actions — visually distinct from primary (accent) so a delete
      or restore never looks like a routine confirm. */
   .sw-btn-danger {
-    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    background: linear-gradient(135deg, var(--sw-danger-solid), #b91c1c);
     color: #fff;
   }
   .sw-btn-danger:not(:disabled):hover {
-    filter: brightness(1.08);
+    filter: brightness(0.92);
     box-shadow: 0 0 16px rgba(220, 38, 38, 0.4);
   }
   /* U7: outlined danger — destructive actions that must stay reachable without being the

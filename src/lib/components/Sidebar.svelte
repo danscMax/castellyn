@@ -446,8 +446,10 @@
     display: inline-flex;
     align-items: center;
   }
+  /* Badges carry white text, so they take the -solid fills; the .att-dot.* rules below are more
+     specific and keep the brand hues for the dots, which carry no text. */
   .att-info {
-    background: var(--sw-accent);
+    background: var(--sw-accent-solid);
     color: #fff;
   }
   .att-warn {
@@ -455,7 +457,7 @@
     color: #1a1205;
   }
   .att-danger {
-    background: var(--sw-danger);
+    background: var(--sw-danger-solid);
     color: #fff;
   }
   .att-done {

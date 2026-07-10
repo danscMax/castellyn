@@ -325,7 +325,7 @@
     padding: 4px 12px;
     font-size: var(--sw-text-xs);
     color: #fff;
-    background: var(--sw-accent);
+    background: var(--sw-accent-solid);
     border: none;
     border-radius: 9999px;
     cursor: pointer;

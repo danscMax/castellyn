@@ -2604,7 +2604,7 @@
   .split-chev {
     border: none;
     cursor: pointer;
-    background: var(--sw-accent);
+    background: var(--sw-accent-solid);
     color: #fff;
     font-size: var(--sw-text-xs);
     padding: 6px 12px;
