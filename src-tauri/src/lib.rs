@@ -12278,34 +12278,64 @@ fn opencode_plugin_config(plugin: &str) -> String {
     .to_string()
 }
 
+/// Lifecycle events (from STATUS_HOOK_EVENTS) whose command is NOT wired in `settings`, returned
+/// in canonical STATUS_HOOK_EVENTS order. Empty = fully wired. Read-only; a malformed/absent hooks
+/// value simply yields every event (fully unwired) rather than panicking.
+fn status_hook_missing_events(settings: &serde_json::Value) -> Vec<&'static str> {
+    STATUS_HOOK_EVENTS
+        .iter()
+        .copied()
+        .filter(|ev| !hook_cmd_wired(settings, ev, STATUS_HOOK_MARKER))
+        .collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileHookGaps {
+    profile: String,
+    /// Lifecycle events still missing for this profile, in STATUS_HOOK_EVENTS order.
+    missing: Vec<&'static str>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentStatusHookState {
     /// Profile dir names with ALL five lifecycle events wired.
     wired: Vec<String>,
     unwired: Vec<String>,
+    /// Profiles wired for SOME but not all events, with the exact events still missing. Separates
+    /// drift/partial wiring from a profile that was simply never enabled (all five missing — that
+    /// one stays only in `unwired`). Read-only diagnostic.
+    partial: Vec<ProfileHookGaps>,
 }
 
 fn agent_status_hook_state() -> Result<AgentStatusHookState, String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
-    let (mut wired, mut unwired) = (Vec::new(), Vec::new());
+    let (mut wired, mut unwired, mut partial) = (Vec::new(), Vec::new(), Vec::new());
     for (name, sp) in plugin_sync_profiles(&home) {
-        let all = std::fs::read_to_string(&sp)
+        // Unreadable/malformed settings.json → treated as fully unwired (every event missing).
+        let missing = std::fs::read_to_string(&sp)
             .ok()
             .and_then(|c| parse_json_bom(&c).ok())
-            .map(|v| {
-                STATUS_HOOK_EVENTS
-                    .iter()
-                    .all(|ev| hook_cmd_wired(&v, ev, STATUS_HOOK_MARKER))
-            })
-            .unwrap_or(false);
-        if all {
+            .map(|v| status_hook_missing_events(&v))
+            .unwrap_or_else(|| STATUS_HOOK_EVENTS.to_vec());
+        if missing.is_empty() {
             wired.push(name);
         } else {
+            if missing.len() < STATUS_HOOK_EVENTS.len() {
+                partial.push(ProfileHookGaps {
+                    profile: name.clone(),
+                    missing,
+                });
+            }
             unwired.push(name);
         }
     }
-    Ok(AgentStatusHookState { wired, unwired })
+    Ok(AgentStatusHookState {
+        wired,
+        unwired,
+        partial,
+    })
 }
 
 #[tauri::command]
@@ -12557,6 +12587,70 @@ mod plugin_sync_tests {
             super::script_version_header(super::STATUS_HOOK_SCRIPT, "# castellyn-status-version:")
                 >= 1
         );
+    }
+
+    #[test]
+    fn status_hook_missing_events_names_partial_gaps() {
+        // No wiring at all → every lifecycle event is reported missing, in canonical order.
+        let empty = json!({});
+        assert_eq!(
+            super::status_hook_missing_events(&empty),
+            super::STATUS_HOOK_EVENTS.to_vec()
+        );
+        // A malformed hooks value is treated as fully unwired, not a panic or partial.
+        let bad = json!({ "hooks": "oops" });
+        assert_eq!(
+            super::status_hook_missing_events(&bad),
+            super::STATUS_HOOK_EVENTS.to_vec()
+        );
+        // Wire three of the five events → the diagnostic names exactly the two still missing,
+        // preserving STATUS_HOOK_EVENTS order (not the order they were wired in).
+        let mut v = json!({});
+        for ev in ["Stop", "SessionStart", "UserPromptSubmit"] {
+            super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER);
+        }
+        assert_eq!(
+            super::status_hook_missing_events(&v),
+            vec!["Notification", "SessionEnd"]
+        );
+        // Fully wired → nothing missing.
+        for ev in ["Notification", "SessionEnd"] {
+            super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER);
+        }
+        assert!(super::status_hook_missing_events(&v).is_empty());
+    }
+
+    #[test]
+    fn status_hook_diagnostic_ignores_and_preserves_unrelated_hooks() {
+        // An unrelated hook already lives on a lifecycle event we also wire. It must never be
+        // counted as ours by the diagnostic, and must survive our wire + unwire untouched.
+        let mut v = json!({ "hooks": { "SessionStart": [
+            { "hooks": [{ "type": "command", "command": "py other_hook.py" }] }
+        ]}});
+        // The neighbour's presence does NOT make SessionStart count as wired for us.
+        assert_eq!(
+            super::status_hook_missing_events(&v),
+            super::STATUS_HOOK_EVENTS.to_vec()
+        );
+        for ev in super::STATUS_HOOK_EVENTS {
+            super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER);
+        }
+        assert!(super::status_hook_missing_events(&v).is_empty());
+        // The foreign neighbour still sits alongside ours on the shared event.
+        let ss = v["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(ss.len(), 2);
+        assert_eq!(ss[0]["hooks"][0]["command"], "py other_hook.py");
+        // Unwiring ours reverts the diagnostic to fully-missing and leaves the neighbour verbatim.
+        for ev in super::STATUS_HOOK_EVENTS {
+            super::hook_cmd_unwire(&mut v, ev, super::STATUS_HOOK_MARKER);
+        }
+        assert_eq!(
+            super::status_hook_missing_events(&v),
+            super::STATUS_HOOK_EVENTS.to_vec()
+        );
+        let ss = v["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(ss.len(), 1);
+        assert_eq!(ss[0]["hooks"][0]["command"], "py other_hook.py");
     }
 
     #[test]
