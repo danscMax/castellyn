@@ -2457,10 +2457,49 @@ fn is_secret_file(name: &str) -> bool {
         || name.eq_ignore_ascii_case(".mcp.json")
 }
 
+/// A hard crash (or power loss) between `write_file_no_bom` and `rename` strands `<secret>.tmp`
+/// holding a full copy of the secret. Once the real file's token is rotated, that debris is the
+/// *stale* secret living on in a synced tree — the same hazard `.bak` posed, which is why we sweep
+/// it for the exact same file names.
+///
+/// Scope is the directory we are about to write to anyway, so there is no startup scan and no extra
+/// I/O beyond one `read_dir` of a small folder. A temp file younger than `stale` belongs to a
+/// concurrent writer (a second Castellyn instance) and is left alone; real debris is minutes old at
+/// least, since the process that made it is gone.
+fn sweep_stale_secret_tmp(dir: &std::path::Path, stale: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(base) = name.strip_suffix(".tmp") else {
+            continue;
+        };
+        if !is_secret_file(base) {
+            continue;
+        }
+        let age = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| std::time::SystemTime::now().duration_since(t).ok());
+        // Unreadable mtime, or a clock that ran backwards → leave it. Deleting on a guess could
+        // race a live writer, and the file is no worse than the cleartext target beside it.
+        if age.is_some_and(|a| a >= stale) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Debris younger than this is assumed to be a concurrent writer's temp, not a crash leftover.
+const SECRET_TMP_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn write_json_atomic(path: &str, content: &str) -> std::io::Result<()> {
     let p = std::path::Path::new(path);
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
+        sweep_stale_secret_tmp(dir, SECRET_TMP_STALE);
     }
     // Snapshot the target's Hidden/ReadOnly so the rename can replace a RO/Hidden file (a plain
     // rename onto a ReadOnly target fails on Windows) and we can re-stamp the attrs afterwards —
@@ -15427,6 +15466,35 @@ mod tests {
         for name in ["config.json", "forks.json", "schedules.json", "sessions.json"] {
             assert!(!is_secret_file(name), "{name} should keep its .bak");
         }
+    }
+
+    #[test]
+    fn sweep_removes_crash_debris_but_spares_a_live_writer() {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("castellyn_sweep_{pid}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let secret = dir.join("settings.json.tmp");
+        let mcp = dir.join(".mcp.json.tmp");
+        let plain = dir.join("config.json.tmp"); // non-secret: its .bak already covers it
+        let unrelated = dir.join("settings.json"); // the real file must survive
+        for f in [&secret, &mcp, &plain, &unrelated] {
+            std::fs::write(f, "{}").unwrap();
+        }
+
+        // Every file was just created, so a 60s threshold sees them all as a live writer's.
+        sweep_stale_secret_tmp(&dir, std::time::Duration::from_secs(60));
+        assert!(secret.exists(), "a fresh temp belongs to a concurrent writer");
+
+        // Zero threshold = "everything is debris": only secret-bearing temps go.
+        sweep_stale_secret_tmp(&dir, std::time::Duration::ZERO);
+        assert!(!secret.exists(), "settings.json.tmp is a stranded secret");
+        assert!(!mcp.exists(), ".mcp.json.tmp is a stranded secret");
+        assert!(plain.exists(), "non-secret temps are not ours to delete");
+        assert!(unrelated.exists(), "the real file must never be touched");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
