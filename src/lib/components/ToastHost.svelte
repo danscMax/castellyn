@@ -27,7 +27,7 @@
       onfocusout={resumeToasts}
     >
       <div class="body">
-        <div class="title">{toast.title}</div>
+        <div class="title">{toast.title}{#if (toast.count ?? 1) > 1}<span class="cnt" title={t('common.repeated')}>×{toast.count}</span>{/if}</div>
         {#if toast.detail}<div class="detail">{toast.detail}</div>{/if}
         <div class="acts">
           {#if toast.action}
@@ -86,6 +86,16 @@
     font-size: var(--sw-text-sm);
     font-weight: 600;
     color: var(--sw-text-primary);
+  }
+  .cnt {
+    margin-left: 6px;
+    font-size: var(--sw-text-xs);
+    font-weight: 600;
+    color: var(--sw-text-secondary);
+    background: var(--sw-bg-tertiary, rgba(255, 255, 255, 0.06));
+    border: 1px solid var(--sw-border);
+    border-radius: 999px;
+    padding: 0 6px;
   }
   .detail {
     margin-top: 2px;

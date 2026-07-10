@@ -60,7 +60,7 @@
             <div class="entry {item.kind}">
               <span class="icon" class:icon-success={item.kind === 'success'} class:icon-warn={item.kind === 'warn'} class:icon-error={item.kind === 'error'} class:icon-info={item.kind === 'info'}><Icon size={11} aria-hidden="true" /></span>
               <div class="body">
-                <div class="entry-title">{item.title}</div>
+                <div class="entry-title">{item.title}{#if (item.count ?? 1) > 1}<span class="entry-cnt" title={t('common.repeated')}>×{item.count}</span>{/if}</div>
                 {#if item.detail}<div class="entry-detail">{item.detail}</div>{/if}
                 <div class="entry-time" title={new Date(item.timestamp).toLocaleString()}>{fmtRel(item.timestamp)}</div>
               </div>
@@ -161,6 +161,16 @@
     font-weight: 500;
     color: var(--sw-text-primary);
     word-break: break-word;
+  }
+  .entry-cnt {
+    margin-left: 6px;
+    font-size: var(--sw-text-xs);
+    font-weight: 600;
+    color: var(--sw-text-secondary);
+    background: var(--sw-bg-tertiary, rgba(255, 255, 255, 0.06));
+    border: 1px solid var(--sw-border);
+    border-radius: 999px;
+    padding: 0 6px;
   }
   .entry-detail {
     font-size: var(--sw-text-xs);

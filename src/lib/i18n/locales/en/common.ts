@@ -29,6 +29,7 @@ export default {
   copied: 'Copied',
   copyPath: 'Copy path',
   dismissAll: 'Dismiss all',
+  repeated: 'Consecutive repeats',
   show: 'Show',
   hide: 'Hide',
   clear: 'Clear',

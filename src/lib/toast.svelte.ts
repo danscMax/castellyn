@@ -8,6 +8,8 @@ export type Toast = {
   title: string;
   detail?: string;
   action?: ToastAction;
+  /** How many identical arrivals this toast represents (rendered as ×N when > 1). */
+  count?: number;
 };
 
 export type ToastWithMeta = Toast & { timestamp: number };
@@ -69,6 +71,21 @@ function arm(id: number, ttl: number): void {
 }
 
 export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
+  // A repeat of an identical visible toast bumps a ×N counter instead of stacking a clone — a
+  // flapping poller or a bulk run can't wallpaper the corner with the same message. The countdown
+  // restarts so the (still-arriving) message doesn't vanish mid-burst.
+  const dup = toastStore.items.find(
+    (x) => x.kind === t.kind && x.title === t.title && x.detail === t.detail
+  );
+  if (dup) {
+    dup.count = (dup.count ?? 1) + 1;
+    const tm = timers.get(dup.id);
+    if (tm) {
+      clearTimeout(tm.handle);
+      arm(dup.id, tm.ttl);
+    }
+    return dup.id;
+  }
   const id = ++seq;
   toastStore.items.push({ ...t, id });
   if (t.kind !== 'error' && ttlMs > 0) arm(id, ttlMs);

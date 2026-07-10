@@ -29,6 +29,7 @@ export default {
   copied: '已复制',
   copyPath: '复制路径',
   dismissAll: '全部关闭',
+  repeated: '连续重复次数',
   show: '显示',
   hide: '隐藏',
   clear: '清除',

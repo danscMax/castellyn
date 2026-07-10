@@ -29,6 +29,7 @@ export default {
   copied: 'Скопировано',
   copyPath: 'Скопировать путь',
   dismissAll: 'Закрыть все',
+  repeated: 'Повторов подряд',
   show: 'Показать',
   hide: 'Скрыть',
   clear: 'Очистить',
