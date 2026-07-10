@@ -83,7 +83,7 @@
           {#if r.fix}
             <button class="sw-btn sw-btn-ghost text-sw-xs ml-auto shrink-0" disabled={!!working || busy}
               onclick={() => doFix(r)}
-              title={r.fix === 'managed_deploy' ? t('page.home_drift_deploy_hint') : undefined}>
+              title={r.fix === 'managed_deploy' ? t('page.home_drift_deploy_hint') : t('page.home_drift_own_hint')}>
               {#if working === r.id}{t('common.loading')}{:else}{fixLabel(r.fix)}{/if}
             </button>
           {/if}

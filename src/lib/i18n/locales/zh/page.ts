@@ -56,6 +56,7 @@ export default {
   home_drift_fix_own: '接管',
   home_drift_fix_deploy: '重新部署',
   home_drift_deploy_hint: '将触发 Windows (UAC) 提示',
+  home_drift_own_hint: '安装 plugin_sync 钩子并在所有配置档中接入 SessionStart',
   // Ф2-GC：「堆栈垃圾」卡片（过期插件版本、temp_git、.bak、其他系统的二进制文件）
   home_gc_title: '堆栈垃圾',
   home_gc_scanning: '扫描中…',

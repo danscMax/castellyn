@@ -56,6 +56,7 @@ export default {
   home_drift_fix_own: 'Take ownership',
   home_drift_fix_deploy: 'Redeploy',
   home_drift_deploy_hint: 'Triggers a Windows (UAC) prompt',
+  home_drift_own_hint: 'Installs the plugin_sync hook and wires it into SessionStart in every profile',
   // Ф2-GC: "stack garbage" card (stale plugin versions, temp_git, .bak, wrong-OS binaries)
   home_gc_title: 'Stack garbage',
   home_gc_scanning: 'Scanning…',

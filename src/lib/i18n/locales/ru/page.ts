@@ -56,6 +56,7 @@ export default {
   home_drift_fix_own: 'Забрать владение',
   home_drift_fix_deploy: 'Передеплоить',
   home_drift_deploy_hint: 'Запросит подтверждение Windows (UAC)',
+  home_drift_own_hint: 'Установит хук plugin_sync и подключит его к SessionStart во всех профилях',
   // Ф2-GC: карточка «Мусор стека» (устаревшие версии плагинов, temp_git, .bak, чужие-ОС бинарники)
   home_gc_title: 'Мусор стека',
   home_gc_scanning: 'Сканирую…',
