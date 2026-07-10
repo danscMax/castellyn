@@ -1,4 +1,4 @@
-// castellyn-plugin-version: 1
+// castellyn-plugin-version: 2
 // opencode plugin -> Castellyn agent-status file.
 //
 // opencode has no per-turn notifier the way codex does, but it does merge an extra config from
@@ -25,48 +25,67 @@ export default async () => {
   if (!pane || !process.env.APPDATA) return {};
 
   const file = path.join(process.env.APPDATA, 'castellyn', 'agent-status', `${pane}.json`);
-  // opencode runs sub-sessions (subagents) that raise and clear their own busy status. Counting the
-  // busy set, rather than watching one session id, means a subagent finishing cannot report the pane
-  // as done while the parent is still working — and no parentID lookup is needed.
+  // opencode runs sub-sessions (subagents) that raise and clear their own status. Counting the busy
+  // set, rather than watching one session id, means a subagent finishing cannot report the pane as
+  // done while the parent is still working — and no parentID lookup is needed.
   const busy = new Set();
-  const asking = new Set();
+  // sessionID -> the ids of its unanswered permission requests. A session can have more than one in
+  // flight, so a single flag would unblock on the first reply.
+  /** @type {Map<string, Set<string>>} */
+  const pending = new Map();
+  /** @type {string | null} */
   let last = null;
 
+  /** @param {Record<string, any> | undefined} p */
+  const key = (p) => p?.sessionID ?? '?';
+
   const report = () => {
-    const state = asking.size ? 'blocked' : busy.size ? 'working' : 'idle';
-    if (state === last) return; // dedup: opencode emits status far more often than it changes
+    let state = 'idle';
+    for (const reqs of pending.values()) if (reqs.size) state = 'blocked';
+    if (state === 'idle' && busy.size) state = 'working';
+    if (state === last) return; // opencode emits status far more often than it changes
     last = state;
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       const payload = JSON.stringify({ state, event: 'opencode', ts: Date.now() });
       // Same temp+rename the Rust writer uses: the poll thread must never read a half-written file.
-      fs.writeFileSync(`${file}.tmp`, payload, 'utf8');
-      fs.renameSync(`${file}.tmp`, file);
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, payload, 'utf8');
+      fs.renameSync(tmp, file);
     } catch {
       last = null; // a failed write must not suppress the next attempt
     }
   };
 
   return {
+    /** @param {{ event?: { type?: string, properties?: Record<string, any> } }} input */
     async event({ event }) {
       try {
         const p = event?.properties ?? {};
+        const sid = key(p);
         switch (event?.type) {
+          // ANY status means the turn is still running. `busy` is not the only one: a stalled
+          // provider produces {type:"retry", attempt, message, next} while the agent keeps trying,
+          // and treating that as "not busy" made the pane flip working->idle->working on every
+          // retry — which is exactly the false "finished" this feature exists to remove. Only
+          // `session.idle` ends a turn, so only it may clear the flag (verified against a live
+          // opencode: retry storms fire several statuses per second).
           case 'session.status':
-            // The status union carries other shapes (retry/auth actions); only `busy` means working.
-            if (p.status?.type === 'busy') busy.add(p.sessionID);
-            else busy.delete(p.sessionID);
+            busy.add(sid);
             break;
           case 'session.idle':
           case 'session.deleted':
-            busy.delete(p.sessionID);
-            asking.delete(p.sessionID);
+            busy.delete(sid);
+            pending.delete(sid);
             break;
-          case 'permission.asked':
-            asking.add(p.sessionID);
+          case 'permission.asked': {
+            const reqs = pending.get(sid) ?? new Set();
+            reqs.add(p.id);
+            pending.set(sid, reqs);
             break;
+          }
           case 'permission.replied':
-            asking.delete(p.sessionID);
+            pending.get(sid)?.delete(p.requestID);
             break;
           default:
             return;
