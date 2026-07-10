@@ -529,7 +529,7 @@
                 <!-- A model-scoped weekly cap above the headline 7d is the REAL constraint: show it
                      next to d7 (labelled) instead of letting the calmer number stand alone. -->
                 <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.d7 == null && r.scoped == null ? null : Math.max(r.d7 ?? 0, r.scoped ?? 0))}">
-                  {r.d7 == null ? '—' : pct(r.d7)}{#if r.scoped != null && r.scoped > (r.d7 ?? -1)}<span title={t('analytics.claudeScopedTip', { label: r.scopedLabel ?? '' })}> · {r.scopedLabel} {pct(r.scoped)}</span>{/if}
+                  {r.d7 == null ? '—' : pct(r.d7)}{#if r.scoped != null && r.scoped > (r.d7 ?? -1)}<span class="ml-sw-1" title={t('analytics.claudeScopedTip', { label: r.scopedLabel ?? '' })}>· {r.scopedLabel} {pct(r.scoped)}</span>{/if}
                 </td>
                 <td class="px-sw-3 py-sw-2 text-right text-sw-text-secondary">{formatAbsTime(r.h5Reset)}</td>
               </tr>
