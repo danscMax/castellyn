@@ -49,9 +49,13 @@ export function pickResumeCandidate(
       // `receivedAt` is absent only for a store filled before this field existed — treat that as fresh
       // rather than silently disabling auto-switch on first launch after an update.
       const fresh = l != null && now - (l.receivedAt ?? now) <= LIMITS_STALE_MS;
-      return { name: p.name, h5: fresh ? (l?.h5 ?? null) : null };
+      const h5 = fresh ? (l?.h5 ?? null) : null;
+      // A model-scoped weekly cap (limits[] `scoped`) gates real work even when 5h is calm — a
+      // profile whose Opus/Fable week is exhausted is not a resume destination. Absent = 0 (no cap).
+      const util = h5 == null ? null : Math.max(h5, l?.scoped ?? 0);
+      return { name: p.name, util };
     })
-    .filter((p): p is { name: string; h5: number } => p.h5 != null && p.h5 < 85)
-    .sort((a, b) => a.h5 - b.h5);
+    .filter((p): p is { name: string; util: number } => p.util != null && p.util < 85)
+    .sort((a, b) => a.util - b.util);
   return eligible.length ? eligible[0].name : null;
 }

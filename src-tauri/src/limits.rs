@@ -65,6 +65,15 @@ struct LimitsStatus {
     d7: Option<f64>,
     h5_reset: Option<String>,
     d7_reset: Option<String>,
+    /// Highest model/surface-SCOPED limit from the response's `limits[]` array (e.g. a per-model
+    /// weekly cap). It can exceed `d7` — and then IT is the binding constraint, not the headline
+    /// seven_day number, so auto-switch and the title-bar peak must see it.
+    scoped: Option<f64>,
+    scoped_label: Option<String>,
+    scoped_reset: Option<String>,
+    /// `extra_usage`: pay-as-you-go credits that keep the profile working past the plan limits.
+    extra_enabled: bool,
+    extra_pct: Option<f64>,
     /// The OAuth token was rejected (401) — the user must re-auth this profile.
     expired: bool,
     /// Anthropic answered 429: the percentages above are unknown for this round, NOT zero. Kept
@@ -169,6 +178,43 @@ pub(crate) fn util_of(resp: &serde_json::Value, field: &str) -> (Option<f64>, Op
     (util, reset)
 }
 
+/// The tightest SCOPED limit from the response's `limits[]` array. Entries with a non-null `scope`
+/// are per-model/per-surface caps (live example: weekly_scoped "Fable" at 18% while the headline
+/// seven_day said 12%) that `five_hour`/`seven_day` do NOT include. Returns (percent, label,
+/// resets_at) of the max-percent scoped entry; label falls back to the entry's `kind`.
+pub(crate) fn scoped_max(resp: &serde_json::Value) -> (Option<f64>, Option<String>, Option<String>) {
+    let mut best: (Option<f64>, Option<String>, Option<String>) = (None, None, None);
+    for l in resp.get("limits").and_then(|x| x.as_array()).into_iter().flatten() {
+        let Some(scope) = l.get("scope").filter(|s| !s.is_null()) else {
+            continue;
+        };
+        let Some(pct) = l.get("percent").and_then(|x| x.as_f64()) else {
+            continue;
+        };
+        if best.0.is_some_and(|b| b >= pct) {
+            continue;
+        }
+        let label = scope
+            .get("model")
+            .and_then(|m| m.get("display_name"))
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| l.get("kind").and_then(|x| x.as_str()))
+            .map(str::to_string);
+        best = (Some(pct), label, l.get("resets_at").and_then(json_scalar_str));
+    }
+    best
+}
+
+/// `extra_usage` — pay-as-you-go credits past the plan limits: (is_enabled, utilization %).
+pub(crate) fn extra_of(resp: &serde_json::Value) -> (bool, Option<f64>) {
+    let e = resp.get("extra_usage");
+    (
+        e.and_then(|x| x.get("is_enabled")).and_then(|x| x.as_bool()).unwrap_or(false),
+        e.and_then(|x| x.get("utilization")).and_then(|x| x.as_f64()),
+    )
+}
+
 /// A JSON scalar (string OR number) as an owned string; None for null/object/array.
 fn json_scalar_str(v: &serde_json::Value) -> Option<String> {
     match v {
@@ -254,6 +300,8 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
         Ok(resp) => {
             let (h5, h5_reset) = util_of(&resp, "five_hour");
             let (d7, d7_reset) = util_of(&resp, "seven_day");
+            let (scoped, scoped_label, scoped_reset) = scoped_max(&resp);
+            let (extra_enabled, extra_pct) = extra_of(&resp);
             let _ = app.emit(
                 "limits-status",
                 LimitsStatus {
@@ -262,6 +310,11 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     d7,
                     h5_reset: h5_reset.clone(),
                     d7_reset: d7_reset.clone(),
+                    scoped,
+                    scoped_label: scoped_label.clone(),
+                    scoped_reset: scoped_reset.clone(),
+                    extra_enabled,
+                    extra_pct,
                     expired: false,
                     rate_limited: false,
                 },
@@ -277,6 +330,14 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     fire_alert(app, profile, "7d", level, u, d7_reset.as_deref());
                 }
             }
+            // A scoped (per-model) cap alerts too — it gates real work even when the headline 5h/7d
+            // are calm. The window id is the model label, so each model re-arms independently.
+            if let Some(u) = scoped {
+                let win = scoped_label.as_deref().unwrap_or("model");
+                if let Some(level) = take_alert(&mut fired, profile, win, u, scoped_reset.as_deref()) {
+                    fire_alert(app, profile, win, level, u, scoped_reset.as_deref());
+                }
+            }
         }
         Err(401) => {
             // Expired token — surface it, do NOT attempt a refresh.
@@ -288,6 +349,11 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     d7: None,
                     h5_reset: None,
                     d7_reset: None,
+                    scoped: None,
+                    scoped_label: None,
+                    scoped_reset: None,
+                    extra_enabled: false,
+                    extra_pct: None,
                     expired: true,
                     rate_limited: false,
                 },
@@ -306,6 +372,11 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     d7: None,
                     h5_reset: None,
                     d7_reset: None,
+                    scoped: None,
+                    scoped_label: None,
+                    scoped_reset: None,
+                    extra_enabled: false,
+                    extra_pct: None,
                     expired: false,
                     rate_limited: true,
                 },
@@ -381,6 +452,43 @@ mod tests {
         assert_eq!(util_of(&resp, "seven_day"), (Some(10.0), Some("1751565600".to_string())));
         assert_eq!(util_of(&resp, "empty"), (None, None));
         assert_eq!(util_of(&resp, "missing"), (None, None));
+    }
+
+    #[test]
+    fn scoped_and_extra_parsing() {
+        // Shape captured from a live /api/oauth/usage response (2026-07-10): the scoped weekly cap
+        // (18%) exceeds the headline seven_day (12%) — exactly the case these parsers exist for.
+        let resp = serde_json::json!({
+            "seven_day": { "utilization": 12.0, "resets_at": "2026-07-11T05:00:00Z" },
+            "limits": [
+                { "kind": "session", "group": "session", "percent": 8, "scope": null, "is_active": false },
+                { "kind": "weekly_all", "group": "weekly", "percent": 12, "scope": null, "is_active": false },
+                { "kind": "weekly_scoped", "group": "weekly", "percent": 18, "is_active": true,
+                  "resets_at": "2026-07-11T05:00:00Z",
+                  "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null } }
+            ],
+            "extra_usage": { "is_enabled": false, "utilization": null }
+        });
+        assert_eq!(
+            scoped_max(&resp),
+            (Some(18.0), Some("Fable".to_string()), Some("2026-07-11T05:00:00Z".to_string()))
+        );
+        assert_eq!(extra_of(&resp), (false, None));
+
+        // Enabled extra credits; scoped label falls back to `kind` when the model name is absent.
+        let resp2 = serde_json::json!({
+            "limits": [
+                { "kind": "weekly_scoped", "percent": 91.5, "scope": { "model": null } }
+            ],
+            "extra_usage": { "is_enabled": true, "utilization": 37.5 }
+        });
+        assert_eq!(scoped_max(&resp2), (Some(91.5), Some("weekly_scoped".to_string()), None));
+        assert_eq!(extra_of(&resp2), (true, Some(37.5)));
+
+        // No limits[] / no extra_usage at all — everything reads as absent, nothing panics.
+        let empty = serde_json::json!({});
+        assert_eq!(scoped_max(&empty), (None, None, None));
+        assert_eq!(extra_of(&empty), (false, None));
     }
 
     #[test]

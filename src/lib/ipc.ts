@@ -1005,6 +1005,14 @@ export type LimitsStatusEvent = {
   d7: number | null;
   h5Reset: string | null;
   d7Reset: string | null;
+  // Highest model-scoped cap from the API's limits[] array (per-model weekly). Can exceed d7 — and
+  // then IT gates the profile, so auto-switch and the peak strip must weigh it, not just d7.
+  scoped: number | null;
+  scopedLabel: string | null;
+  scopedReset: string | null;
+  // extra_usage: pay-as-you-go credits that keep the profile working past the plan limits.
+  extraEnabled: boolean;
+  extraPct: number | null;
   expired: boolean;
   // Anthropic answered 429 this round: h5/d7 are null because the numbers are UNKNOWN, not zero.
   // Distinct from `expired` (token rejected) and from a plain network error (no event at all).

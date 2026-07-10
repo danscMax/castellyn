@@ -294,7 +294,7 @@
   type ClaudeRow = LimitsStatusEvent & { peak: number };
   const claudeRows = $derived.by<ClaudeRow[]>(() =>
     Object.values(limitsStore.byProfile)
-      .map((e) => ({ ...e, peak: Math.max(e.h5 ?? 0, e.d7 ?? 0) }))
+      .map((e) => ({ ...e, peak: Math.max(e.h5 ?? 0, e.d7 ?? 0, e.scoped ?? 0) }))
       .sort((a, b) => b.peak - a.peak)
   );
   const claudePctClass = (p: number | null) =>
@@ -520,12 +520,17 @@
               <tr class="border-b border-sw-border last:border-0 {i === 0 && r.peak >= 85 ? 'row-active' : ''}">
                 <td class="px-sw-3 py-sw-2 font-medium">
                   {r.profile}
+                  {#if r.extraEnabled}<span class="badge ml-sw-2" title={t('analytics.claudeExtraTip')}>{t('analytics.claudeExtra')}{r.extraPct != null ? ` ${pct(r.extraPct)}` : ''}</span>{/if}
                   {#if r.expired}<span class="badge badge-warn ml-sw-2">{t('analytics.claudeExpired')}</span>
                   {:else if r.rateLimited}<span class="badge badge-warn ml-sw-2" title={t('analytics.claudeRateLimitedTip')}>{t('analytics.claudeRateLimited')}</span>
                   {:else if i === 0 && r.peak >= 85}<span class="badge badge-err ml-sw-2">{t('analytics.claudeNearLimit')}</span>{/if}
                 </td>
                 <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.h5)}">{r.h5 == null ? '—' : pct(r.h5)}</td>
-                <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.d7)}">{r.d7 == null ? '—' : pct(r.d7)}</td>
+                <!-- A model-scoped weekly cap above the headline 7d is the REAL constraint: show it
+                     next to d7 (labelled) instead of letting the calmer number stand alone. -->
+                <td class="px-sw-3 py-sw-2 text-right tabular-nums {claudePctClass(r.d7 == null && r.scoped == null ? null : Math.max(r.d7 ?? 0, r.scoped ?? 0))}">
+                  {r.d7 == null ? '—' : pct(r.d7)}{#if r.scoped != null && r.scoped > (r.d7 ?? -1)}<span title={t('analytics.claudeScopedTip', { label: r.scopedLabel ?? '' })}> · {r.scopedLabel} {pct(r.scoped)}</span>{/if}
+                </td>
                 <td class="px-sw-3 py-sw-2 text-right text-sw-text-secondary">{formatAbsTime(r.h5Reset)}</td>
               </tr>
             {/each}

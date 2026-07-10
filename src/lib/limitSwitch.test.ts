@@ -13,12 +13,17 @@ const prof = (name: string, over: Partial<ProfileInfo> = {}): ProfileInfo => ({
   linksIntact: true,
   ...over
 });
-const lim = (profile: string, h5: number | null): LimitsStatusEvent => ({
+const lim = (profile: string, h5: number | null, scoped: number | null = null): LimitsStatusEvent => ({
   profile,
   h5,
   d7: null,
   h5Reset: null,
   d7Reset: null,
+  scoped,
+  scopedLabel: scoped == null ? null : 'Fable',
+  scopedReset: null,
+  extraEnabled: false,
+  extraPct: null,
   expired: false,
   rateLimited: false
 });
@@ -105,6 +110,16 @@ describe('pickResumeCandidate (#21e)', () => {
 
     const fresh = { a: { ...lim('a', 12), receivedAt: now - 1_000 } };
     expect(pickResumeCandidate('cur', profiles, fresh, undefined, now)).toBe('a');
+  });
+
+  it('weighs a model-scoped weekly cap: an exhausted model week disqualifies a calm-5h profile', () => {
+    const profiles = [prof('cur'), prof('calm'), prof('capped')];
+    // "capped" looks best on 5h (2%) but its per-model week is at 91% — not a resume destination.
+    const limits = { calm: lim('calm', 40), capped: lim('capped', 2, 91), cur: lim('cur', 100) };
+    expect(pickResumeCandidate('cur', profiles, limits)).toBe('calm');
+    // A scoped cap below 85 only reorders: max(h5, scoped) is the ranking measure.
+    const soft = { calm: lim('calm', 40), capped: lim('capped', 2, 30), cur: lim('cur', 100) };
+    expect(pickResumeCandidate('cur', profiles, soft)).toBe('capped');
   });
 
   it('treats a reading with no receivedAt as fresh, so an upgrade does not disable auto-switch', () => {

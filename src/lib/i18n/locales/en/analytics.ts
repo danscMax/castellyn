@@ -81,6 +81,10 @@ export default {
   claudeRateLimitedTip:
     'Anthropic answered 429 while polling — this round\'s percentages are unknown. They refresh on the next poll.',
   claudeNearLimit: 'near limit',
+  claudeScopedTip: 'Weekly limit for the {label} model — tighter than the overall 7-day number, so it binds first.',
+  claudeExtra: 'credits',
+  claudeExtraTip:
+    'Extra usage is enabled: past the plan limits this profile keeps working on pay-as-you-go credits.',
   claudeFootnote: 'Anthropic OAuth reports utilization %, not raw tokens — exact per-profile token counts are not available.',
   claudeEmptyTitle: 'No Claude usage yet',
   claudeEmptyHint: 'Once the limits monitor polls your OAuth profiles, their utilization shows up here.',
