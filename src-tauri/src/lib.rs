@@ -12186,6 +12186,89 @@ fn ensure_status_hook_script(home: &str) -> Result<(), String> {
     Ok(())
 }
 
+// --- Codex end-of-turn notifier (Sessions tab) ---
+//
+// Codex 0.142 grew a hooks framework, but it is configured in the user's `~/.codex/config.toml` —
+// state we refuse to own. Its older `notify` program, by contrast, is settable per invocation with
+// `-c`, so the pane carries its own notifier and nothing outside Castellyn's directory is touched.
+// It fires once per finished turn, which is the authoritative "done" the PTY heartbeat can only
+// guess at (see agent_status: no completion toast without a real turn signal).
+//
+// pwsh, not `py`: the pane is already launched through pwsh, so this adds no new dependency.
+
+const NOTIFY_SCRIPT: &str = include_str!("../assets/castellyn_notify.ps1");
+
+fn notify_script_path() -> Result<String, String> {
+    let base = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+    Ok(format!("{base}\\castellyn\\hooks\\castellyn_notify.ps1"))
+}
+
+/// Install/refresh the notifier (same version-gated policy as the status hook).
+fn ensure_notify_script() -> Result<String, String> {
+    let path = notify_script_path()?;
+    let ver = |t: &str| script_version_header(t, "# castellyn-notify-version:");
+    let disk = std::fs::read_to_string(&path).unwrap_or_default();
+    if ver(&disk) < ver(NOTIFY_SCRIPT) {
+        write_json_atomic(&path, NOTIFY_SCRIPT).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    Ok(path)
+}
+
+/// The `-c` argument that points codex at our notifier, quoted for the pwsh `-Command` line it
+/// rides in.
+///
+/// The path uses FORWARD slashes on purpose. PowerShell collapses a run of backslashes that precedes
+/// a quote while it builds the child's command line, so a TOML-escaped `"C:\\Users\\…"` arrives at
+/// codex as `"C:\Users\…"` — where `\U` is not a valid TOML escape. Codex then silently keeps the
+/// whole array as a *string* and refuses to start: `invalid type: string …, expected a sequence`
+/// (reproduced live, 2026-07-10). Windows accepts `/` in every path API, so the escape never happens.
+///
+/// The remaining escape is PowerShell's: a single-quoted argument doubles every apostrophe, which a
+/// user directory may legally contain.
+fn codex_notify_arg(script: &str) -> String {
+    let path = script.replace('\\', "/");
+    let value = format!(r#"notify=["pwsh","-NoLogo","-NoProfile","-File","{path}"]"#);
+    format!("-c '{}'", value.replace('\'', "''"))
+}
+
+// --- opencode status plugin (Sessions tab) ---
+//
+// opencode has no notifier, but `OPENCODE_CONFIG_CONTENT` is documented (in its own binary) as
+// "inject inline JSON as a final local-scope merge", and plugin specs from it are APPENDED to the
+// user's list rather than replacing it. So the pane carries its own reporter through an env var and
+// the user's `opencode.json` is never touched. The plugin registers no hooks at all when
+// CASTELLYN_SESSION_ID is absent, so an opencode launched by hand is unaffected.
+
+const OPENCODE_PLUGIN: &str = include_str!("../assets/castellyn_opencode_plugin.js");
+
+fn opencode_plugin_path() -> Result<String, String> {
+    let base = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{base}\\castellyn\\hooks\\castellyn_opencode_plugin.js"
+    ))
+}
+
+fn ensure_opencode_plugin() -> Result<String, String> {
+    let path = opencode_plugin_path()?;
+    let ver = |t: &str| script_version_header(t, "// castellyn-plugin-version:");
+    let disk = std::fs::read_to_string(&path).unwrap_or_default();
+    if ver(&disk) < ver(OPENCODE_PLUGIN) {
+        write_json_atomic(&path, OPENCODE_PLUGIN).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    Ok(path)
+}
+
+/// The inline config that appends our reporter to opencode's plugin list. Rides in an environment
+/// variable, so no shell quoting is involved — only JSON, and a `file:///` URL with forward slashes.
+fn opencode_plugin_config(plugin: &str) -> String {
+    let url = format!("file:///{}", plugin.replace('\\', "/"));
+    serde_json::json!({
+        "$schema": "https://opencode.ai/config.json",
+        "plugin": [url],
+    })
+    .to_string()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentStatusHookState {
@@ -13805,13 +13888,21 @@ fn session_spawn(
     } else if tool == "shell" {
         None // local interactive PowerShell — no -Command
     } else {
-        let base = match tool.as_str() {
-            "opencode" => "opencode",
-            "codex" => "codex",
-            _ => "claude",
+        // A LOCAL codex pane carries its own end-of-turn notifier (see `codex_notify_arg`). Remote
+        // codex is skipped: the notifier would run on the far side and could not reach this
+        // machine's status dir — the same reason remote claude stays hookless.
+        let base: String = match tool.as_str() {
+            "opencode" => "opencode".to_string(),
+            "codex" => match ensure_notify_script() {
+                Ok(script) => format!("codex {}", codex_notify_arg(&script)),
+                // A launch must never fail because the notifier could not be written; the pane
+                // falls back to the PTY heartbeat, exactly as before this existed.
+                Err(_) => "codex".to_string(),
+            },
+            _ => "claude".to_string(),
         };
         Some(if extra.is_empty() {
-            base.to_string()
+            base
         } else {
             format!("{base} {extra}")
         })
@@ -13824,6 +13915,14 @@ fn session_spawn(
     // CLAUDE_CONFIG_DIR picks the profile for a LOCAL claude (the remote uses its own config).
     if tool == "claude" && ssh.is_none() {
         cmd.env("CLAUDE_CONFIG_DIR", format!("{home}\\.claude-{profile}"));
+    }
+    // A LOCAL opencode pane reports its turns through a plugin merged in via the environment. Remote
+    // opencode is skipped: the env does not cross ssh, and the plugin could not reach this machine's
+    // status dir anyway. A failure to write the plugin must not block the launch.
+    if tool == "opencode" && ssh.is_none() {
+        if let Ok(plugin) = ensure_opencode_plugin() {
+            cmd.env("OPENCODE_CONFIG_CONTENT", opencode_plugin_config(&plugin));
+        }
     }
     let dir = cwd
         .filter(|c| !c.trim().is_empty())
@@ -15466,6 +15565,40 @@ mod tests {
         for name in ["config.json", "forks.json", "schedules.json", "sessions.json"] {
             assert!(!is_secret_file(name), "{name} should keep its .bak");
         }
+    }
+
+    #[test]
+    fn codex_notify_arg_survives_both_quoting_layers() {
+        let a = codex_notify_arg("C:\\Users\\U\\AppData\\Roaming\\castellyn\\hooks\\n.ps1");
+        // PowerShell sees one single-quoted argument, so codex receives the TOML verbatim.
+        assert!(a.starts_with("-c '") && a.ends_with('\''));
+        assert!(a.contains(r#"notify=["pwsh","-NoLogo","-NoProfile","-File","#), "{a}");
+        // Not one backslash may survive: PowerShell eats the run before the closing quote, and the
+        // half-eaten `\U` then makes the whole array parse as a string (live-reproduced).
+        assert!(!a.contains('\\'), "{a}");
+        assert!(
+            a.contains("\"C:/Users/U/AppData/Roaming/castellyn/hooks/n.ps1\""),
+            "{a}"
+        );
+        // A path with an apostrophe (a legal Windows path) must not close the PowerShell quote.
+        let q = codex_notify_arg("C:\\it's\\n.ps1");
+        assert!(q.contains("C:/it''s/n.ps1"), "{q}");
+        assert_eq!(q.matches('\'').count(), 4); // opening + doubled pair + closing
+    }
+
+    #[test]
+    fn opencode_plugin_config_appends_a_file_url() {
+        let c = opencode_plugin_config("C:\\Users\\U\\AppData\\Roaming\\castellyn\\hooks\\p.js");
+        let v: serde_json::Value = serde_json::from_str(&c).unwrap();
+        assert_eq!(
+            v["plugin"][0],
+            "file:///C:/Users/U/AppData/Roaming/castellyn/hooks/p.js"
+        );
+        // The schema key keeps opencode from warning about an unknown inline config.
+        assert_eq!(v["$schema"], "https://opencode.ai/config.json");
+        // Only `plugin` may be set: this JSON is merged over the user's config, and any other key
+        // would silently override what they chose.
+        assert_eq!(v.as_object().unwrap().len(), 2);
     }
 
     #[test]

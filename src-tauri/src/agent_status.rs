@@ -5,6 +5,10 @@
 //! Idle+!seen model. Authorities, strongest first:
 //!  1. Claude Code lifecycle hooks — `castellyn_status.py` writes
 //!     `%APPDATA%\castellyn\agent-status\<session_id>.json` on each lifecycle event.
+//!     Codex writes the same file from its `notify` program, but only when a turn ENDS: a
+//!     one-shot ping, not a lifecycle stream, so it expires on the next output (`turn_end_expired`).
+//!     opencode writes it from a plugin (`castellyn_opencode_plugin.js`) and DOES stream a full
+//!     lifecycle (busy / permission asked / idle), so its reports behave like Claude's.
 //!  2. PTY output activity — a working heartbeat (full-screen agent TUIs repaint their
 //!     spinner constantly, so silence is a reliable idle signal) that also self-heals a
 //!     stale `blocked` after the user answers the prompt (no hook fires on approval).
@@ -45,6 +49,12 @@ const BLOCKED_RESUME_BYTES: u64 = 1_024;
 /// Time backstop: after this long in `blocked` with real post-block output but no byte burst
 /// (an Esc answer emits little), allow the flip so `blocked` can't stick forever.
 const BLOCKED_STUCK_MS: u64 = 20_000;
+/// Codex's `notify` fires once when a turn ends, and there is no matching "a turn began" event. Its
+/// `idle` therefore cannot be authoritative forever, the way Claude's Stop hook can (a Claude turn
+/// re-opens with UserPromptSubmit). Output arriving this long after the ping is a NEW turn, not the
+/// agent painting its final answer and prompt box, so hook authority is dropped and the heartbeat
+/// takes over again.
+const TURN_END_ECHO_MS: u64 = 2_000;
 /// After a detected usage limit, the session sits quiet until its window resets; a genuine resume
 /// then floods far more than this, so that many bytes since the limit clears the `limited` state
 /// (item 21b). Higher than the block threshold — a limit banner + its surrounding repaint is larger.
@@ -256,12 +266,11 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     // A pane hitting its usage limit is attention-worthy the same way as blocked: it's stalled on
     // quota until the window resets. Same focus-gate + attention beep, its own toast text.
     let to_limited = ev.state == "limited" && ev.prev.as_deref() != Some("limited");
-    // "Finished" toast only on a REAL end-of-turn = the Stop hook fired (hook_idle). An activity-lull
-    // idle just greys the dot; it must NOT claim "done". This applies to codex/opencode too: they have
-    // no hook, so their idle is pure PTY-silence — clicking into the pane (cursor repaint) or any
-    // terminal noise would flip working→idle and fire a false "Агент закончил" though nothing ran
-    // (owner live-smoke). So NO completion toast for hookless agents until they gain a real turn
-    // signal (Codex `notify` / opencode plugin — Phase 2b). The status dot still tracks working/idle.
+    // "Finished" toast only on a REAL end-of-turn signal (hook_idle): Claude's Stop hook, or codex's
+    // `notify` program. An activity-lull idle just greys the dot; it must NOT claim "done" — clicking
+    // into the pane (cursor repaint) or any terminal noise flips working→idle, and that once fired a
+    // false "Агент закончил" though nothing ran (owner live-smoke). opencode's plugin reports the
+    // same way, so all three local agents can now be honest about a finished turn.
     let completed = ev.state == "idle"
         && matches!(ev.prev.as_deref(), Some("working") | Some("blocked"))
         && ev.hook_idle;
@@ -296,6 +305,15 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
             .body(crate::i18n::trv(bk, lang, &[("label", &ev.label)]))
             .show();
     }
+}
+
+/// Has a one-shot end-of-turn ping been overtaken by fresh output, i.e. did a new turn start?
+///
+/// Only codex reports this way. Claude streams a full lifecycle, so its `idle` stays authoritative
+/// until the next `working` arrives — letting output clear it would let a prompt-box repaint or the
+/// user's own typing fake a turn.
+fn turn_end_expired(tool: &str, hook_state: Option<&str>, hook_ts: u64, last_output: u64) -> bool {
+    tool == "codex" && hook_state == Some("idle") && last_output > hook_ts + TURN_END_ECHO_MS
 }
 
 fn compute(t: &Track, now: u64) -> &'static str {
@@ -447,7 +465,9 @@ pub fn start(app: tauri::AppHandle) {
         let claude_ids: Vec<(String, u64)> = {
             let map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
             map.iter()
-                .filter(|(_, t)| t.tool == "claude")
+                // Every local agent now writes this file: claude from its lifecycle hook, codex from
+                // its `notify` program, opencode from a plugin. A remote pane simply never has one.
+                .filter(|(_, t)| matches!(t.tool.as_str(), "claude" | "codex" | "opencode"))
                 .map(|(id, t)| (id.clone(), t.hook_mtime))
                 .collect()
         };
@@ -482,6 +502,14 @@ pub fn start(app: tauri::AppHandle) {
                 if let Some((mtime, v)) = reports.get(id) {
                     apply_hook_report(v, t);
                     t.hook_mtime = *mtime;
+                }
+                if turn_end_expired(
+                    &t.tool,
+                    t.hook_state.as_deref(),
+                    t.hook_ts,
+                    t.last_output.load(Ordering::Relaxed),
+                ) {
+                    t.hook_state = None;
                 }
                 let state = compute(t, now);
                 if t.last_emitted.as_deref() != Some(state) {
@@ -537,6 +565,42 @@ mod tests {
             claude_session_id: None,
             last_emitted: None,
         }
+    }
+
+    #[test]
+    fn codex_turn_end_ping_expires_on_the_next_turn_but_claude_idle_is_sticky() {
+        let ts = 1_000_000;
+        // The final answer and the prompt-box repaint land around the ping — still the same turn.
+        assert!(!turn_end_expired("codex", Some("idle"), ts, ts - 500));
+        assert!(!turn_end_expired("codex", Some("idle"), ts, ts + TURN_END_ECHO_MS));
+        // Output well past the echo window: the user started a new turn.
+        assert!(turn_end_expired("codex", Some("idle"), ts, ts + TURN_END_ECHO_MS + 1));
+        // Codex reports nothing but end-of-turn, so no other state can expire this way.
+        assert!(!turn_end_expired("codex", Some("working"), ts, ts + 60_000));
+        assert!(!turn_end_expired("codex", None, ts, ts + 60_000));
+        // Claude streams a full lifecycle: its idle holds until the next hook says otherwise,
+        // otherwise the user's own typing at the prompt would fake a turn.
+        assert!(!turn_end_expired("claude", Some("idle"), ts, ts + 60_000));
+        assert!(!turn_end_expired("opencode", Some("idle"), ts, ts + 60_000));
+    }
+
+    #[test]
+    fn a_codex_ping_makes_idle_authoritative_so_the_done_toast_may_fire() {
+        let now = 1_000_000;
+        let mut t = track("codex", now - STARTUP_GRACE_MS - 1);
+        // Without a ping, silence alone is the only signal: idle, but no turn authority.
+        t.last_output.store(now - ACTIVITY_IDLE_MS - 1, Ordering::Relaxed);
+        assert_eq!(compute(&t, now), "idle");
+        assert_ne!(t.hook_state.as_deref(), Some("idle")); // hook_idle=false → no completion toast
+        // The notify program reports the turn ended; idle is now authoritative even though the
+        // agent printed its answer moments ago (no 15s of silence required).
+        apply_hook_report(
+            &serde_json::json!({ "state": "idle", "event": "agent-turn-complete", "ts": now }),
+            &mut t,
+        );
+        t.last_output.store(now, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + 100), "idle");
+        assert_eq!(t.hook_state.as_deref(), Some("idle")); // hook_idle=true → "finished" is honest
     }
 
     #[test]
