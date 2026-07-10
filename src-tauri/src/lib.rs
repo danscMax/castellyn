@@ -6995,6 +6995,12 @@ struct ProfileUsage {
     five_hour_resets_at: Option<String>,
     #[serde(rename = "sevenDayResetsAt")]
     seven_day_resets_at: Option<String>,
+    /// Highest model-scoped cap from the API's limits[] (per-model weekly). Can exceed the headline
+    /// 7d — then IT gates the profile, and the badge must not show only the calmer number.
+    #[serde(rename = "scopedPct")]
+    scoped_pct: Option<f64>,
+    #[serde(rename = "scopedLabel")]
+    scoped_label: Option<String>,
 }
 
 #[derive(Default)]
@@ -7016,11 +7022,14 @@ fn fetch_profile_usage(profile: &str) -> Result<ProfileUsage, u16> {
     let resp = crate::limits::usage_cached(&creds).ok_or(401u16)??;
     let (five_hour_pct, five_hour_resets_at) = crate::limits::util_of(&resp, "five_hour");
     let (seven_day_pct, seven_day_resets_at) = crate::limits::util_of(&resp, "seven_day");
+    let (scoped_pct, scoped_label, _scoped_reset) = crate::limits::scoped_max(&resp);
     Ok(ProfileUsage {
         five_hour_pct,
         seven_day_pct,
         five_hour_resets_at,
         seven_day_resets_at,
+        scoped_pct,
+        scoped_label,
     })
 }
 

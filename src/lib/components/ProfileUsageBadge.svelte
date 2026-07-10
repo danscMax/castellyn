@@ -36,6 +36,12 @@
 
   const r5 = $derived(u ? remain(u.fiveHourPct) : null);
   const r7 = $derived(u ? remain(u.sevenDayPct) : null);
+  // Model-scoped weekly cap: surfaced only when it is TIGHTER than the headline 7d, so the badge
+  // never hides the number that actually gates the session (same rule as the Analytics table).
+  const rScoped = $derived(
+    u && u.scopedPct != null && u.scopedPct > (u.sevenDayPct ?? -1) ? remain(u.scopedPct) : null
+  );
+  const scopedName = $derived(u?.scopedLabel ?? '');
   const resetTxt = $derived(u ? until(u.sevenDayResetsAt) : '');
 </script>
 
@@ -44,6 +50,7 @@
     <span class="flex items-center gap-x-sw-2 text-sw-xs whitespace-nowrap" title={t('profiles.usageTip')}>
       {#if r5 != null}<span><span class="text-sw-text-muted">{t('profiles.usage5h')}</span> <span class={color(r5)}>{r5}%</span></span>{/if}
       {#if r7 != null}<span><span class="text-sw-text-muted">{t('profiles.usage7d')}</span> <span class={color(r7)}>{r7}%</span></span>{/if}
+      {#if rScoped != null}<span title={t('analytics.claudeScopedTip', { label: scopedName })}><span class="text-sw-text-muted">{scopedName}</span> <span class={color(rScoped)}>{rScoped}%</span></span>{/if}
     </span>
   {:else}
     <div class="flex flex-wrap items-center gap-x-sw-3 gap-y-1 text-sw-xs" title={t('profiles.usageTip')}>
@@ -52,6 +59,9 @@
       {/if}
       {#if r7 != null}
         <span><span class="text-sw-text-muted">{t('profiles.usage7d')}</span> <span class={color(r7)}>{r7}%</span></span>
+      {/if}
+      {#if rScoped != null}
+        <span title={t('analytics.claudeScopedTip', { label: scopedName })}><span class="text-sw-text-muted">{scopedName}</span> <span class={color(rScoped)}>{rScoped}%</span></span>
       {/if}
       {#if resetTxt}
         <span class="text-sw-text-muted">{t('profiles.usageReset', { time: resetTxt })}</span>

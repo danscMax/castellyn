@@ -679,6 +679,9 @@ export type ProfileUsage = {
   sevenDayPct: number | null;
   fiveHourResetsAt: string | null;
   sevenDayResetsAt: string | null;
+  // Highest model-scoped weekly cap (limits[]); shown when it is tighter than sevenDayPct.
+  scopedPct: number | null;
+  scopedLabel: string | null;
 };
 // Claude Code usage limits (5h + 7d remaining) for a profile; null = not logged in / unavailable.
 export const readProfileUsage = (profile: string) =>

@@ -26,7 +26,8 @@ const profileInfo = (p: (typeof PROFILES)[number]) => ({
 });
 
 const usage: Record<string, any> = {
-  main: { fiveHourPct: 42, sevenDayPct: 61, fiveHourResetsAt: '2026-06-25T18:00:00Z', sevenDayResetsAt: '2026-06-30T00:00:00Z' },
+  // `main` carries a model-scoped weekly cap tighter than its 7d, so ?shot renders the scoped chip.
+  main: { fiveHourPct: 42, sevenDayPct: 61, scopedPct: 74, scopedLabel: 'Fable', fiveHourResetsAt: '2026-06-25T18:00:00Z', sevenDayResetsAt: '2026-06-30T00:00:00Z' },
   work: { fiveHourPct: 12, sevenDayPct: 34, fiveHourResetsAt: '2026-06-25T17:30:00Z', sevenDayResetsAt: '2026-06-29T00:00:00Z' },
   research: { fiveHourPct: 78, sevenDayPct: 55, fiveHourResetsAt: '2026-06-25T19:15:00Z', sevenDayResetsAt: '2026-07-01T00:00:00Z' },
   'opus-max': { fiveHourPct: 5, sevenDayPct: 22, fiveHourResetsAt: '2026-06-25T16:45:00Z', sevenDayResetsAt: '2026-06-28T00:00:00Z' }
