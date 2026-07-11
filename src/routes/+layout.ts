@@ -10,7 +10,7 @@ export const prerender = false;
 // public demo fixtures so the UI renders populated tabs in a plain browser (no backend). Guarded
 // by `import.meta.env.DEV`, so it is dead-stripped from release builds. Capture: tools/shoot.py.
 if (import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('shot')) {
-  const [{ mockIPC, mockWindows }, { emit }, { fixtureFor }] = await Promise.all([
+  const [{ mockIPC, mockWindows }, { emit }, { fixtureFor, limitsEvents }] = await Promise.all([
     import('@tauri-apps/api/mocks'),
     import('@tauri-apps/api/event'),
     import('$lib/shot/fixtures')
@@ -23,6 +23,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && window.location.sear
     if (cmd in runComponent) setTimeout(() => emit('run-done', { component: runComponent[cmd], code: 0 }), 0);
     return fixtureFor(cmd, args as Record<string, unknown>);
   }, { shouldMockEvents: true });
+  // `limits-status` is a backend push, not an invoke — replay it on an interval so a tab mounted
+  // later (Sessions is dynamically imported on first open) still receives fresh usage for its badges
+  // and the launch advisor. DEV-only, dead-stripped from release.
+  setInterval(() => limitsEvents().forEach((ev) => emit('limits-status', ev)), 1500);
 } else if (typeof window !== 'undefined') {
   // Item 18: pull the durable Sessions-prefs sidecar (~/.claude/castellyn/sessions.json) into
   // localStorage BEFORE any component reads it — so after a reinstall or on another machine the

@@ -246,7 +246,7 @@
     @apply inline-flex items-center justify-center gap-2 rounded-sw-md px-sw-4 py-sw-2 text-sw-sm font-medium;
     cursor: pointer;
     border: 1px solid transparent;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease, opacity 0.15s ease, outline 0.15s ease, outline-offset 0.15s ease;
   }
   .sw-btn:disabled {
     opacity: 0.5;
