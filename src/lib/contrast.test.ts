@@ -179,3 +179,59 @@ describe('contrast maths', () => {
     expect(parseColor('linear-gradient')).toBeNull();
   });
 });
+
+// ── Adoption guard (canonize CN-2) ────────────────────────────────────────────────────────────────
+// A .svelte <style> must not hard-code a color literal that EQUALS a declared --sw-* token's value —
+// that's a semantic color bypassing the token (drifts when the token changes / gains a theme override,
+// and the white-text scan above only sees white surfaces). `var(--sw-x, #fallback)` is EXEMPT: the
+// token is honored, the literal is just a defensive fallback. Ratcheted — the current residue is pinned
+// in ALLOW; a NEW collision fails. Shrink ALLOW as sites are conformed (P5).
+
+/** rgb+a → a stable key, or null for non-colors (gradients, keywords, var()). */
+function colorKey(raw: string): string | null {
+  const c = parseColor(raw);
+  return c ? `${c.rgb[0]},${c.rgb[1]},${c.rgb[2]},${c.a.toFixed(3)}` : null;
+}
+
+/** color-key → the first --sw-* token that resolves to that concrete color. */
+function tokenColorIndex(): Map<string, string> {
+  const tokens = tokenMap(readFileSync(APP_CSS, 'utf8'));
+  const idx = new Map<string, string>();
+  for (const [name, value] of tokens) {
+    const key = colorKey(resolveVars(value, tokens));
+    if (key && !idx.has(key)) idx.set(key, name);
+  }
+  return idx;
+}
+
+/** Every `prop: <literal>` in a component <style> whose literal equals a token value (var() stripped). */
+function tokenValueCollisions(): string[] {
+  const idx = tokenColorIndex();
+  const out: string[] = [];
+  for (const { file, css } of sheets()) {
+    if (file === 'app.css') continue; // token declarations live here — scanning them is not a bypass
+    for (const [, prop, value] of css.matchAll(/([a-z][a-z-]*)\s*:\s*([^;{}]+)/gi)) {
+      if (prop.startsWith('--')) continue; // a local custom-property override is not a bypass
+      const bare = value.replace(/var\([^()]*\)/gi, ' '); // a token reference (± fallback) honors the canon
+      for (const [, lit] of bare.matchAll(/(#[0-9a-f]{3,8}|rgba?\([^)]*\))/gi)) {
+        const key = colorKey(lit);
+        if (key && idx.has(key)) out.push(`${file} { ${prop}: ${lit.trim()} } == ${idx.get(key)}`);
+      }
+    }
+  }
+  return out.sort();
+}
+
+describe('no .svelte hard-codes a declared --sw-* token value (canonize CN-2)', () => {
+  // Pinned residue after the 2026-07-11 canonize conform pass. Empty = fully conformed; every entry
+  // added here must be a deliberate, justified bypass.
+  const ALLOW: string[] = [];
+
+  it('the token color index is populated (guards the scanner itself)', () => {
+    expect(tokenColorIndex().size).toBeGreaterThanOrEqual(10);
+  });
+
+  it('every hard-coded color that equals a token value is a pinned, accepted one', () => {
+    expect(tokenValueCollisions()).toEqual(ALLOW);
+  });
+});

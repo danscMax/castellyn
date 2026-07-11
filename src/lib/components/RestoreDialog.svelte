@@ -246,7 +246,7 @@
   .warn {
     margin: 0 0 var(--sw-space-6);
     font-size: var(--sw-text-sm);
-    color: #fbbf24;
+    color: var(--sw-warn);
     line-height: 1.5;
   }
   .plan {

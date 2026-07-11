@@ -78,7 +78,7 @@
     pointer-events: auto;
   }
   .toast.success { border-left-color: var(--sw-success); }
-  .toast.info { border-left-color: #38bdf8; }
+  .toast.info { border-left-color: var(--sw-info); }
   .toast.warn { border-left-color: var(--sw-warn); }
   .toast.error { border-left-color: var(--sw-danger); }
   .body { min-width: 0; flex: 1; }

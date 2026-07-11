@@ -350,11 +350,8 @@
     word-break: break-word;
   }
   .log-warn {
-    /* V6: light-aware canon amber (--sw-warn has no light override → pale on the light console). */
-    color: #f59e0b;
-  }
-  :global(.light) .log-warn {
-    color: #b45309;
+    /* canon amber; --sw-warn now carries a light override, so no per-component light rule needed. */
+    color: var(--sw-warn);
   }
   .log-diag {
     color: var(--sw-text-dimmed);

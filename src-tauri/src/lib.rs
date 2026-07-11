@@ -28,6 +28,60 @@ use i18n::{tr, trv, Lang};
 /// a black console window in front of the GUI.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Adoption guard for the CREATE_NO_WINDOW canon above (CLAUDE.md: "All process spawns set
+/// CREATE_NO_WINDOW"). A spawn that forgets to set a window-creation flag pops a black console in
+/// front of the GUI, and no compile/clippy gate catches it — only convention did, until now. This
+/// scans our own source: every spawn constructor must set a flags call before the next spawn (or
+/// within a generous window). The one deliberate visible console (CREATE_NEW_CONSOLE) also routes
+/// through the same flags call, so it passes without a special case. The two needles are built with
+/// `concat!` so this guard's own body is never mistaken for a spawn site.
+#[cfg(test)]
+mod spawn_window_guard {
+    /// First byte offset of `needle` in `hay` at or after `from` (byte search — never panics on a
+    /// UTF-8 boundary, unlike slicing &str across a Cyrillic comment).
+    fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+        if from >= hay.len() {
+            return None;
+        }
+        hay[from..]
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .map(|p| p + from)
+    }
+
+    #[test]
+    fn every_spawn_sets_a_window_flag() {
+        let src = include_str!("lib.rs").as_bytes();
+        let ctor = concat!("Command", "::", "new(").as_bytes();
+        let flag = concat!("creation", "_flags(").as_bytes();
+        let mut spawns = 0usize;
+        let mut naked: Vec<usize> = Vec::new();
+        let mut i = 0usize;
+        while let Some(at) = find(src, ctor, i) {
+            spawns += 1;
+            let after = at + ctor.len();
+            // This spawn's region ends at the next spawn, capped so a missing flag can't be
+            // "rescued" by a later spawn's flag far below.
+            let next = find(src, ctor, after).unwrap_or(src.len());
+            let end = next.min(after + 2500).min(src.len());
+            if find(&src[after..end], flag, 0).is_none() {
+                naked.push(src[..at].iter().filter(|&&b| b == b'\n').count() + 1);
+            }
+            i = after;
+        }
+        // Non-vacuous: if the scan collapses to far fewer sites than exist, the pattern broke and
+        // every assertion below would pass for the wrong reason.
+        assert!(
+            spawns >= 40,
+            "scanned only {spawns} spawn sites — the source pattern must have changed"
+        );
+        assert!(
+            naked.is_empty(),
+            "spawn(s) with no window-creation flag (a console window will flash) at lib.rs line(s) {naked:?}"
+        );
+    }
+}
+
 /// Assign a spawned PTY child to a process-global Job Object created with KILL_ON_JOB_CLOSE, so the
 /// whole tree (pwsh → claude/node, or ssh.exe) is terminated when the app process exits — including a
 /// hard crash, where `session_kill` never runs and ConPTY cleanup of grandchildren is only best-effort.
@@ -13104,7 +13158,7 @@ fn export_config(dest: String) -> Result<(), String> {
     // registry too (schemaVersion 2). import_config accepts both this and the legacy flat HubConfig.
     let forks = fork_config_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str::<serde_json::Value>(c.trim_start_matches('\u{feff}')).ok());
+        .and_then(|c| parse_json_bom(&c).ok());
     let bundle = serde_json::json!({
         "schemaVersion": 2,
         "config": read_config_file(),
@@ -13122,7 +13176,7 @@ fn import_config(src: String) -> Result<HubConfig, String> {
     let text =
         std::fs::read_to_string(&src).map_err(|e| trv("err.read", cur_lang(), &[("e", &e)]))?;
     // BOM-tolerant like every other file read (PowerShell-written configs often carry one).
-    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+    let v: serde_json::Value = parse_json_bom(&text)
         .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))?;
     if v.get("schemaVersion").is_some() && v.get("config").is_some() {
         // New bundle: restore the fork registry to its durable path, return the config for the UI.

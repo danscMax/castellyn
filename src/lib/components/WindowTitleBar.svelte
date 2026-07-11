@@ -270,10 +270,8 @@
     white-space: nowrap;
     flex-shrink: 0;
   }
-  /* V2/V6: light-aware canon amber (was --sw-warn, no light override → pale on light); err via the
-     light-aware --sw-status-bad token (was the phantom --sw-err, undefined → hardcoded red). */
-  .sess-strip.strip-warn { color: #f59e0b; }
-  :global(.light) .sess-strip.strip-warn { color: #b45309; }
+  /* canon amber (--sw-warn now has a light override); err via the light-aware --sw-status-bad token. */
+  .sess-strip.strip-warn { color: var(--sw-warn); }
   .sess-strip.strip-err { color: var(--sw-status-bad); }
   .ss-item {
     display: inline-flex;

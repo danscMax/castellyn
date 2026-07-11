@@ -154,7 +154,7 @@
   .icon-success { background: color-mix(in srgb, var(--sw-success) 20%, transparent); color: var(--sw-success); }
   .icon-warn { background: color-mix(in srgb, var(--sw-warn) 20%, transparent); color: var(--sw-warn); }
   .icon-error { background: color-mix(in srgb, var(--sw-danger) 20%, transparent); color: var(--sw-danger); }
-  .icon-info { background: color-mix(in srgb, #38bdf8 20%, transparent); color: #38bdf8; }
+  .icon-info { background: color-mix(in srgb, var(--sw-info) 20%, transparent); color: var(--sw-info); }
   .body { min-width: 0; flex: 1; }
   .entry-title {
     font-size: var(--sw-text-sm);

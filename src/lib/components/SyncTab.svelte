@@ -344,9 +344,9 @@
 
 <style>
   .diff-add td {
-    background-color: rgba(34, 197, 94, 0.1);
+    background-color: color-mix(in srgb, var(--sw-status-up) 10%, transparent);
   }
   .diff-del td {
-    background-color: rgba(239, 68, 68, 0.1);
+    background-color: color-mix(in srgb, var(--sw-status-down) 10%, transparent);
   }
 </style>

@@ -125,6 +125,12 @@
      not yet reviewed. `warn` follows the shared --sw-warn; `done` is a teal darkened in light. */
   --sw-status-warn: var(--sw-warn);
   --sw-status-done: #2dd4bf;
+  /* Info accent (sky-400) — badges/toasts/notification "info" state. Light override below. */
+  --sw-info: #38bdf8;
+  /* A third surface tint above --sw-bg-hover: pill/badge/hover backgrounds that used to reference an
+     UNDECLARED --sw-bg-tertiary and silently fall back to this literal. Now a real token so the light
+     theme can override it (a white overlay was near-invisible on the light surface). */
+  --sw-bg-tertiary: rgba(255, 255, 255, 0.06);
 
   --sw-space-1: 0.25rem;
   --sw-space-2: 0.5rem;
@@ -187,6 +193,14 @@
   --sw-input-border: rgba(148, 163, 184, 0.6);
   /* V8: emerald-600 so decorative success text/fills read on near-white (dark #34d399 is too pale). */
   --sw-success: #059669;
+  /* amber-700: the dark amber-500 --sw-warn is too pale on the near-white surface. Consumers used to
+     hardcode this per-component (Console/WindowTitleBar/RestoreDialog `:global(.light)` overrides);
+     now the token carries it, and --sw-status-warn (which chains through --sw-warn) darkens too. */
+  --sw-warn: #b45309;
+  /* sky-600 so info accents clear contrast on near-white (dark sky-400 is too pale). */
+  --sw-info: #0284c7;
+  /* Dark overlay instead of the dark-theme white overlay — the white tint was invisible on light. */
+  --sw-bg-tertiary: rgba(15, 23, 42, 0.06);
 }
 
 @layer base {
