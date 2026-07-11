@@ -13,18 +13,20 @@ from playwright.sync_api import sync_playwright
 OUT = Path(sys.argv[1])
 BASE = sys.argv[2] if len(sys.argv) > 2 else "http://localhost:5173"
 
-# Sidebar default order (Sidebar.svelte ORD_VER 3) -> .nav-item index.
+# Sidebar default order (navOrder.svelte.ts ORD_VER 5, grouped) -> .nav-item index.
+# KEEP IN SYNC with NAV_GROUPS in navOrder.svelte.ts: inserting a tab shifts every later index.
 NAV_INDEX = {
     "home": 0, "sessions": 1, "profiles": 2, "providers": 3, "mcp": 4,
-    "extensions": 5, "schedule": 6, "analytics": 7, "sync": 8, "updates": 9,
-    "forks": 10, "backup": 11, "settings": 12,
+    "envs": 5, "extensions": 6, "agents": 7, "updates": 8, "forks": 9,
+    "backup": 10, "sync": 11, "schedule": 12, "analytics": 13, "settings": 14,
 }
 
 INIT_TMPL = """
 localStorage.setItem('cmh-theme', '%THEME%');
 localStorage.setItem('cmh-language', 'en');
 localStorage.setItem('cmh-onboarded', '1');
-localStorage.setItem('cmh-sidebar-order-ver', '3');
+localStorage.setItem('cmh-sidebar-order-ver', '5');
+localStorage.setItem('cmh-sidebar-groups-closed', '{}');
 const _gc = HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext = function (type) {
   if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') return null;

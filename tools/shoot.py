@@ -16,16 +16,18 @@ OUT = Path(__file__).resolve().parent.parent / "docs" / "img"
 
 # Sidebar default order (navOrder.svelte.ts ORD_VER 5, grouped) -> .nav-item index per tab.
 # INIT below opens every sidebar group so the index always addresses a rendered item.
+# KEEP IN SYNC with NAV_GROUPS in navOrder.svelte.ts: inserting a tab shifts every later index.
 NAV_INDEX = {
     "home": 0, "sessions": 1, "profiles": 2, "providers": 3, "mcp": 4,
-    "envs": 5, "extensions": 6, "updates": 7, "forks": 8, "backup": 9,
-    "sync": 10, "schedule": 11, "analytics": 12, "settings": 13,
+    "envs": 5, "extensions": 6, "agents": 7, "updates": 8, "forks": 9,
+    "backup": 10, "sync": 11, "schedule": 12, "analytics": 13, "settings": 14,
 }
 
 # tab id -> output filename stem
 SHOTS = {
     "profiles": "screenshot-profiles",
     "extensions": "screenshot-plugins-skills",
+    "agents": "screenshot-subagents",
     "mcp": "screenshot-mcp",
     "envs": "screenshot-environments",
     "providers": "screenshot-providers",

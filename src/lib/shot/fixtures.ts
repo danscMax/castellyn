@@ -178,6 +178,9 @@ const handlers: Record<string, (args: any) => any> = {
   session_list: () => [],
   // --- init / settings ---
   read_config: () => ({ scriptsRoot: 'E:\\Scripts', startHidden: false, closeToTray: true, fetchTimeoutSec: 30, ghTimeoutSec: 20, toggleHotkey: 'Ctrl+Shift+H', shortcuts: { toggle_window: 'Ctrl+Shift+H' }, language: 'en' }),
+  // Demo harness shows the configured happy path — the maintenance scripts resolve, so the
+  // script-backed tabs render their real content instead of the first-run NoScriptsBanner.
+  scripts_available: () => true,
   read_shortcuts: () => ({ toggle_window: 'Ctrl+Shift+H' }),
   set_shortcuts: () => 0,
   app_paths: () => ({ scriptsRoot: 'E:\\Scripts', configPath: '%APPDATA%\\castellyn\\config.json', exe: 'castellyn.exe', stackPath: 'E:\\Scripts\\llm-stack\\stack.json', backupDir: 'E:\\Scripts\\SettingsMCP\\ClaudeProfiles\\Backups' }),
