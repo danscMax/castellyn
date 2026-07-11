@@ -908,6 +908,26 @@ export const runCodexProviders = () => invoke<boolean>('run_codex_providers');
 export const runCodexOmniroute = () => invoke<boolean>('run_codex_omniroute');
 // Delete a skill directory (guarded server-side to ~/.claude/skills).
 export const deleteSkill = (dir: string) => invoke('delete_skill', { dir });
+
+// --- Subagents manager (~/.claude/agents/*.md) ---
+// Standalone user subagents Claude Code reads from ~/.claude/agents (name/description + optional
+// model/tools + a system-prompt body). The `agents` folder is junction-linked into every profile
+// and Syncthing-synced between machines, so a save fans out with no extra step.
+export type AgentInfo = { name: string; description: string; model: string; tools: string; path: string };
+export type AgentDetail = AgentInfo & { prompt: string };
+export const listAgents = () => invoke<AgentInfo[]>('list_agents');
+export const readAgent = (path: string) => invoke<AgentDetail>('read_agent', { path });
+// path present → overwrite that file (edit); absent → create a new unique <slug>.md. Returns path.
+export const saveAgent = (a: {
+  name: string;
+  description: string;
+  model: string;
+  tools: string;
+  prompt: string;
+  path?: string;
+}) => invoke<string>('save_agent', a);
+// Delete a subagent .md (guarded server-side to ~/.claude/agents).
+export const deleteAgent = (path: string) => invoke<void>('delete_agent', { path });
 export type PluginRelease = {
   tag_name: string;
   name: string;

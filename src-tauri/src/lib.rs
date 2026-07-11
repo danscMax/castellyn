@@ -10531,6 +10531,203 @@ fn delete_skill(dir: String) -> Result<(), String> {
     }
 }
 
+// ---- Subagents manager (~/.claude/agents/*.md) ---------------------------------------------
+// Standalone user subagents that Claude Code reads from ~/.claude/agents. Structurally identical to
+// skills (frontmatter + body), so the SKILL.md parsers (extract_frontmatter/fm_value) are reused
+// verbatim. The `agents` folder is junction-linked into every profile AND Syncthing-synced between
+// machines (see ClaudeProfiles\config\profiles.json linkedFolders + sync_item_lines), so a write
+// here fans out with no extra code — do NOT add a per-profile copy path.
+
+#[derive(Serialize)]
+struct AgentInfo {
+    name: String,
+    description: String,
+    model: String,
+    tools: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct AgentDetail {
+    name: String,
+    description: String,
+    model: String,
+    tools: String,
+    prompt: String,
+    path: String,
+}
+
+/// ~/.claude/agents — the canonical standalone-subagent dir (mirrors list_skills' ~/.claude/skills).
+fn agents_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE: {e}"))?;
+    Ok(std::path::Path::new(&home).join(".claude").join("agents"))
+}
+
+/// Refuse any target whose PARENT isn't the real agents dir — canonicalized so a junctioned dir and
+/// path-traversal both resolve honestly (same guard shape as delete_skill).
+fn agent_guard(target: &std::path::Path) -> Result<(), String> {
+    let canon_dir =
+        std::fs::canonicalize(agents_dir()?).map_err(|e| format!("agents dir: {e}"))?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| tr("err.bad_path", cur_lang()).to_string())?;
+    let canon_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    if canon_parent != canon_dir {
+        return Err(tr("err.bad_path", cur_lang()).into());
+    }
+    Ok(())
+}
+
+/// Body after the frontmatter's closing `---` (leading blank lines trimmed). No frontmatter → the
+/// whole file is the body. Tolerant of both `\n` and `\r\n` (the `\n---` match ignores a leading \r).
+fn frontmatter_body(content: &str) -> String {
+    let t = content.trim_start();
+    if let Some(rest) = t.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            // Skip the closing "---", then the rest of that line, then leading blank lines.
+            let after = &rest[end + 4..];
+            let after = after.split_once('\n').map(|(_, b)| b).unwrap_or("");
+            return after.trim_start_matches(['\r', '\n']).to_string();
+        }
+    }
+    content.to_string()
+}
+
+/// ASCII kebab-case slug for the .md filename. Non-ASCII/empty → "agent" (the display `name:`
+/// frontmatter still carries the user's text; Claude Code identifies a subagent by `name`, not file).
+fn slugify_agent(name: &str) -> String {
+    let slug = name
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() { "agent".into() } else { slug }
+}
+
+/// Render a subagent .md: frontmatter (name/description always; model/tools only when set) + body.
+/// UTF-8 without BOM (Castellyn's own writer convention). Unquoted scalars match the ecosystem
+/// convention (plugin agents ship unquoted) — the description is kept single-line by the UI.
+fn render_agent_md(name: &str, description: &str, model: &str, tools: &str, prompt: &str) -> String {
+    let mut s = String::from("---\n");
+    s.push_str(&format!("name: {}\n", name.trim()));
+    s.push_str(&format!("description: {}\n", description.trim()));
+    if !model.trim().is_empty() {
+        s.push_str(&format!("model: {}\n", model.trim()));
+    }
+    if !tools.trim().is_empty() {
+        s.push_str(&format!("tools: {}\n", tools.trim()));
+    }
+    s.push_str("---\n\n");
+    s.push_str(prompt.trim_end());
+    s.push('\n');
+    s
+}
+
+#[tauri::command]
+async fn list_agents() -> Vec<AgentInfo> {
+    tokio::task::spawn_blocking(list_agents_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn list_agents_blocking() -> Vec<AgentInfo> {
+    let Ok(dir) = agents_dir() else {
+        return Vec::new();
+    };
+    let mut out: Vec<AgentInfo> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if !p.is_file() || p.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&p).unwrap_or_default();
+            let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+            let fm = extract_frontmatter(content);
+            let stem = p
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            out.push(AgentInfo {
+                name: fm_value(&fm, "name").unwrap_or(stem),
+                description: fm_value(&fm, "description").unwrap_or_default(),
+                model: fm_value(&fm, "model").unwrap_or_default(),
+                tools: fm_value(&fm, "tools").unwrap_or_default(),
+                path: p.display().to_string(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+#[tauri::command]
+fn read_agent(path: String) -> Result<AgentDetail, String> {
+    let p = std::path::Path::new(&path);
+    agent_guard(p)?;
+    let content = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+    let fm = extract_frontmatter(content);
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    Ok(AgentDetail {
+        name: fm_value(&fm, "name").unwrap_or(stem),
+        description: fm_value(&fm, "description").unwrap_or_default(),
+        model: fm_value(&fm, "model").unwrap_or_default(),
+        tools: fm_value(&fm, "tools").unwrap_or_default(),
+        prompt: frontmatter_body(content),
+        path: p.display().to_string(),
+    })
+}
+
+/// Write a subagent. `path` present → overwrite that file (edit); absent → create a new
+/// `<slug>.md`, made unique so a create never clobbers an existing agent. Returns the written path.
+#[tauri::command]
+fn save_agent(
+    name: String,
+    description: String,
+    model: String,
+    tools: String,
+    prompt: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let dir = agents_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let target = match path.as_deref().filter(|s| !s.is_empty()) {
+        Some(p) => {
+            let pp = std::path::Path::new(p).to_path_buf();
+            agent_guard(&pp)?;
+            pp
+        }
+        None => {
+            let base = slugify_agent(&name);
+            let mut cand = dir.join(format!("{base}.md"));
+            let mut n = 2;
+            while cand.exists() {
+                cand = dir.join(format!("{base}-{n}.md"));
+                n += 1;
+            }
+            cand
+        }
+    };
+    let content = render_agent_md(&name, &description, &model, &tools, &prompt);
+    std::fs::write(&target, content).map_err(|e| e.to_string())?;
+    Ok(target.display().to_string())
+}
+
+#[tauri::command]
+fn delete_agent(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    agent_guard(p)?;
+    std::fs::remove_file(p).map_err(|e| e.to_string())
+}
+
 /// Strip Syncthing's `.sync-conflict-<stamp>` infix to recover the original file's path.
 /// Format: `<name>.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX<.ext>` — the infix sits right before the
 /// final extension (or at the very end when the file has none). The stamp itself carries no `.`,
@@ -10611,6 +10808,49 @@ mod conflict_base_tests {
     #[test]
     fn no_marker_is_none() {
         assert_eq!(conflict_base_path(r"C:\u\.claude\settings.json"), None);
+    }
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::{
+        extract_frontmatter, fm_value, frontmatter_body, render_agent_md, slugify_agent,
+    };
+
+    #[test]
+    fn round_trip_render_parse() {
+        let md = render_agent_md(
+            "my-agent",
+            "When to use it",
+            "sonnet",
+            "Read, Grep",
+            "You are a helper.\n\nDo the thing.",
+        );
+        let fm = extract_frontmatter(&md);
+        assert_eq!(fm_value(&fm, "name").as_deref(), Some("my-agent"));
+        assert_eq!(fm_value(&fm, "description").as_deref(), Some("When to use it"));
+        assert_eq!(fm_value(&fm, "model").as_deref(), Some("sonnet"));
+        assert_eq!(fm_value(&fm, "tools").as_deref(), Some("Read, Grep"));
+        assert_eq!(frontmatter_body(&md).trim_end(), "You are a helper.\n\nDo the thing.");
+    }
+
+    #[test]
+    fn omits_empty_model_and_tools() {
+        let md = render_agent_md("a", "desc", "", "  ", "body");
+        assert!(!md.contains("model:"));
+        assert!(!md.contains("tools:"));
+    }
+
+    #[test]
+    fn slug_kebabs_and_falls_back() {
+        assert_eq!(slugify_agent("My Cool Agent!"), "my-cool-agent");
+        assert_eq!(slugify_agent("  a__b  "), "a-b");
+        assert_eq!(slugify_agent("Агент"), "agent"); // non-ASCII → generic fallback
+    }
+
+    #[test]
+    fn body_without_frontmatter_is_whole() {
+        assert_eq!(frontmatter_body("just text"), "just text");
     }
 }
 
@@ -15066,6 +15306,10 @@ read_opencode_models,
             agent_status_hook_status,
             agent_status_hook_set,
             delete_skill,
+            list_agents,
+            read_agent,
+            save_agent,
+            delete_agent,
             resolve_sync_conflict,
             read_schedules,
             read_schedules_cached,

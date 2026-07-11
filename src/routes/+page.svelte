@@ -71,6 +71,10 @@
     listPlugins,
     listSkills,
     deleteSkill,
+    listAgents,
+    saveAgent,
+    deleteAgent,
+    type AgentInfo,
     listPluginUpdates,
     listPluginContents,
     runPlugin,
@@ -170,6 +174,7 @@
   import CommandPalette from '$lib/components/CommandPalette.svelte';
   import AnalyticsTab from '$lib/components/AnalyticsTab.svelte';
   import PluginsTab from '$lib/components/PluginsTab.svelte';
+  import SubagentsTab from '$lib/components/SubagentsTab.svelte';
   import ScheduleTab from '$lib/components/ScheduleTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
   import OnboardingView from '$lib/components/OnboardingView.svelte';
@@ -270,6 +275,8 @@
   let schedulesLoaded = $state(false);
   let pluginsData = $state<PluginInfo[] | null>(null);
   let skillsData = $state<SkillInfo[] | null>(null);
+  let agentsData = $state<AgentInfo[] | null>(null);
+  let agentsLoaded = $state(false);
   let pluginUpdates = $state<PluginUpdate[]>([]);
   let pluginContents = $state<PluginContents[]>([]);
   let pluginSyncData = $state<PluginSyncStatus | null>(null);
@@ -1770,6 +1777,61 @@
     }
   });
 
+  // --- Subagents tab (~/.claude/agents) ---
+  async function reloadAgents() {
+    try {
+      agentsData = await listAgents();
+    } catch {
+      agentsData = null;
+    }
+  }
+  // Lazy-load on first open (cheap native dir read, no script spawn).
+  $effect(() => {
+    if (active === 'agents' && !agentsLoaded) {
+      agentsLoaded = true;
+      setLoading('agents', true);
+      reloadAgents().finally(() => setLoading('agents', false));
+    }
+  });
+  // Throws on failure so SubagentsTab keeps the editor open (nothing typed is lost).
+  async function onAgentSave(a: {
+    name: string;
+    description: string;
+    model: string;
+    tools: string;
+    prompt: string;
+    path?: string;
+  }) {
+    try {
+      await saveAgent(a);
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('agents.saveError'), detail: String(e) });
+      throw e;
+    }
+    pushToast({
+      kind: 'success',
+      title: a.path ? t('agents.savedEdit', { name: a.name }) : t('agents.savedNew', { name: a.name })
+    });
+    await reloadAgents();
+  }
+  function onAgentDelete(a: AgentInfo) {
+    askConfirm(
+      t('agents.deleteTitle'),
+      t('agents.deleteConfirm', { name: a.name }),
+      t('agents.delete'),
+      async () => {
+        try {
+          await deleteAgent(a.path);
+          pushToast({ kind: 'success', title: t('agents.deleted', { name: a.name }) });
+          await reloadAgents();
+        } catch (e) {
+          pushToast({ kind: 'error', title: t('agents.deleteError'), detail: String(e) });
+        }
+      },
+      { danger: true }
+    );
+  }
+
   // A tab shows the "refreshing" overlay + sidebar spinner while it fetches fresh data.
   // Forks piggybacks on the global run lock (its check is a script run, not a native read).
   const tabLoading = $derived.by(() => {
@@ -2655,6 +2717,9 @@
         <AnalyticsTab onOpenProviders={() => (active = 'providers')} />
       {:else if active === 'schedule'}
         <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} {scriptsAvail} />
+      {:else if active === 'agents'}
+        <SubagentsTab data={agentsData} {running} onSave={onAgentSave} onDelete={onAgentDelete}
+          onRefresh={reloadAgents} onOpenExtensions={() => (active = 'extensions')} />
       {:else if active === 'settings'}
         <SettingsTab {theme} onSetTheme={setTheme} {density} {fullWidth} onSetDensity={setDensity} onSetFullWidth={setFullWidth} {confirmDestructive} onSetConfirmDestructive={setConfirmDestructive} onOpenOnboarding={openOnboarding} />
       {:else if active !== 'sessions' && !PERSIST_TABS.includes(active)}

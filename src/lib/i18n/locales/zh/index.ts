@@ -24,6 +24,7 @@ import glossary from './glossary';
 import schedule from './schedule';
 import environments from './environments';
 import components from './components';
+import agents from './agents';
 
 const zh: TranslationDict = {
   common,
@@ -48,7 +49,8 @@ const zh: TranslationDict = {
   glossary,
   schedule,
   environments,
-  components
+  components,
+  agents
 };
 
 export default zh;

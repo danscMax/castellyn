@@ -13,7 +13,7 @@
  *  without a header (Settings pinned at the bottom). */
 export const NAV_GROUPS: { id: string; labelKey: string; ids: string[] }[] = [
   { id: 'work', labelKey: 'nav.gWork', ids: ['home', 'sessions', 'profiles'] },
-  { id: 'setup', labelKey: 'nav.gSetup', ids: ['providers', 'mcp', 'envs', 'extensions'] },
+  { id: 'setup', labelKey: 'nav.gSetup', ids: ['providers', 'mcp', 'envs', 'extensions', 'agents'] },
   {
     id: 'maintain',
     labelKey: 'nav.gMaintain',

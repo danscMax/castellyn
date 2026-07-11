@@ -38,6 +38,7 @@
     mcp: I('M10.362 1.093a.75.75 0 00-.724 0L2.523 5.018a.75.75 0 000 1.342l5.115 2.883a.75.75 0 00.724 0l5.115-2.883a.75.75 0 000-1.342L10.362 1.093zM3.606 7.976l-.888 2.158a.75.75 0 00.362.96l5.115 2.882a.75.75 0 00.724 0l5.115-2.882a.75.75 0 00.362-.96l-.888-2.158-4.589 2.585a.75.75 0 01-.724 0L3.606 7.976zM3.606 12.726l-.888 2.158a.75.75 0 00.362.96l5.115 2.882a.75.75 0 00.724 0l5.115-2.882a.75.75 0 00.362-.96l-.888-2.158-4.589 2.585a.75.75 0 01-.724 0L3.606 12.726z'),
     envs: I('M4.25 2A2.25 2.25 0 002 4.25v2.5A2.25 2.25 0 004.25 9h2.5A2.25 2.25 0 009 6.75v-2.5A2.25 2.25 0 006.75 2h-2.5zm0 9A2.25 2.25 0 002 13.25v2.5A2.25 2.25 0 004.25 18h2.5A2.25 2.25 0 009 15.75v-2.5A2.25 2.25 0 006.75 11h-2.5zm9-9A2.25 2.25 0 0011 4.25v2.5A2.25 2.25 0 0013.25 9h2.5A2.25 2.25 0 0018 6.75v-2.5A2.25 2.25 0 0015.75 2h-2.5zm0 9A2.25 2.25 0 0011 13.25v2.5A2.25 2.25 0 0013.25 18h2.5A2.25 2.25 0 0018 15.75v-2.5A2.25 2.25 0 0015.75 11h-2.5z'),
     extensions: I('M11.25 1.5A2.75 2.75 0 008.5 4.25v.25H5a2 2 0 00-2 2v3a2 2 0 002 2h.25v.25A2.75 2.75 0 008 14.5a2.75 2.75 0 002.75-2.75V11.5H11a2 2 0 002-2v-3a2 2 0 00-2-2h-.25v-.25A2.75 2.75 0 0010 1.5h1.25z'),
+    agents: I('M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.949 5.684a1 1 0 00-1.898 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.898l2.051.684a1 1 0 01.633.632l.683 2.051a1 1 0 001.898 0l.683-2.051a1 1 0 01.633-.632l2.051-.684a1 1 0 000-1.898l-2.051-.683a1 1 0 01-.633-.633l-.683-2.051zM13.949 13.684a1 1 0 00-1.898 0l-.184.551a1 1 0 01-.632.633l-.551.183a1 1 0 000 1.898l.551.183a1 1 0 01.633.633l.183.551a1 1 0 001.898 0l.184-.551a1 1 0 01.632-.633l.551-.183a1 1 0 000-1.898l-.551-.184a1 1 0 01-.633-.632l-.183-.551z'),
     schedule: I('M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5.25a.75.75 0 00.428.679l3.75 2a.75.75 0 10.644-1.357l-3.322-1.77V5z'),
     analytics: I('M15.5 2A1.5 1.5 0 0014 3.5v13a1.5 1.5 0 001.5 1.5h1a1.5 1.5 0 001.5-1.5v-13A1.5 1.5 0 0016.5 2h-1zM9.5 6A1.5 1.5 0 008 7.5v9A1.5 1.5 0 009.5 18h1a1.5 1.5 0 001.5-1.5v-9A1.5 1.5 0 0010.5 6h-1zM3.5 10A1.5 1.5 0 002 11.5v5A1.5 1.5 0 003.5 18h1A1.5 1.5 0 006 16.5v-5A1.5 1.5 0 004.5 10h-1z'),
     sync: I('M13.78 2.72a.75.75 0 010 1.06l-2.47 2.47H16.5a.75.75 0 010 1.5h-5.19l2.47 2.47a.75.75 0 11-1.06 1.06l-3.75-3.75a.75.75 0 010-1.06l3.75-3.75a.75.75 0 011.06 0zm-7.5 8a.75.75 0 010 1.06L3.81 14.25H9a.75.75 0 010 1.5H3.81l2.47 2.47a.75.75 0 11-1.06 1.06l-3.75-3.75a.75.75 0 010-1.06l3.75-3.75a.75.75 0 011.06 0z'),
@@ -60,6 +61,7 @@
     { id: 'mcp', labelKey: 'nav.mcp', tipKey: 'nav.mcpTip', icon: ICONS.mcp, enabled: true },
     { id: 'envs', labelKey: 'nav.envs', tipKey: 'nav.envsTip', icon: ICONS.envs, enabled: true },
     { id: 'extensions', labelKey: 'nav.extensions', tipKey: 'nav.extensionsTip', icon: ICONS.extensions, enabled: true },
+    { id: 'agents', labelKey: 'nav.agents', tipKey: 'nav.agentsTip', icon: ICONS.agents, enabled: true },
     { id: 'schedule', labelKey: 'nav.schedule', tipKey: 'nav.scheduleTip', icon: ICONS.schedule, enabled: true },
     { id: 'analytics', labelKey: 'nav.analytics', tipKey: 'nav.analyticsTip', icon: ICONS.analytics, enabled: true },
     { id: 'sync', labelKey: 'nav.sync', tipKey: 'nav.syncTip', icon: ICONS.sync, enabled: true },
@@ -401,7 +403,7 @@
     /* grab cursor hints the items are draggable/reorderable (see collapse-btn tooltip) */
     cursor: grab;
     text-align: left;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease, padding 0.15s ease, gap 0.15s ease, outline 0.15s ease, outline-offset 0.15s ease;
   }
   .nav-item:active {
     cursor: grabbing;
@@ -504,7 +506,7 @@
     font-family: inherit;
     cursor: pointer;
     text-align: left;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease, padding 0.15s ease, outline 0.15s ease, outline-offset 0.15s ease;
   }
   .notif-btn:hover,
   .notif-btn.open {

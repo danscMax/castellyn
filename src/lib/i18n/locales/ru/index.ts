@@ -23,6 +23,7 @@ import glossary from './glossary';
 import schedule from './schedule';
 import environments from './environments';
 import components from './components';
+import agents from './agents';
 
 const ru = {
   common,
@@ -47,7 +48,8 @@ const ru = {
   glossary,
   schedule,
   environments,
-  components
+  components,
+  agents
 };
 
 export default ru;

@@ -333,6 +333,13 @@ const handlers: Record<string, (args: any) => any> = {
     { name: 'powershell-cyrillic', description: 'PowerShell with Cyrillic paths', version: '1.0', dir: '~/.claude/skills/powershell-cyrillic', source: 'own', mine: true },
     { name: 'claude-backup', description: 'Backup/restore the Claude setup', version: '1.2', dir: '~/.claude/skills/claude-backup', source: 'own', mine: true }
   ]),
+  // Standalone user subagents (~/.claude/agents) — the third has no model/tools → renders the
+  // "Inherit" / "all tools" fallback badges.
+  list_agents: () => ([
+    { name: 'code-reviewer', description: 'Reviews changed code for bugs, security issues and style before merge.', model: 'opus', tools: 'Read, Grep, Glob', path: 'C:\\Users\\User\\.claude\\agents\\code-reviewer.md' },
+    { name: 'codex-delegate', description: 'Delegate a substantial coding or debugging task to the Codex CLI for a second implementation or diagnosis pass.', model: 'sonnet', tools: 'Bash', path: 'C:\\Users\\User\\.claude\\agents\\codex-delegate.md' },
+    { name: 'doc-writer', description: 'Generates and updates project documentation from the codebase.', model: '', tools: '', path: 'C:\\Users\\User\\.claude\\agents\\doc-writer.md' }
+  ]),
   list_plugin_updates: () => ([{ id: 'superpowers', installed: '2.4.1', available: '2.5.0' }]),
   agent_status_hook_status: () => ({
     wired: ['.claude', '.claude-cc1', '.claude-cc2', '.claude-ccfree', '.claude-cctest'],
