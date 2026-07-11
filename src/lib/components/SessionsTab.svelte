@@ -39,6 +39,8 @@
     type ProfileInfo
   } from '$lib/ipc';
   import { pickResumeCandidate } from '$lib/limitSwitch';
+  import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
+  import { composeLaunchArgs } from '$lib/launchArgs';
   import { parseTsMs } from '$lib/relativeTime';
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
@@ -1276,6 +1278,19 @@
   let lCodexProfile = $state('');
   let lCodexModel = $state(''); // codex --model override (empty = the profile's / config default)
   let lOpencodeModel = $state('');
+  // Claude structured launch controls (Task 4): a reasoning effort (--effort) and an optional --model,
+  // composed into the args once at spawn time (composeArgs → composeLaunchArgs). Empty = the tool
+  // default / whatever the ⚙ default-args already carry. `lTaskClass` drives the advisor's suggested
+  // effort but the user can override the effort field directly.
+  let lClaudeEffort = $state('');
+  let lClaudeModel = $state('');
+  let lTaskClass = $state<LaunchTaskClass>('feature');
+  const EFFORTS = ['low', 'medium', 'high', 'max'];
+  const TASK_CLASSES: LaunchTaskClass[] = [
+    'inspect', 'review', 'fix', 'feature', 'debug', 'architecture', 'critical'
+  ];
+  const effortOptions = $derived([{ value: '', label: t('sessions.effortDefault') }, ...EFFORTS]);
+  const taskClassOptions = $derived(TASK_CLASSES.map((tc) => ({ value: tc, label: t(`sessions.tc_${tc}`) })));
   let opencodeModel = $state(''); // opencode's active model, shown as the picker placeholder
   let opencodeModels = $state<string[]>([]); // "<provider>/<model>" catalog for the picker datalist
   // D (live-smoke): the FreeLLMAPI stack surfaced right in the opencode launcher — status, a dashboard
@@ -1312,23 +1327,28 @@
     const url = gatewaySvc?.dashboard || (gatewaySvc ? `http://localhost:${gatewaySvc.port}` : '');
     if (url) openUrl(url).catch(() => {});
   }
-  const PROFILE_RE = /(^|\s)(--profile|-p)(\s|=)/;
-  const MODEL_RE = /(^|\s)(--model|-m)(\s|=)/;
-  // Compose the identity selection (codex --profile/--model, opencode --model) into the free-text
-  // args, skipping any flag the user already typed by hand (no doubling). Prepended so the flags read
-  // first. This is the single place the picker turns into launch args.
+  // Bake the structured pickers (codex --profile/--model, opencode --model, claude --effort/--model)
+  // into the free-text args. Delegates to the pure, unit-tested composeLaunchArgs (single place a
+  // picker becomes launch args; hand-typed flags win, each emitted at most once).
   function composeArgs(env: Env, args: string): string {
-    let a = args.trim();
-    const add = (flag: string, re: RegExp) => {
-      if (flag && !re.test(a)) a = a ? `${flag} ${a}` : flag;
-    };
-    if (env === 'codex') {
-      add(lCodexModel.trim() && `--model ${lCodexModel.trim()}`, MODEL_RE);
-      add(lCodexProfile.trim() && `--profile ${lCodexProfile.trim()}`, PROFILE_RE);
-    } else if (env === 'opencode') {
-      add(lOpencodeModel.trim() && `--model ${lOpencodeModel.trim()}`, MODEL_RE);
-    }
-    return a;
+    return composeLaunchArgs(env, args, {
+      codexProfile: lCodexProfile,
+      codexModel: lCodexModel,
+      opencodeModel: lOpencodeModel,
+      claudeEffort: lClaudeEffort,
+      claudeModel: lClaudeModel
+    });
+  }
+
+  // Task 5: quota-aware launch recommendation for a Claude session — least-loaded eligible profile +
+  // a task-class effort, from the SAME profile/limits data the resume auto-switch reads (one ranker,
+  // no drift). Pure & reactive; launches nothing. Applying it just fills the launcher fields, which
+  // stay fully editable before spawn. Rendered only for the claude harness.
+  const advice = $derived(launchAdvisor(profileInfos, limitsByProfile, lTaskClass));
+  function applyAdvice() {
+    if (!advice.recommendation) return;
+    lProfile = advice.recommendation.profile;
+    lClaudeEffort = advice.recommendation.effort;
   }
   // Switching harness re-seeds the args field (unless the user already edited it) so a leftover Claude
   // flag doesn't leak into codex/opencode — and can't get pinned into a favorite mid-switch.
@@ -1941,6 +1961,11 @@
       {#if lEnv === 'claude'}
         <span class="pw">{t('sessions.phProfile')}</span>
         <div class="psel"><Select bind:value={lProfile} options={profiles} placeholder={t('sessions.dlgProfile')} /></div>
+        <span class="pw">{t('sessions.phEffort')}</span>
+        <div class="psel"><Select bind:value={lClaudeEffort} options={effortOptions} placeholder={t('sessions.effortDefault')} /></div>
+        <span class="pw">{t('sessions.phModel')}</span>
+        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lClaudeModel}
+          placeholder={t('sessions.phClaudeModelPlaceholder')} spellcheck="false" autocomplete="off" />
       {:else if lEnv === 'codex'}
         <!-- Codex identity: config.toml profile (when any exist) + a --model override, so the launch
              model is explicit instead of "whatever codex defaulted to". -->
@@ -1994,6 +2019,27 @@
       <button type="button" class="sw-btn sw-btn-ghost star" onclick={pinCurrent} title={t('sessions.pin')} aria-label={t('sessions.pin')}>★</button>
       <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
     </div>
+
+    {#if lEnv === 'claude'}
+      <!-- Task 5: quota-aware launch recommendation — task class → default effort, least-loaded free
+           profile from already-polled usage. Launches nothing; Apply just fills the fields (which stay
+           editable). Same ranker as the resume auto-switch (launchAdvisor → evaluateProfiles). -->
+      <div class="stackbar advisor" role="group" aria-label={t('sessions.advisorLabel')}>
+        <span class="stk-label">{t('sessions.advisorTask')}</span>
+        <div class="psel"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
+        {#if advice.recommendation}
+          {@const r = advice.recommendation}
+          <span class="adv-rec" title={t('sessions.advisorRecTip')}>
+            {t('sessions.advisorRec', { profile: r.profile, effort: r.effort, util: Math.round(r.util) })}
+          </span>
+          <button type="button" class="sw-btn sw-btn-ghost text-sw-xs" onclick={applyAdvice}
+            disabled={lProfile === r.profile && lClaudeEffort === r.effort}
+            title={t('sessions.advisorApplyTip')}>{t('sessions.advisorApply')}</button>
+        {:else}
+          <span class="adv-none" title={advice.rejected.map((x) => `${x.name}: ${x.reason}`).join(', ')}>{t('sessions.advisorNone')}</span>
+        {/if}
+      </div>
+    {/if}
 
     {#if lEnv === 'opencode'}
       <!-- D: FreeLLMAPI stack status + one-click start + dashboard, so opencode isn't launched blindly
@@ -2573,6 +2619,20 @@
   .stackbar .stk-label {
     font-weight: 500;
     margin-right: auto;
+  }
+  /* Advisor bar: task label + class picker on the left, recommendation stretches, Apply on the right. */
+  .stackbar.advisor .stk-label {
+    margin-right: 0;
+  }
+  .stackbar.advisor .adv-rec,
+  .stackbar.advisor .adv-none {
+    margin-right: auto;
+  }
+  .adv-rec {
+    font-weight: 500;
+  }
+  .adv-none {
+    color: var(--sw-text-muted);
   }
   .phrase .ssh-hint {
     flex-basis: 100%;

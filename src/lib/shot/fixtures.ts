@@ -33,6 +33,25 @@ const usage: Record<string, any> = {
   'opus-max': { fiveHourPct: 5, sevenDayPct: 22, fiveHourResetsAt: '2026-06-25T16:45:00Z', sevenDayResetsAt: '2026-06-28T00:00:00Z' }
 };
 
+// `limits-status` events (one per profile) so the ?shot harness populates the usage badges AND the
+// Sessions launch advisor — otherwise the advisor has no fresh usage and shows "no free profile".
+export function limitsEvents(): Record<string, unknown>[] {
+  return Object.entries(usage).map(([profile, u]: [string, any]) => ({
+    profile,
+    h5: u.fiveHourPct ?? null,
+    d7: u.sevenDayPct ?? null,
+    h5Reset: u.fiveHourResetsAt ?? null,
+    d7Reset: u.sevenDayResetsAt ?? null,
+    scoped: u.scopedPct ?? null,
+    scopedLabel: u.scopedLabel ?? null,
+    scopedReset: u.scopedResetsAt ?? null,
+    extraEnabled: false,
+    extraPct: null,
+    expired: false,
+    rateLimited: false
+  }));
+}
+
 const forkStatus = {
   schemaVersion: 1,
   status: 'changes',

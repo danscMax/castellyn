@@ -4,58 +4,103 @@ import type { ProfileInfo, LimitsStatusEvent } from './ipc';
  *  missed rounds mean the network (or the endpoint) has been failing and the numbers are guesses. */
 export const LIMITS_STALE_MS = 660_000; // 2 poll intervals + a minute of slack
 
+/** Utilisation at/above this (%) gates a profile out of BOTH the resume auto-switch and the launch
+ *  recommendation — the shared "too hot to hand work to" line. */
+export const UTIL_THRESHOLD = 85;
+
+/** Per-profile usage store: the last `limits-status` event plus when the UI received it (freshness). */
+export type LimitsMap = Record<string, LimitsStatusEvent & { receivedAt?: number }>;
+
+/** Why a profile is not a candidate — structured so the launch advisor can explain it in the UI
+ *  (the resume switch discards it and only keeps the winner). First failing check wins. */
+export type RejectReason =
+  | 'claimed'
+  | 'missing'
+  | 'no-credentials'
+  | 'invalid-credentials'
+  | 'needs-onboarding'
+  | 'broken-links'
+  | 'usage-unknown'
+  | 'over-threshold';
+
+export type EligibleProfile = { name: string; util: number };
+export type RejectedProfile = { name: string; reason: RejectReason };
+
 /**
- * #21e: pick the profile to resume a rate-limited conversation under.
+ * Shared eligibility + utilisation scoring behind both `pickResumeCandidate` (resume a rate-limited
+ * conversation elsewhere) and `launchAdvisor` (recommend a profile for a fresh session). Pure &
+ * deterministic → unit-tested; keeping ONE ranker means the two features can never drift apart.
  *
- * Eligible = a DIFFERENT profile that (a) exists, (b) has USABLE OAuth credentials, (c) has intact
- * shared links — so `--resume <id>` reaches the shared ~/.claude/projects transcript — and (d) has a
- * KNOWN 5h utilisation below 85%. The least-utilised eligible profile wins; `null` when none qualify
- * (caller then falls back to "wait"). Utilisation must be known: a profile with no limits-status
- * datapoint is excluded rather than switched to blindly.
+ * A profile is eligible only if it (a) exists, (b) has USABLE OAuth credentials — present, not
+ * positively dead (`credentialsValid !== false`), onboarding not stranded by `/logout` — (c) has
+ * intact shared links so `--resume`/shared transcripts reach it, (d) is not in `exclude` (a profile
+ * already claimed this tick, or the current one for a resume), and (e) has a KNOWN, RECENT
+ * utilisation below `UTIL_THRESHOLD`. `util = max(5h, model-scoped weekly)` — an exhausted model week
+ * gates a calm 5h. Unknown usage (null / stale / 429 / no datapoint) is a rejection, never zero.
  *
- * "Usable" is stricter than "has a .credentials.json": a profile whose tokens are empty/expired, or
- * whose onboarding flag was cleared by /logout, drops the resumed session into a login wizard
- * instead of continuing the conversation. Both fields are optional in older profiles.last.json
- * snapshots, so absence means "don't know" and stays eligible — only a positive `false` disqualifies.
+ * Both optional health fields are absent in older `profiles.last.json` snapshots, so absence means
+ * "don't know" and stays eligible — only a positive `false` disqualifies.
  *
- * A datapoint must also be RECENT. A 429 emits `h5: null` deliberately (unknown ≠ zero), but a plain
- * transport error emits nothing at all, so the store keeps the last successful reading — and a stale
- * "12%" would send the session onto a profile that has been exhausted since. Age is the guard.
- *
- * Pure + deterministic → unit-tested; the switch I/O (kill + respawn) lives in SessionsTab.
+ * Returns eligibles least-utilised first (deterministic tie-break by name) plus every rejection with
+ * its reason, so a caller can pick `eligible[0]` or explain an empty result.
+ */
+export function evaluateProfiles(
+  profiles: ProfileInfo[],
+  limits: LimitsMap,
+  exclude: ReadonlySet<string>,
+  now: number = Date.now()
+): { eligible: EligibleProfile[]; rejected: RejectedProfile[] } {
+  const eligible: EligibleProfile[] = [];
+  const rejected: RejectedProfile[] = [];
+  for (const p of profiles) {
+    let reason: RejectReason | null = null;
+    if (exclude.has(p.name)) reason = 'claimed';
+    else if (!p.exists) reason = 'missing';
+    else if (!p.credentialsPresent) reason = 'no-credentials';
+    else if (p.credentialsValid === false) reason = 'invalid-credentials';
+    else if (p.needsOnboarding) reason = 'needs-onboarding';
+    else if (!p.linksIntact) reason = 'broken-links';
+    if (reason) {
+      rejected.push({ name: p.name, reason });
+      continue;
+    }
+
+    const l = limits[p.name];
+    // `receivedAt` is absent only for a store filled before this field existed — treat that as fresh
+    // rather than silently disabling the feature on the first launch after an update.
+    const fresh = l != null && now - (l.receivedAt ?? now) <= LIMITS_STALE_MS;
+    const h5 = fresh ? (l?.h5 ?? null) : null;
+    if (h5 == null) {
+      rejected.push({ name: p.name, reason: 'usage-unknown' });
+      continue;
+    }
+    // A model-scoped weekly cap gates real work even when 5h is calm. Absent = 0 (no cap).
+    const util = Math.max(h5, l?.scoped ?? 0);
+    if (util >= UTIL_THRESHOLD) {
+      rejected.push({ name: p.name, reason: 'over-threshold' });
+      continue;
+    }
+    eligible.push({ name: p.name, util });
+  }
+  eligible.sort((a, b) => a.util - b.util || a.name.localeCompare(b.name));
+  return { eligible, rejected };
+}
+
+/**
+ * #21e: pick the profile to resume a rate-limited conversation under. The least-utilised eligible
+ * profile OTHER than `current` (and other than any already `exclude`d this pass, so two panes limited
+ * in the same tick don't both pile onto the one free profile). `null` when none qualify → the caller
+ * falls back to "wait". Thin wrapper over the shared `evaluateProfiles`; the switch I/O (kill +
+ * respawn) lives in SessionsTab.
  */
 export function pickResumeCandidate(
   current: string,
   profiles: ProfileInfo[],
-  limits: Record<string, LimitsStatusEvent & { receivedAt?: number }>,
+  limits: LimitsMap,
   exclude?: ReadonlySet<string>,
   now: number = Date.now()
 ): string | null {
-  const eligible = profiles
-    .filter(
-      (p) =>
-        p.name !== current &&
-        p.exists &&
-        p.credentialsPresent &&
-        p.credentialsValid !== false &&
-        !p.needsOnboarding &&
-        p.linksIntact
-    )
-    // L11: skip a profile already claimed by an earlier pane in the same auto-continue pass, so two
-    // panes limited in the same tick don't both pile onto the one free profile (defeating balancing).
-    .filter((p) => !exclude?.has(p.name))
-    .map((p) => {
-      const l = limits[p.name];
-      // `receivedAt` is absent only for a store filled before this field existed — treat that as fresh
-      // rather than silently disabling auto-switch on first launch after an update.
-      const fresh = l != null && now - (l.receivedAt ?? now) <= LIMITS_STALE_MS;
-      const h5 = fresh ? (l?.h5 ?? null) : null;
-      // A model-scoped weekly cap (limits[] `scoped`) gates real work even when 5h is calm — a
-      // profile whose Opus/Fable week is exhausted is not a resume destination. Absent = 0 (no cap).
-      const util = h5 == null ? null : Math.max(h5, l?.scoped ?? 0);
-      return { name: p.name, util };
-    })
-    .filter((p): p is { name: string; util: number } => p.util != null && p.util < 85)
-    .sort((a, b) => a.util - b.util);
+  const excludeAll = new Set<string>([current, ...(exclude ?? [])]);
+  const { eligible } = evaluateProfiles(profiles, limits, excludeAll, now);
   return eligible.length ? eligible[0].name : null;
 }
