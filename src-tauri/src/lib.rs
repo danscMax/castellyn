@@ -8001,27 +8001,29 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
     Ok(v)
 }
 
-/// Codex profile names from `~/.codex/config.toml` `[profiles.<name>]` tables (plain line scan —
-/// enough for table headers; codex profiles map to a `--profile <name>` launch flag).
+/// Codex profile names from `~/.codex/*.config.toml` files. Codex 0.142+ dropped `[profiles.*]`
+/// tables in the base config — each profile is now a separate `<name>.config.toml`, selected via
+/// `--profile <name>`. The base `config.toml` is skipped (its suffix is `config.toml`, not
+/// `<name>.config.toml`, so `strip_suffix` leaves nothing).
 #[tauri::command]
 fn read_codex_profiles() -> Vec<String> {
     let Ok(home) = std::env::var("USERPROFILE") else {
         return Vec::new();
     };
-    let Ok(text) = std::fs::read_to_string(format!("{home}\\.codex\\config.toml")) else {
+    let Ok(entries) = std::fs::read_dir(format!("{home}\\.codex")) else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for line in text.lines() {
-        if let Some(rest) = line.trim().strip_prefix("[profiles.") {
-            if let Some(name) = rest.strip_suffix(']') {
-                let name = name.trim().trim_matches('"');
-                if !name.is_empty() {
-                    out.push(name.to_string());
-                }
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(profile) = name.strip_suffix(".config.toml") {
+            if !profile.is_empty() {
+                out.push(profile.to_string());
             }
         }
     }
+    out.sort();
     out
 }
 
@@ -9316,21 +9318,21 @@ fn run_codex_mcp() -> Result<serde_json::Value, String> {
 }
 
 /// Merge an OpenAI-Responses-compatible provider into Codex's config.toml text: a
-/// `[model_providers.<provider_id>]` table (Responses API) plus a `[profiles.<provider_id>]` so
-/// `codex --profile <provider_id>` just works. Format-preserving via toml_edit. Canonical fields
-/// (name/base_url/env_key, profile's model_provider) overwrite; the profile `model` is only
-/// seeded when absent so a user's model choice survives a re-deploy. The top-level
-/// `model`/`model_provider` are never touched — the user's ChatGPT default stays.
-/// Raw myproviders.json entries are deliberately NOT fanned out to Codex: it speaks only the
-/// Responses wire API (WireApi enum has no `chat` since 2026-02), so chat-completions/anthropic
+/// Register a provider in `~/.codex/config.toml` as a `[model_providers.<provider_id>]` table.
+/// Format-preserving via toml_edit; canonical fields (name/base_url/env_key/wire_api) overwrite.
+/// `wire_api` is pinned to `"responses"` — Codex 0.142+ dropped `chat`, so it POSTs
+/// `/v1/responses` (which OmniRoute serves). The top-level `model`/`model_provider` and every
+/// other user table are never touched. The PROFILE itself lives in a separate file
+/// `~/.codex/<provider_id>.config.toml` (see `patch_codex_profile`) — Codex 0.142+ rejects a
+/// legacy `[profiles.*]` table in the base config. Raw myproviders.json entries are deliberately
+/// NOT fanned out to Codex: it speaks only the Responses wire API, so chat-completions/anthropic
 /// endpoints would register but silently fail.
-fn patch_codex_provider(
+fn patch_codex_config(
     toml_text: &str,
     provider_id: &str,
     display_name: &str,
     base_url: &str,
     env_key: &str,
-    seed_model: &str,
 ) -> Result<String, String> {
     use toml_edit::{value, DocumentMut, Item, Table};
     let mut doc: DocumentMut = toml_text
@@ -9351,15 +9353,65 @@ fn patch_codex_provider(
     p.insert("name", value(display_name));
     p.insert("base_url", value(format!("{base_url}/v1")));
     p.insert("env_key", value(env_key));
-
-    let profiles = subtable(doc.as_table_mut(), "profiles");
-    let prof = subtable(profiles, provider_id);
-    prof.insert("model_provider", value(provider_id));
-    if !prof.contains_key("model") {
-        prof.insert("model", value(seed_model));
-    }
+    p.insert("wire_api", value("responses"));
 
     Ok(doc.to_string())
+}
+
+/// Build the contents of a Codex profile file `~/.codex/<provider_id>.config.toml`. Codex 0.142+
+/// selects it with `--profile <provider_id>`, overlaying it on the base config. Top-level keys
+/// only (NO `[profiles.*]` wrapper). `model` is seeded only when the existing profile has none,
+/// so a user's model choice survives a re-deploy. `existing` is the current file text (empty on
+/// first write).
+fn patch_codex_profile(
+    existing: &str,
+    provider_id: &str,
+    seed_model: &str,
+) -> Result<String, String> {
+    use toml_edit::{value, DocumentMut};
+    let mut doc: DocumentMut = existing
+        .trim_start_matches('\u{feff}')
+        .parse()
+        .map_err(|e| format!("parse profile toml: {e}"))?;
+    doc.as_table_mut()
+        .insert("model_provider", value(provider_id));
+    if !doc.as_table().contains_key("model") {
+        doc.as_table_mut().insert("model", value(seed_model));
+    }
+    Ok(doc.to_string())
+}
+
+/// Wire a provider into Codex end-to-end: register `[model_providers.<id>]` (wire_api=responses)
+/// in `~/.codex/config.toml` AND write the profile file `~/.codex/<id>.config.toml`. Both writes
+/// are atomic; the profile model is seeded only when absent. Shared by the omniroute and
+/// freellmapi call sites. Holds no lock — callers take `DEPLOY_CFG_LOCK` (config.toml is shared).
+fn deploy_codex_provider(
+    provider_id: &str,
+    display_name: &str,
+    base_url: &str,
+    env_key: &str,
+    seed_model: &str,
+) -> Result<(), String> {
+    let home =
+        std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
+    let cfg_path = format!("{home}\\.codex\\config.toml");
+    let text = std::fs::read_to_string(&cfg_path)
+        .map_err(|_| tr("err.codex_missing", cur_lang()).to_string())?;
+    let patched = patch_codex_config(
+        text.trim_start_matches('\u{feff}'),
+        provider_id,
+        display_name,
+        base_url,
+        env_key,
+    )?;
+    write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
+
+    let prof_path = format!("{home}\\.codex\\{provider_id}.config.toml");
+    let existing = std::fs::read_to_string(&prof_path).unwrap_or_default();
+    let prof = patch_codex_profile(&existing, provider_id, seed_model)?;
+    write_json_atomic(&prof_path, &prof)
+        .map_err(|e| format!("write {provider_id}.config.toml: {e}"))?;
+    Ok(())
 }
 
 /// Connect the freellmapi gateway to Codex (the "providers" fan-out for Codex — see
@@ -9373,20 +9425,13 @@ fn run_codex_providers() -> Result<bool, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
     use std::os::windows::process::CommandExt;
     let base = gateway_base_url().ok_or_else(|| tr("err.gateway_missing", cur_lang()).to_string())?;
-    let home = std::env::var("USERPROFILE")
-        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    let cfg_path = format!("{home}\\.codex\\config.toml");
-    let text = std::fs::read_to_string(&cfg_path)
-        .map_err(|_| tr("err.codex_missing", cur_lang()).to_string())?;
-    let patched = patch_codex_provider(
-        text.trim_start_matches('\u{feff}'),
+    deploy_codex_provider(
         "freellmapi",
         "FreeLLMAPI",
         &base,
         "FREELLMAPI_API_KEY",
         "kimi-k2-thinking",
     )?;
-    write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
 
     // Key mirror is best-effort: a missing DB/node/helper leaves the config connected and
     // the toast tells the user to set the variable by hand (dashboard shows the key).
@@ -9432,20 +9477,13 @@ fn run_codex_providers() -> Result<bool, String> {
 fn run_codex_omniroute() -> Result<bool, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
     let base = omniroute_base_url().ok_or_else(|| tr("err.omniroute_missing", cur_lang()).to_string())?;
-    let home = std::env::var("USERPROFILE")
-        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    let cfg_path = format!("{home}\\.codex\\config.toml");
-    let text = std::fs::read_to_string(&cfg_path)
-        .map_err(|_| tr("err.codex_missing", cur_lang()).to_string())?;
-    let patched = patch_codex_provider(
-        text.trim_start_matches('\u{feff}'),
+    deploy_codex_provider(
         "omniroute",
         "OmniRoute",
         &base,
         "OMNIROUTE_API_KEY",
         "kimi-k2-thinking",
     )?;
-    write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
     Ok(false)
 }
 
@@ -9534,75 +9572,48 @@ mod opencode_fanout_tests {
     }
 
     #[test]
-    fn codex_gateway_patch_preserves_config_and_user_model() {
-        let existing = "# my codex\nmodel = \"gpt-5.5\"\n\n[profiles.freellmapi]\nmodel = \"auto\"\n";
-        let out = super::patch_codex_provider(
-            existing,
-            "freellmapi",
-            "FreeLLMAPI",
-            "http://localhost:13001",
-            "FREELLMAPI_API_KEY",
-            "kimi-k2-thinking",
-        )
-        .unwrap();
-        // comment + top-level model untouched; provider table written; user's profile model kept
-        assert!(out.contains("# my codex"));
-        assert!(out.contains("model = \"gpt-5.5\""));
-        assert!(out.contains("[model_providers.freellmapi]"));
-        assert!(out.contains("base_url = \"http://localhost:13001/v1\""));
-        assert!(out.contains("env_key = \"FREELLMAPI_API_KEY\""));
-        assert!(out.contains("model = \"auto\""));
-        assert!(!out.contains("model = \"kimi-k2-thinking\""));
-        // fresh config: profile model seeded, top-level model_provider NOT set
-        let fresh = super::patch_codex_provider(
-            "",
-            "freellmapi",
-            "FreeLLMAPI",
-            "http://localhost:13001",
-            "FREELLMAPI_API_KEY",
-            "kimi-k2-thinking",
-        )
-        .unwrap();
-        assert!(fresh.contains("model = \"kimi-k2-thinking\""));
-        // the profile sets model_provider, but the TOP-LEVEL default must stay untouched
-        let doc: toml_edit::DocumentMut = fresh.parse().unwrap();
-        assert!(doc.get("model_provider").is_none());
-        assert!(doc.get("model").is_none());
-    }
-
-    #[test]
-    fn codex_omniroute_patch_writes_provider_and_profile() {
-        let existing = "# my codex\nmodel = \"gpt-5.5\"\n\n[profiles.omniroute]\nmodel = \"auto\"\n";
-        let out = super::patch_codex_provider(
+    fn codex_config_writes_provider_with_responses_wire_api() {
+        // existing config with a user default; provider registered, base config preserved
+        let existing = "# my codex\nmodel = \"gpt-5.5\"\n";
+        let out = super::patch_codex_config(
             existing,
             "omniroute",
             "OmniRoute",
             "http://localhost:20128",
             "OMNIROUTE_API_KEY",
-            "kimi-k2-thinking",
         )
         .unwrap();
+        assert!(out.contains("# my codex"));
+        assert!(out.contains("model = \"gpt-5.5\"")); // top-level default untouched
         assert!(out.contains("[model_providers.omniroute]"));
         assert!(out.contains("name = \"OmniRoute\""));
         assert!(out.contains("base_url = \"http://localhost:20128/v1\""));
         assert!(out.contains("env_key = \"OMNIROUTE_API_KEY\""));
-        assert!(out.contains("[profiles.omniroute]"));
-        assert!(out.contains("model_provider = \"omniroute\""));
-        // existing user model under the profile is preserved on re-patch
-        assert!(out.contains("model = \"auto\""));
-        assert!(!out.contains("model = \"kimi-k2-thinking\""));
+        assert!(out.contains("wire_api = \"responses\"")); // Codex 0.142+ requirement
+        // the legacy [profiles.*] table must NOT be written into config.toml
+        assert!(!out.contains("[profiles."));
+        // top-level model_provider default stays untouched
+        let doc: toml_edit::DocumentMut = out.parse().unwrap();
+        assert!(doc.get("model_provider").is_none());
+    }
 
-        // fresh config: profile model seeded
-        let fresh = super::patch_codex_provider(
-            "",
-            "omniroute",
-            "OmniRoute",
-            "http://localhost:20128",
-            "OMNIROUTE_API_KEY",
-            "kimi-k2-thinking",
-        )
-        .unwrap();
-        assert!(fresh.contains("model = \"kimi-k2-thinking\""));
+    #[test]
+    fn codex_profile_seeds_model_only_when_absent() {
+        // fresh profile: model_provider set + model seeded, top-level keys only (no wrapper table)
+        let fresh = super::patch_codex_profile("", "omniroute", "auto/coding").unwrap();
+        assert!(fresh.contains("model_provider = \"omniroute\""));
+        assert!(fresh.contains("model = \"auto/coding\""));
+        assert!(!fresh.contains("[profiles"));
+        let doc: toml_edit::DocumentMut = fresh.parse().unwrap();
+        assert_eq!(
+            doc.get("model_provider").and_then(|v| v.as_str()),
+            Some("omniroute")
+        );
+        // existing user model is preserved on re-deploy (seed skipped)
+        let existing = "model_provider = \"omniroute\"\nmodel = \"gpt-5.5-codex\"\n";
+        let out = super::patch_codex_profile(existing, "omniroute", "auto/coding").unwrap();
+        assert!(out.contains("model = \"gpt-5.5-codex\""));
+        assert!(!out.contains("auto/coding"));
     }
 
     #[test]
