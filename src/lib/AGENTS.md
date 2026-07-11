@@ -12,9 +12,10 @@ consumed by `routes/` and by components.
   `toast.svelte.ts`, `agentStatus.svelte.ts`, `navOrder.svelte.ts`
 - Run/UI mapping: `outcome.ts` (run → toast), `attention.ts` (sidebar badges),
   `glossary.ts` (per-component help), `theme.ts` (dark/light)
-- Helpers: `envelope.ts`, `bytes.ts`, `clipboard.ts`, `floating.ts`, `limitSwitch.ts`,
-  `monitors.ts`, `redact.ts`, `relativeTime.ts`, `sessionMove.ts`, `sessionPrefs.ts`,
-  `sessionPresets.ts`, `statusColor.ts`, `updater.ts`, `url.ts`
+- Helpers: `envelope.ts`, `bytes.ts`, `clipboard.ts`, `floating.ts`, `hookHealth.ts`,
+  `launchAdvisor.ts`, `launchArgs.ts`, `limitSwitch.ts`, `monitors.ts`, `redact.ts`,
+  `relativeTime.ts`, `sessionMove.ts`, `sessionPrefs.ts`, `sessionPresets.ts`,
+  `statusColor.ts`, `updater.ts`, `url.ts`
 - `shot/` — screenshot/fixtures for visual work (`fixtures.ts`)
 
 ## Local Contracts
