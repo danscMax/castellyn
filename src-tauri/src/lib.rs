@@ -12424,9 +12424,22 @@ const STATUS_HOOK_EVENTS: [&str; 5] = [
     "SessionEnd",
 ];
 
+/// The single on-disk location of the status hook script — one shared file (STATUS_HOOK_CMD wires the
+/// literal `~/.claude/hooks/…`, the same for every profile), so its presence is one check, not N.
+fn status_hook_script_path(home: &str) -> String {
+    format!("{home}\\.claude\\hooks\\castellyn_status.py")
+}
+
+/// Whether the wired hook command actually has a script to run. A profile can reference the hook in
+/// settings while the file was never installed or later deleted — then the hook silently no-ops and
+/// panes go stale-quiet. Surfacing this is the point of the diagnostic (acceptance #1: script state).
+fn status_hook_script_present(home: &str) -> bool {
+    std::path::Path::new(&status_hook_script_path(home)).exists()
+}
+
 /// Install/refresh the status hook script (same version-gated policy as plugin_sync).
 fn ensure_status_hook_script(home: &str) -> Result<(), String> {
-    let path = format!("{home}\\.claude\\hooks\\castellyn_status.py");
+    let path = status_hook_script_path(home);
     let ver = |t: &str| script_version_header(t, "# castellyn-status-version:");
     let disk = std::fs::read_to_string(&path).unwrap_or_default();
     if ver(&disk) < ver(STATUS_HOOK_SCRIPT) {
@@ -12547,6 +12560,9 @@ struct AgentStatusHookState {
     /// drift/partial wiring from a profile that was simply never enabled (all five missing — that
     /// one stays only in `unwired`). Read-only diagnostic.
     partial: Vec<ProfileHookGaps>,
+    /// Whether the hook script exists on disk. `false` while any profile is `wired` means the command
+    /// is referenced but has nothing to run — a silent-failure state the UI must flag.
+    script_present: bool,
 }
 
 fn agent_status_hook_state() -> Result<AgentStatusHookState, String> {
@@ -12575,6 +12591,7 @@ fn agent_status_hook_state() -> Result<AgentStatusHookState, String> {
         wired,
         unwired,
         partial,
+        script_present: status_hook_script_present(&home),
     })
 }
 
@@ -12858,6 +12875,24 @@ mod plugin_sync_tests {
             super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER);
         }
         assert!(super::status_hook_missing_events(&v).is_empty());
+    }
+
+    #[test]
+    fn status_hook_script_presence_tracks_the_file() {
+        // Hermetic fake HOME under the temp dir — never touches the real ~/.claude.
+        let home = std::env::temp_dir().join(format!("castellyn_shp_{}", std::process::id()));
+        let home_s = home.to_string_lossy().to_string();
+        let _ = std::fs::remove_dir_all(&home);
+        // Absent: settings may reference the hook, but the script file is not there.
+        assert!(!super::status_hook_script_present(&home_s));
+        // The resolved path is the single canonical shared location (not per-profile).
+        let path = super::status_hook_script_path(&home_s);
+        assert!(path.ends_with("\\.claude\\hooks\\castellyn_status.py"));
+        // Present once the file exists at exactly that path.
+        std::fs::create_dir_all(std::path::Path::new(&path).parent().unwrap()).unwrap();
+        std::fs::write(&path, "# stub").unwrap();
+        assert!(super::status_hook_script_present(&home_s));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

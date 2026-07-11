@@ -22,6 +22,10 @@ export default {
   statusHook: 'Статусы агентов',
   statusHookHint: 'Хук в профилях Claude Code сообщает состояние (работает / ждёт решения / закончил) — цветная точка на панели и бейдж в сайдбаре. Сессий вне Castellyn не касается.',
   statusHookCoverage: 'хук в {wired}/{total} профилях',
+  statusHookScriptMissing: 'скрипт отсутствует',
+  statusHookScriptMissingHint:
+    'Хук прописан, но файла ~/.claude/hooks/castellyn_status.py нет — статусы не приходят. Переключите тумблер, чтобы переустановить.',
+  statusHookDrift: 'частично: {n}',
   statusHookOnToast: 'Статусы агентов включены во всех профилях',
   statusHookOffToast: 'Статусы агентов отключены',
   statusNudge: 'Статусы агентов выключены — точка Claude нейтральна. Включите для живого статуса.',

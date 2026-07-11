@@ -1010,7 +1010,17 @@ export const runGcDelete = (ids: string[]) => invoke<GcDeleteReport>('run_gc_del
 
 // Agent-status lifecycle hook (Sessions): castellyn_status.py wired into five Claude Code
 // events of every profile. `agent-status` events then drive the pane badges.
-export type AgentStatusHookState = { wired: string[]; unwired: string[] };
+/** One profile wired for SOME lifecycle events but not all — `missing` names the gaps (drift). */
+export type ProfileHookGaps = { profile: string; missing: string[] };
+/** Diagnostic for the agent-status lifecycle hook. `wired`/`unwired` are per-profile coverage;
+ *  `partial` is drift (some events wired, some not); `scriptPresent` is whether the single shared
+ *  hook script exists on disk — `false` while anything is `wired` means the hook can't actually run. */
+export type AgentStatusHookState = {
+  wired: string[];
+  unwired: string[];
+  partial: ProfileHookGaps[];
+  scriptPresent: boolean;
+};
 export const agentStatusHookStatus = () => invoke<AgentStatusHookState>('agent_status_hook_status');
 export const agentStatusHookSet = (enabled: boolean) =>
   invoke<AgentStatusHookState>('agent_status_hook_set', { enabled });

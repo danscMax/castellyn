@@ -365,7 +365,9 @@ const handlers: Record<string, (args: any) => any> = {
   list_plugin_updates: () => ([{ id: 'superpowers', installed: '2.4.1', available: '2.5.0' }]),
   agent_status_hook_status: () => ({
     wired: ['.claude', '.claude-cc1', '.claude-cc2', '.claude-ccfree', '.claude-cctest'],
-    unwired: []
+    unwired: [],
+    partial: [],
+    scriptPresent: true
   }),
   plugin_sync_status: () => ({
     wired: ['.claude', '.claude-cc1', '.claude-cc2', '.claude-ccfree'],

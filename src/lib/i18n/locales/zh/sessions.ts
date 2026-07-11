@@ -22,6 +22,10 @@ export default {
   statusHook: '代理状态',
   statusHookHint: 'Claude Code 配置中的钩子上报状态（工作中 / 需要决定 / 已完成）— 面板彩色圆点和侧边栏徽章。Castellyn 之外的会话不受影响。',
   statusHookCoverage: '钩子覆盖 {wired}/{total} 个配置',
+  statusHookScriptMissing: '脚本缺失',
+  statusHookScriptMissingHint:
+    '已配置钩子，但 ~/.claude/hooks/castellyn_status.py 文件不存在——收不到状态。切换开关可重新安装脚本。',
+  statusHookDrift: '部分: {n}',
   statusHookOnToast: '已在所有配置中启用代理状态',
   statusHookOffToast: '已禁用代理状态',
   statusNudge: '代理状态已关闭 — Claude 圆点为中性。启用以获得实时状态。',

@@ -41,6 +41,7 @@
   import { pickResumeCandidate } from '$lib/limitSwitch';
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
+  import { hookHealth } from '$lib/hookHealth';
   import { parseTsMs } from '$lib/relativeTime';
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
@@ -462,6 +463,10 @@
   const statusHookOn = $derived(
     !!statusHookState && statusHookState.wired.length > 0 && statusHookState.unwired.length === 0
   );
+  // Precise health (off / script-missing / partial / healthy) behind the coverage count, so a hook
+  // that is wired-but-broken (script deleted, or drifted to some profiles) is visible, not hidden
+  // behind a green-looking toggle.
+  const statusHookHealth = $derived(hookHealth(statusHookState));
   onMount(async () => {
     try {
       statusHookState = await agentStatusHookStatus();
@@ -2102,8 +2107,14 @@
             title={t('sessions.statusHookHint')} />
           {#if statusHookState}
             <span class="text-sw-xs text-sw-text-muted" title={statusHookState.wired.join(', ')}>
-              {t('sessions.statusHookCoverage', { wired: statusHookState.wired.length, total: statusHookState.wired.length + statusHookState.unwired.length })}
+              {t('sessions.statusHookCoverage', { wired: statusHookHealth.wired, total: statusHookHealth.total })}
             </span>
+            {#if statusHookHealth.status === 'script-missing'}
+              <span class="hook-warn" title={t('sessions.statusHookScriptMissingHint')}>{t('sessions.statusHookScriptMissing')}</span>
+            {/if}
+            {#if statusHookHealth.drift > 0}
+              <span class="hook-warn" title={statusHookState.partial.map((p) => `${p.profile}: ${p.missing.join(', ')}`).join(' · ')}>{t('sessions.statusHookDrift', { n: statusHookHealth.drift })}</span>
+            {/if}
           {/if}
           <span class="text-sw-text-muted">·</span>
           <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusSoundHint')}>
@@ -2820,6 +2831,11 @@
     width: 130px;
     font-size: var(--sw-text-xs);
     color: var(--sw-text-muted);
+  }
+  .hook-warn {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-status-warn);
+    cursor: help;
   }
   .srv-list {
     display: flex;

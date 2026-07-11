@@ -22,6 +22,10 @@ export default {
   statusHook: 'Agent statuses',
   statusHookHint: 'A hook in the Claude Code profiles reports the state (working / needs a decision / finished) — a coloured pane dot and a sidebar badge. Sessions outside Castellyn are unaffected.',
   statusHookCoverage: 'hook in {wired}/{total} profiles',
+  statusHookScriptMissing: 'script missing',
+  statusHookScriptMissingHint:
+    'The hook is wired but ~/.claude/hooks/castellyn_status.py is gone — no statuses arrive. Toggle it to reinstall the script.',
+  statusHookDrift: 'partial: {n}',
   statusHookOnToast: 'Agent statuses enabled in all profiles',
   statusHookOffToast: 'Agent statuses disabled',
   statusNudge: 'Agent statuses are off — the Claude dot stays neutral. Enable them for live status.',
