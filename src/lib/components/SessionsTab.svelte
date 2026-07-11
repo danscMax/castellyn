@@ -1340,11 +1340,18 @@
     });
   }
 
+  // Task 6: a profile with a live LOCAL Claude pane is already "claimed" — its quota is in use, so the
+  // advisor points to a fresh profile instead of piling another session onto it. The pane list is the
+  // reservation set itself (addPane on spawn, removed on exit → no separate state to keep in sync).
+  // Remote (ssh) Claude runs on the remote machine's quota, so it never reserves a local profile.
+  const reservedClaude = $derived(
+    new Set(panes.filter((p) => p.tool === 'claude' && !p.sshTarget && p.profile).map((p) => p.profile))
+  );
   // Task 5: quota-aware launch recommendation for a Claude session — least-loaded eligible profile +
   // a task-class effort, from the SAME profile/limits data the resume auto-switch reads (one ranker,
   // no drift). Pure & reactive; launches nothing. Applying it just fills the launcher fields, which
   // stay fully editable before spawn. Rendered only for the claude harness.
-  const advice = $derived(launchAdvisor(profileInfos, limitsByProfile, lTaskClass));
+  const advice = $derived(launchAdvisor(profileInfos, limitsByProfile, lTaskClass, reservedClaude));
   function applyAdvice() {
     if (!advice.recommendation) return;
     lProfile = advice.recommendation.profile;
