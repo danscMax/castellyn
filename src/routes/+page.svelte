@@ -190,7 +190,7 @@
   import { deriveOutcome } from '$lib/outcome';
   import { t, locale } from '$lib/i18n';
   import { componentName } from '$lib/componentLabel';
-  import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, type EnvInfo, type SkillRow } from '$lib/ipc';
+  import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, runCodexOmniroute, type EnvInfo, type SkillRow } from '$lib/ipc';
 
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
@@ -1208,6 +1208,19 @@
           }
         })());
   };
+  // OmniRoute -> Codex: writes [model_providers.omniroute] + the profile file; no key mirror
+  // (OmniRoute owns its keys), so run_codex_omniroute always resolves to a plain success toast.
+  const onConnectOmniroute = () =>
+    confirmFanout('~/.codex/config.toml', () =>
+      void (async () => {
+        try {
+          await runCodexOmniroute();
+          pushToast({ kind: 'success', title: t('environments.connectOmnirouteDone') });
+          await reloadEnvs();
+        } catch (e) {
+          pushToast({ kind: 'error', title: t('environments.connectOmnirouteError'), detail: String(e) });
+        }
+      })());
   const onDeployInstructions = (id: string) => {
     if (id === 'opencode')
       confirmFanout('opencode.json', () =>
@@ -2707,6 +2720,7 @@
           onOpenConfig={(p) => openPath(p).catch(toastErr)} onOpenProviders={() => (active = 'providers')}
           onOpenMcp={() => (active = 'mcp')} onDeployMcp={onDeployMcp}
           onDeployProviders={onDeployProviders} onDeployInstructions={onDeployInstructions}
+          onConnectOmniroute={onConnectOmniroute}
           onOpenUrl={(u) => openUrl(u).catch(toastErr)} />
       {:else if active === 'sync'}
         <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}

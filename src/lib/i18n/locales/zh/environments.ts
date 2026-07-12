@@ -75,5 +75,10 @@ export default {
   connectGatewayDone: '网关已接入，密钥已设置 — codex --profile freellmapi（在新终端中）',
   connectGatewayDoneNoKey:
     '网关已接入，但密钥设置失败 — 请在 freellmapi 仪表盘复制密钥并执行：setx FREELLMAPI_API_KEY <密钥>',
-  connectGatewayError: '接入网关到 Codex 失败'
+  connectGatewayError: '接入网关到 Codex 失败',
+  connectOmniroute: '接入 OmniRoute',
+  connectOmnirouteTitle:
+    '将 OmniRoute 网关写入 Codex 的 config.toml（[model_providers.omniroute] + 通过 /v1/responses 的配置档，默认模型 auto/coding）。OmniRoute 自行管理密钥 — 不设置密钥',
+  connectOmnirouteDone: 'OmniRoute 已接入 — codex --profile omniroute（在新终端中）',
+  connectOmnirouteError: '接入 OmniRoute 到 Codex 失败'
 };

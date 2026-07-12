@@ -19,6 +19,7 @@
     onDeployMcp,
     onDeployProviders,
     onDeployInstructions,
+    onConnectOmniroute,
     onOpenUrl,
     onLoadMatrix
   }: {
@@ -34,6 +35,7 @@
     onDeployMcp: (id: string) => void;
     onDeployProviders: (id: string) => void;
     onDeployInstructions: (id: string) => void;
+    onConnectOmniroute: () => void;
     onOpenUrl: (url: string) => void;
     onLoadMatrix: () => void;
   } = $props();
@@ -226,6 +228,8 @@
                   onclick={() => onDeployMcp(e.id)} title={t('environments.deployMcpTitleCodex')}>{t('environments.deployMcp')}</button>
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
                   onclick={() => onDeployProviders(e.id)} title={t('environments.connectGatewayTitle')}>{t('environments.connectGateway')}</button>
+                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
+                  onclick={onConnectOmniroute} title={t('environments.connectOmnirouteTitle')}>{t('environments.connectOmniroute')}</button>
               </div>
             {/if}
 

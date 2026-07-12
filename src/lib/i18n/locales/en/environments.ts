@@ -75,5 +75,10 @@ export default {
   connectGatewayDone: 'Gateway connected, key set — codex --profile freellmapi (in a new terminal)',
   connectGatewayDoneNoKey:
     'Gateway connected, but the key could not be set — copy it from the freellmapi dashboard and run: setx FREELLMAPI_API_KEY <key>',
-  connectGatewayError: 'Failed to connect the gateway to Codex'
+  connectGatewayError: 'Failed to connect the gateway to Codex',
+  connectOmniroute: 'Connect OmniRoute',
+  connectOmnirouteTitle:
+    "Write the OmniRoute gateway into Codex's config.toml ([model_providers.omniroute] + a profile over /v1/responses, default model auto/coding). OmniRoute manages its own keys — none is set",
+  connectOmnirouteDone: 'OmniRoute connected — codex --profile omniroute (in a new terminal)',
+  connectOmnirouteError: 'Failed to connect OmniRoute to Codex'
 };

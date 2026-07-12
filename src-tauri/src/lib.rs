@@ -9470,9 +9470,8 @@ fn run_codex_providers() -> Result<bool, String> {
 
 /// Connect OmniRoute to Codex (Ф6 — `patch_codex_provider` generalized off the freellmapi-only
 /// `run_codex_providers`). Unlike freellmapi there is no key mirror here: OmniRoute's own key
-/// management (`omniroute keys`) is the source of truth, wired up in Part B once `:20128` actually
-/// serves `/v1/responses`. Always returns `Ok(false)` — the boolean return shape is kept only to
-/// match `run_codex_providers`'s call signature on the frontend.
+/// management (`omniroute keys`) is the source of truth. Always returns `Ok(false)` — the boolean
+/// return shape is kept only to match `run_codex_providers`'s call signature on the frontend.
 #[tauri::command]
 fn run_codex_omniroute() -> Result<bool, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
@@ -9482,7 +9481,11 @@ fn run_codex_omniroute() -> Result<bool, String> {
         "OmniRoute",
         &base,
         "OMNIROUTE_API_KEY",
-        "kimi-k2-thinking",
+        // OmniRoute's combo-router: self-selects a live backend, so a fresh profile works even if
+        // one backend is down. Verified live on :20128 (auto/coding is a real model id; the
+        // freellmapi seed `kimi-k2-thinking` is NOT — OmniRoute namespaces it as
+        // `openrouter/moonshotai/kimi-k2-thinking` etc., so the bare slug would 404).
+        "auto/coding",
     )?;
     Ok(false)
 }

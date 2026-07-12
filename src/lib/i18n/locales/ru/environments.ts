@@ -75,5 +75,10 @@ export default {
   connectGatewayDone: 'Гейтвей подключён, ключ задан — codex --profile freellmapi (в новом терминале)',
   connectGatewayDoneNoKey:
     'Гейтвей подключён, но ключ задать не удалось — скопируйте его в дашборде freellmapi и выполните: setx FREELLMAPI_API_KEY <ключ>',
-  connectGatewayError: 'Не удалось подключить гейтвей к Codex'
+  connectGatewayError: 'Не удалось подключить гейтвей к Codex',
+  connectOmniroute: 'Подключить OmniRoute',
+  connectOmnirouteTitle:
+    'Записать шлюз OmniRoute в config.toml Codex ([model_providers.omniroute] + профиль через /v1/responses, модель по умолчанию auto/coding). OmniRoute управляет своими ключами — ключ не задаётся',
+  connectOmnirouteDone: 'OmniRoute подключён — codex --profile omniroute (в новом терминале)',
+  connectOmnirouteError: 'Не удалось подключить OmniRoute к Codex'
 };
