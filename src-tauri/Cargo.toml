@@ -3,7 +3,7 @@ name = "castellyn"
 version = "0.7.0"
 description = "Castellyn — control center for your AI coding dev environment"
 authors = ["danscMax"]
-edition = "2021"
+edition = "2024"
 # Matches the repo root LICENSE and package.json; without it SPDX scanners read this half as unlicensed.
 license = "MIT"
 

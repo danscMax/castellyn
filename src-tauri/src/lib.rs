@@ -5,6 +5,11 @@
 //   * System tray with minimize-to-tray.
 // Paths resolve from $SCRIPTS_ROOT (fallback E:\Scripts) so the app survives a disk move.
 
+// Edition 2024 stabilized let-chains, so clippy's `collapsible_if` now flags every `if let X { if Y }`
+// nested guard (~78 across this backend). Collapsing them all into let-chains is a readability wash and
+// pure churn; keep the nesting readable and allow the lint crate-wide (a common 2024-migration choice).
+#![allow(clippy::collapsible_if)]
+
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
