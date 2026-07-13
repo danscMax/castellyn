@@ -386,6 +386,14 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
     }
 }
 
+/// The bare profile key the whole frontend indexes usage by (`cc1`), derived from a profile
+/// DIRECTORY name (`.claude-cc1`). The default profile dir `.claude` has no suffix and is
+/// returned unchanged. `limits-status` MUST carry this key — panes, profileInfos, the launch
+/// advisor and the resume/auto-switch all key usage by the bare name, never the directory. (H-1)
+fn profile_key(dir: &str) -> &str {
+    dir.strip_prefix(".claude-").unwrap_or(dir)
+}
+
 /// Start the usage-limit poll thread. Called once from `setup()`. Respects the `limitsMonitor`
 /// config toggle (default on); a first poll runs after one interval so startup isn't blocked.
 pub fn start(app: AppHandle) {
@@ -408,7 +416,10 @@ pub fn start(app: AppHandle) {
                         let home_ref = &home;
                         s.spawn(move || {
                             let cred = format!("{home_ref}\\{name}\\.credentials.json");
-                            poll_profile(app_ref, name, &cred);
+                            // H-1: emit the BARE profile key the frontend uses (`cc1`), not the
+                            // directory name (`.claude-cc1`) — otherwise the launch advisor and the
+                            // resume/auto-switch see usage-unknown forever and silently do nothing.
+                            poll_profile(app_ref, profile_key(name), &cred);
                         });
                     }
                 });
@@ -420,6 +431,15 @@ pub fn start(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_key_strips_the_claude_dir_prefix() {
+        // The frontend indexes usage by the BARE name; the poller must emit it, not the dir.
+        assert_eq!(profile_key(".claude-cc1"), "cc1");
+        assert_eq!(profile_key(".claude-work"), "work");
+        // Default profile dir has no suffix — returned unchanged.
+        assert_eq!(profile_key(".claude"), ".claude");
+    }
 
     #[test]
     fn thresholds_fire_once_per_window_and_rearm() {
