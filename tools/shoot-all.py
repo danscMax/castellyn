@@ -20,6 +20,9 @@ NAV_INDEX = {
     "envs": 5, "extensions": 6, "agents": 7, "updates": 8, "forks": 9,
     "backup": 10, "sync": 11, "schedule": 12, "analytics": 13, "settings": 14,
 }
+# Guard the hand-maintained map: indices must be a contiguous 0..N-1 run, so a mis-edit
+# (a dropped/duplicated tab shifting the sidebar) fails loudly instead of screenshotting the wrong tab.
+assert list(NAV_INDEX.values()) == list(range(len(NAV_INDEX))), "NAV_INDEX out of sync with the sidebar"
 
 INIT_TMPL = """
 localStorage.setItem('cmh-theme', '%THEME%');

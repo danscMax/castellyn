@@ -50,3 +50,11 @@ jobs:
       - run: npm run build
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # PowerShell static analysis on the maintenance backend (tools/*.ps1 is the script layer the app
+      # spawns). Windows runner already has PowerShell; PSScriptAnalyzer is installed per-run.
+      - name: PSScriptAnalyzer (tools)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+          $issues = Invoke-ScriptAnalyzer -Path tools -Recurse -Severity Warning
+          if ($issues) { $issues | Format-Table -AutoSize; throw "PSScriptAnalyzer: $($issues.Count) issue(s)" }

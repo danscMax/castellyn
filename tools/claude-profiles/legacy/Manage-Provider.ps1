@@ -76,8 +76,9 @@ $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $settings = @{}
 if (Test-Path -LiteralPath $settingsPath) {
     try {
-        $raw = (Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8) -replace "^\xEF\xBB\xBF", ''
-        $raw = $raw.TrimStart([char]0xFEFF)
+        # TrimStart handles the BOM; the old `-replace "^\xEF\xBB\xBF"` was dead (PS escapes with a
+        # backtick, so `\xEF` was a literal that never matched).
+        $raw = (Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8).TrimStart([char]0xFEFF)
         if ($raw.Trim()) { $settings = $raw | ConvertFrom-Json -AsHashtable }
     } catch {
         Write-Host "ОШИБКА: не удалось прочитать settings.json ($($_.Exception.Message))." -ForegroundColor Red

@@ -61,6 +61,10 @@ try {
     exit ([int]$code)
 }
 finally {
-    if ($lockStream) { $lockStream.Close(); $lockStream.Dispose() }
-    Remove-Item -LiteralPath $lockPath -ErrorAction SilentlyContinue
+    # Only the instance that ACQUIRED the lock may release it — a second instance that lost the race
+    # (no $lockStream) must not delete the holder's lock file.
+    if ($lockStream) {
+        $lockStream.Close(); $lockStream.Dispose()
+        Remove-Item -LiteralPath $lockPath -ErrorAction SilentlyContinue
+    }
 }

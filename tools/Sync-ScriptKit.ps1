@@ -59,7 +59,15 @@ if (-not $copies) {
 $doApply = $Apply -and -not $Check
 $inSync = 0; $drift = 0; $applied = 0; $failed = 0
 foreach ($c in $copies) {
-    $hash = Get-FileHashSHA256 -Path $c.FullName
+    # Hash inside try/catch: under ErrorActionPreference='Stop' a single locked/unreadable vendored
+    # copy would otherwise halt the whole sync — count it as failed and keep going.
+    try {
+        $hash = Get-FileHashSHA256 -Path $c.FullName
+    } catch {
+        $failed++
+        Write-Status ("хэш не прочитан: {0} — {1}" -f $c.FullName, $_.Exception.Message) 'FAIL'
+        continue
+    }
     if ($hash -eq $canonHash) {
         $inSync++
         Write-Status ("v{0}  {1}" -f $canonVersion, $c.FullName) 'OK'

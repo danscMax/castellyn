@@ -3,6 +3,7 @@
 # Single source of truth for the gates: the pre-push hook (.githooks/pre-push) and
 # `npm run verify` both call this. Mirrors the gate list in CLAUDE.md / docs/BUILD.md.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Set-StrictMode -Version Latest
 Set-Location -LiteralPath $PSScriptRoot
 
 # cargo isn't always on PATH (see memory: cargo-windows-invocation) — fall back to the default home.

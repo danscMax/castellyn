@@ -61,17 +61,17 @@ Under the hood: `npm run tauri build` (`@tauri-apps/cli`). Config in `src-tauri/
 
 ## App icon
 
-Brand blue `#3b82f6 → #2563eb`. The master is `src-tauri/icons/icon.png` (1024×1024). To change
-or regenerate every format:
+Brand blue `#3b82f6 → #2563eb`. The production master is `src-tauri/icons/icon-master.png`
+(1024×1024 — an AI-generated citadel/gatehouse emblem). To regenerate every format from it:
 
 ```bash
-python tools/make-icon.py                 # writes the 1024 master to a temp path (prints it)
-npm run tauri -- icon "<printed path>"     # regenerates src-tauri/icons/* (ico/icns/png/Square*)
+npm run tauri -- icon src-tauri/icons/icon-master.png   # regenerates src-tauri/icons/* (ico/icns/png/Square*)
 ```
 
-`tools/make-icon.py` draws the hub-and-nodes mark with Pillow (`pip install pillow`); no SVG
-toolchain needed. The exe embeds `icon.ico` at build time and the tray/window use the bundled
-icons, so rebuild after changing icons.
+`tools/make-icon.py` is **only an offline, dependency-free FALLBACK** — it draws the legacy
+hub-and-nodes mark with Pillow (`pip install pillow`), NOT the shipped citadel icon; use it only when
+`icon-master.png` is unavailable. The exe embeds `icon.ico` at build time and the tray/window use the
+bundled icons, so rebuild after changing icons.
 
 ## First build / after a rename or big change
 

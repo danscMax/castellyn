@@ -16,7 +16,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $portList = @()
-if ($Ports) { $portList = $Ports -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { [int]$_ } }
+if ($Ports) { $portList = $Ports -split '[,\s]+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ } }
 
 $now = Get-Date
 $result = foreach ($p in $portList) {

@@ -857,7 +857,9 @@ function Invoke-SyncWipLocal {
 function Invoke-PruneStale {
     param([string]$RepoPath, [pscustomobject]$Rep, [switch]$DryRun)
     if (-not $DryRun -and $Rep.forkRemote) {
-        Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('fetch','--prune','--quiet',$Rep.forkRemote) | Out-Null
+        # A NETWORK fetch — route it through the timed helper (like the delete/force-push calls) so a
+        # hung remote can't wedge the prune indefinitely (Invoke-GitLocal has no timeout).
+        Invoke-TimedCommand -FilePath 'git' -TimeoutSec 60 -ArgList @('-C',$RepoPath,'fetch','--prune','--quiet',$Rep.forkRemote) | Out-Null
     }
     $vv = Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('for-each-ref','--format=%(refname:short) %(upstream:track)','refs/heads')
     if (-not $vv.Ok) { return 'prune: не удалось перечислить ветки' }
@@ -1146,7 +1148,7 @@ function Invoke-ForkSync {
     Write-Status "JSON: $jsonPath" 'INFO'
     if (-not $Unattended) { Show-Notification -Title 'fork-sync' -Body ("Влито {0}, открыто {1}, конфликтов {2}" -f $cMerged, $cOpen, $cConf) -IsError:($cConf -gt 0) }
 
-    if ($reports.Where({ $_.Skipped -eq 'error' }).Count -gt 0) { return 1 }
+    if ($skSkipErr -gt 0) { return 1 } # reuse the count computed above; $reports is unchanged since
     return 0
 }
 # endregion

@@ -74,10 +74,15 @@ def main() -> int:
             page.wait_for_timeout(1300)  # tab data load + render
             if tab == "sessions":
                 # Launch two panes so the grid shows real running terminals (flagship feature).
-                launch = page.get_by_role("button", name="Launch").first
-                launch.click(); page.wait_for_timeout(700)
-                page.get_by_role("button", name="Launch").first.click()
-                page.wait_for_timeout(3200)  # xterm fit + per-line streamed output + paint
+                # Guard the clicks (mirrors shoot-all.py): a missing Launch button skips only the
+                # sessions shot instead of aborting the whole run.
+                try:
+                    launch = page.get_by_role("button", name="Launch").first
+                    launch.click(); page.wait_for_timeout(700)
+                    page.get_by_role("button", name="Launch").first.click()
+                    page.wait_for_timeout(3200)  # xterm fit + per-line streamed output + paint
+                except Exception as e:
+                    print(f"  sessions launch skipped: {e}")
             dest = OUT / f"{stem}.png"
             page.screenshot(path=str(dest))
             page.close()

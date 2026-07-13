@@ -44,7 +44,9 @@ One file holds all commands. Key pieces:
   survive the renames. Writes always go to the new path (`write_config` → `config_path()`).
 - **`scripts_root()`** — `$SCRIPTS_ROOT` env → `config.scriptsRoot` → default `E:\Scripts`.
 - **Tray / window** — `build_tray` (Show / Check-all / Quit), close-to-tray, autostart via
-  HKCU\…\Run value `Castellyn` (migrated once from the old `AgentHub` value). Tray menu strings are hardcoded Russian (not i18n'd).
+  HKCU\…\Run value `Castellyn` (migrated once from the old `AgentHub` value). Tray menu labels are
+  localized via `src-tauri/src/i18n.rs` (`tr("tray.*", lang)`) and relabeled live on a locale change
+  (`set_language`); the tooltip is the brand name `Castellyn`.
 
 **Registered commands** — the canonical, authoritative list is the `tauri::generate_handler![…]`
 block at the bottom of `lib.rs` (~80 commands; frontend calls them via typed wrappers in
@@ -83,7 +85,8 @@ block at the bottom of `lib.rs` (~80 commands; frontend calls them via typed wra
 - **Components** (`lib/components/`, ~42 files): one per tab — `HomeTab` (USE-1 health overview),
   `UpdatesTab`, `ForksTab`, `BackupTab`, `ProfilesTab`, `McpTab`, `EnvironmentsTab` (the «Среды»
   cross-harness tab), `SyncTab`, `ProvidersTab`,
-  `PluginsTab`, `ScheduleTab`, `SessionsTab`, `AnalyticsTab`, `SettingsTab` — plus dialogs (all
+  `PluginsTab`, `ScheduleTab`, `SessionsTab`, `SubagentsTab` (the «Субагенты» agents tab),
+  `AnalyticsTab`, `SettingsTab` — plus dialogs (all
   built on `ModalShell`: `ConfirmDialog`, `RestoreDialog`, `ProfileEditDialog`, `LaunchConfigDialog`,
   `SessionLaunchDialog`, `ProviderEditDialog`, `MyProviderEditDialog`, `RouterConnectDialog`,
   `HotkeyHelp`), shell (`Sidebar`, `Console`, `WindowTitleBar`, `ToastHost`, `CommandPalette`),

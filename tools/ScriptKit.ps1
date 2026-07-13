@@ -68,7 +68,9 @@ function Write-Step {
     param([int]$Step, [int]$Total, [string]$Msg)
     Write-Host ""
     Write-Host ("  " + $script:SK_H * 60) -ForegroundColor DarkGray
-    $pct = if ($Total -gt 0) { [math]::Floor(($Step - 1) / $Total * 100) } else { 0 }
+    # Completed-work semantics so the bar reaches 100% on the final step (was ($Step-1)/$Total, which
+    # capped at (Total-1)/Total and never hit 100). Clamped in case Step ever exceeds Total.
+    $pct = if ($Total -gt 0) { [math]::Min(100, [math]::Floor($Step / $Total * 100)) } else { 0 }
     $filled = [math]::Floor($pct / 2); $empty = 50 - $filled
     if ($empty -lt 0) { $empty = 0 }
     $bar = ($script:SK_BLOCK_F * $filled) + ($script:SK_BLOCK_E * $empty)
@@ -198,12 +200,10 @@ function Stop-NamedProcess {
 
 function Get-FileHashSHA256 {
     param([string]$Path)
+    # Use the built-in cmdlet (ships in Windows PowerShell 5.1+/PS 7) instead of hand-rolling SHA-256.
+    # Get-FileHash returns uppercase hex, same shape as the old ByteConverter output.
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Path).Path)
-        return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '')
-    } finally { $sha.Dispose() }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
 
 # App version, best-effort: package.json -> Cargo.toml -> 'src-tauri\Cargo.toml' -> '?'.
@@ -271,7 +271,7 @@ function Write-StatusJson {
                 $payload[$k] = $Extra[$k]
             }
         }
-        if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -Path $Root -Force | Out-Null }
+        if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -LiteralPath $Root -Force | Out-Null }
         $path = Join-Path $Root ("{0}.last.json" -f $Component)
         [System.IO.File]::WriteAllText($path, ($payload | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
         return $path

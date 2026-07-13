@@ -26,6 +26,7 @@ param(
 try { chcp 65001 | Out-Null } catch { }
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
 $root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
 $kit = Join-Path $root 'tools\ScriptKit.ps1'
