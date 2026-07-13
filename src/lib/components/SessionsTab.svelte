@@ -587,8 +587,15 @@
   $effect(() => {
     try {
       const live: LivePane[] = panes
-        .filter((p) => !p.attachId && sessionIds[p.key])
-        .map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id: sessionIds[p.key], claudeSid: claudeSids[sessionIds[p.key]], name: p.name, space: p.space }));
+        // #M16: also persist an OWNED re-attached pane — it carries an attachId but we own the session,
+        // so reload-survival must keep sessions that were themselves restored on a previous reload. A
+        // pure mirror (attachId, not owned) is left to its owner to persist. id is the attachId for a
+        // re-attached pane, the spawner's live id otherwise.
+        .filter((p) => (!p.attachId || p.ownsSession) && (p.attachId ?? sessionIds[p.key]))
+        .map((p) => {
+          const id = (p.attachId ?? sessionIds[p.key])!;
+          return { tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id, claudeSid: claudeSids[id], name: p.name, space: p.space };
+        });
       // #3: keep the pending restore set (last run's dead sessions) in LIVE_KEY until the user
       // accepts or dismisses the bar — else a second webview reload before they act loses the offer.
       // Merge by id so a since-re-attached pane isn't listed twice; when restorable clears (accept /

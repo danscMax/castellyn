@@ -29,8 +29,12 @@
   let seeded = ''; // plain guard: re-seed each time the dialog opens
 
   $effect(() => {
+    if (!open) {
+      seeded = ''; // reset on close so reopening the SAME item after Cancel reseeds from props
+      return;
+    }
     const key = `${open}:${mode}:${current}`;
-    if (open && key !== seeded) {
+    if (key !== seeded) {
       name = mode === 'rename' ? current : '';
       color = mode === 'recolor' ? currentColor : 'White';
       description = mode === 'redescribe' ? currentDescription : '';

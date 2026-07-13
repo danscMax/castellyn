@@ -24,7 +24,7 @@ Step 'i18n parity (ru/en/zh)'   { npm run check:i18n }
 Step 'svelte-check (types+i18n)' { npm run check }
 Step 'vitest'                    { npm test }
 Step 'frontend build'            { npm run build }
-Step 'cargo check'               { & $cargo check --manifest-path src-tauri/Cargo.toml }
+Step 'cargo clippy'              { & $cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings }
 Step 'cargo test'                { & $cargo test  --manifest-path src-tauri/Cargo.toml }
 
 Write-Host ""

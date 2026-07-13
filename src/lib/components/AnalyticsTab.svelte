@@ -237,6 +237,7 @@
           .filter((m) => m.estimatedCost > 0)
           .sort((a, b) => b.estimatedCost - a.estimatedCost)
           .map((m, i) => ({
+            key: keyOf(m),
             name: m.displayName,
             cost: m.estimatedCost,
             pct: (m.estimatedCost / totalCost) * 100,
@@ -249,6 +250,7 @@
   type HistDay = {
     label: string;
     dateKey: string;
+    sortTs: number;
     durationSec: number;
     count: number;
     durPct: number;
@@ -273,6 +275,7 @@
       days.push({
         label: dayLabelFmt.format(new Date(runs[0].timestamp)),
         dateKey,
+        sortTs: runs[0].timestamp,
         durationSec: runs.reduce((s, r) => s + r.durationSec, 0),
         count: runs.length,
         durPct: 0,
@@ -280,7 +283,9 @@
         items: runs
       });
     }
-    days.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+    // Sort by a real timestamp, newest day first — `dateKey` is a `toDateString()` label
+    // ("Mon Jul 13 2026"), so localeCompare on it ordered days alphabetically, not chronologically.
+    days.sort((a, b) => b.sortTs - a.sortTs);
     const maxDur = Math.max(...days.map((d) => d.durationSec), 0);
     const maxCount = Math.max(...days.map((d) => d.count), 0);
     for (const d of days) {
@@ -658,12 +663,12 @@
       <div class="sw-card mb-sw-4">
         <p class="mb-sw-2 section-title">{t('analytics.costByModel')}</p>
         <div class="costbar">
-          {#each costSegs as s (s.name)}
+          {#each costSegs as s (s.key)}
             <div class="seg" style="width:{s.pct}%;background:{s.color}" title="{s.name}: {money(s.cost)} ({s.pct.toFixed(1)}%)"></div>
           {/each}
         </div>
         <div class="mt-sw-2 flex flex-wrap gap-x-sw-4 gap-y-1 text-sw-xs">
-          {#each costSegs as s (s.name)}
+          {#each costSegs as s (s.key)}
             <span class="flex items-center gap-1"><span class="legend-dot" style="background:{s.color}"></span><span class="truncate" style="max-width:160px" title={s.name}>{s.name}</span><span class="text-sw-text-muted">{s.pct.toFixed(0)}%</span></span>
           {/each}
         </div>

@@ -10,11 +10,16 @@ let inflight: Promise<MonitorInfo[]> | null = null;
 // would then spin with no backoff. Suppress retries for a short window after a failure.
 let coolUntil = 0;
 const FAIL_COOLDOWN_MS = 5000;
+// A single stable empty result for the no-data paths (cooldown / failure). Returning a FRESH `[]`
+// each call made a caller that assigns it to reactive state (TerminalPane's monitors-length effect)
+// re-run forever — a new reference reads as "changed" every tick. One shared constant is `===` to
+// itself, so the assignment settles instead of spinning. Treated as read-only; callers never mutate.
+const EMPTY: MonitorInfo[] = [];
 
 /** The monitor list, cached. Concurrent callers share one in-flight request. */
 export async function getMonitors(): Promise<MonitorInfo[]> {
   if (cache) return cache;
-  if (Date.now() < coolUntil) return []; // L14: in post-failure cooldown — don't hammer list_monitors
+  if (Date.now() < coolUntil) return EMPTY; // L14: in post-failure cooldown — don't hammer list_monitors
   if (!inflight) {
     inflight = listMonitors()
       .then((m) => {
@@ -23,7 +28,7 @@ export async function getMonitors(): Promise<MonitorInfo[]> {
       })
       .catch(() => {
         coolUntil = Date.now() + FAIL_COOLDOWN_MS; // transient failure → brief cooldown, then retry
-        return [] as MonitorInfo[];
+        return EMPTY;
       })
       .finally(() => {
         inflight = null;

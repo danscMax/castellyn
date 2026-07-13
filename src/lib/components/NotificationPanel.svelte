@@ -64,7 +64,7 @@
                 {#if item.detail}<div class="entry-detail">{item.detail}</div>{/if}
                 <div class="entry-time" title={new Date(item.timestamp).toLocaleString()}>{fmtRel(item.timestamp)}</div>
               </div>
-              <button class="entry-x" onclick={() => dismissFromHistory(item.timestamp)} aria-label={t('common.close')}>×</button>
+              <button class="entry-x" onclick={() => dismissFromHistory(item.id)} aria-label={t('common.close')}>×</button>
             </div>
           {/each}
         </div>

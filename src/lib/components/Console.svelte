@@ -39,8 +39,11 @@
   let showAll = $state(false);
   let filter = $state('');
   const windowed = $derived(showAll || log.length <= LOG_WINDOW ? log : log.slice(-LOG_WINDOW));
+  // Search the FULL buffer, not just the windowed tail — the comment above promises "kept for search"
+  // and a user filtering a 5000-line run expects every match, not only those in the last 500. A
+  // filtered result set is normally small, so rendering all matches is fine.
   const view = $derived(
-    filter ? windowed.filter((l) => l.toLowerCase().includes(filter.toLowerCase())) : windowed
+    filter ? log.filter((l) => l.toLowerCase().includes(filter.toLowerCase())) : windowed
   );
   const hiddenCount = $derived(showAll ? 0 : Math.max(0, log.length - LOG_WINDOW));
 

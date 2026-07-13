@@ -1521,7 +1521,13 @@
       // runStack resolves when the PS script finishes (backend awaits pump_and_wait); clear the
       // stack-busy state then — decoupled from the global run-done handler.
       runStack(action, only)
-        .catch(onSpawnErr)
+        // The stack has its OWN busy lock (stackRunning, cleared in .finally). Don't reuse onSpawnErr:
+        // it clears the GLOBAL maintenance `running`, which would wrongly unblock a concurrent
+        // maintenance op mid-run. Just surface the error (toast + reveal the console).
+        .catch((e) => {
+          toastErr(String(e));
+          consoleReveal++;
+        })
         .finally(() => {
           stackRunning = null;
         });

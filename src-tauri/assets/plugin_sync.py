@@ -74,7 +74,10 @@ def reconcile(profiles=None, home=HOME):
             ep[n] = True
         for m in added_m:
             mk[m] = markets[m]
-        tmp = fp + ".tmp"
+        # pid-unique temp name: two SessionStart hooks firing at once (parallel profile launch) must
+        # not both write the same `<file>.tmp` and os.replace over each other, which could corrupt
+        # settings.json. Mirrors the sibling hooks (castellyn_status.py / _opencode_plugin.js).
+        tmp = fp + f".{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
         os.replace(tmp, fp)

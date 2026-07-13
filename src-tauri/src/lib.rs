@@ -1052,7 +1052,7 @@ async fn pump_and_wait(
             id.clone(),
             log_event,
             "out",
-            BufReader::new(stdout).lines(),
+            BufReader::new(stdout),
         )));
     }
     if let Some(stderr) = child.stderr.take() {
@@ -1061,7 +1061,7 @@ async fn pump_and_wait(
             id.clone(),
             log_event,
             "err",
-            BufReader::new(stderr).lines(),
+            BufReader::new(stderr),
         )));
     }
     // Backstop (V-14): a wedged script (infinite loop, a network call with no timeout of its own,
@@ -1130,27 +1130,31 @@ fn flush_batch(
 /// each stream's lines in FIFO order and never interleaves stdout/stderr within an event. Cross-stream
 /// merge into one arrival-ordered event would need an mpsc/select! path (tokio `sync` isn't enabled);
 /// separate OS pipes carry no cross-pipe ordering guarantee anyway, so per-stream is the honest unit.
-/// `Lines::next_line` is cancellation-safe (its partial-line buffer lives in `Lines`, not the future),
-/// so wrapping it in `timeout_at` cannot drop a line.
+/// `Split::next_segment` is cancellation-safe (its partial buffer lives in `Split`, not the future),
+/// so wrapping it in `timeout_at` cannot drop a line. Splitting on the raw byte `\n` (rather than
+/// `Lines`, which validates UTF-8 per line) is deliberate: a single non-UTF-8 byte — a `cmd /c` tool
+/// printing CP866 on a Russian Windows — made `next_line` return Err, which the loop treated as EOF
+/// and silently truncated the rest of the run's output. Now each segment is decoded leniently.
 async fn pump_stream<R>(
     app: AppHandle,
     id: String,
     log_event: &'static str,
     stream: &'static str,
-    mut lines: tokio::io::Lines<R>,
+    reader: R,
 ) where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
 {
     const FLUSH_MS: u64 = 30;
     const MAX_BATCH: usize = 64;
+    let mut segments = reader.split(b'\n');
     let mut batch: Vec<String> = Vec::new();
     // Deadline for the current (non-empty) batch: flush FLUSH_MS after its FIRST line, bounding
     // console latency regardless of how steadily lines arrive.
     let mut deadline: Option<tokio::time::Instant> = None;
     loop {
         let read = match deadline {
-            None => lines.next_line().await,
-            Some(dl) => match tokio::time::timeout_at(dl, lines.next_line()).await {
+            None => segments.next_segment().await,
+            Some(dl) => match tokio::time::timeout_at(dl, segments.next_segment()).await {
                 Ok(r) => r,
                 Err(_) => {
                     flush_batch(&app, log_event, &id, stream, &mut batch);
@@ -1160,7 +1164,13 @@ async fn pump_stream<R>(
             },
         };
         match read {
-            Ok(Some(line)) => {
+            Ok(Some(seg)) => {
+                // Decode leniently (bad bytes -> U+FFFD) so one non-UTF-8 line can't truncate the
+                // stream; strip the trailing CR so CRLF output doesn't leave a stray '\r' per line.
+                let mut line = String::from_utf8_lossy(&seg).into_owned();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
                 batch.push(line);
                 if deadline.is_none() {
                     deadline = Some(
@@ -3220,14 +3230,22 @@ fn listening_pids() -> std::collections::HashMap<u16, u32> {
     };
     for line in String::from_utf8_lossy(&o.stdout).lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
-        // "TCP  0.0.0.0:13001  0.0.0.0:0  LISTENING  1234"
-        if f.len() >= 5 && f[0].eq_ignore_ascii_case("TCP") && f[3].eq_ignore_ascii_case("LISTENING") {
-            if let (Some(port), Ok(pid)) = (
-                f[1].rsplit(':').next().and_then(|p| p.parse::<u16>().ok()),
-                f[4].parse::<u32>(),
-            ) {
-                out.entry(port).or_insert(pid);
-            }
+        // "TCP  0.0.0.0:13001  0.0.0.0:0  LISTENING  1234". The STATE column (f[3]) is LOCALIZED
+        // (e.g. "ПРОСЛУШИВАНИЕ" on a Russian Windows), so a literal "LISTENING" match found nothing
+        // and the stack's fallback stop couldn't locate the pid. Match the locale-independent
+        // signature a listener always has instead — a wildcard foreign address — exactly like
+        // listeners_on_port. pid is the last column.
+        if f.len() < 5 || !f[0].eq_ignore_ascii_case("TCP") {
+            continue;
+        }
+        if f[2] != "0.0.0.0:0" && f[2] != "[::]:0" {
+            continue;
+        }
+        if let (Some(port), Ok(pid)) = (
+            f[1].rsplit(':').next().and_then(|p| p.parse::<u16>().ok()),
+            f[f.len() - 1].parse::<u32>(),
+        ) {
+            out.entry(port).or_insert(pid);
         }
     }
     out
@@ -4388,13 +4406,19 @@ async fn run_engine(
         )
         .await;
     }
-    // Fallback: kill whatever listens on the engine's port.
-    let pids = listeners_on_port(cfg.port);
-    if pids.is_empty() {
-        return Ok(0); // nobody listening — already stopped
+    // Fallback: kill whatever WE spawned on the engine's port. Filter the listeners through the same
+    // ownership guard native_stack_stop uses (image name node/python/cmd), so a foreign process that
+    // merely happens to hold the port is never force-killed; `/T` takes the npm->node child tree, not
+    // just the top pid.
+    let ours: Vec<u32> = listeners_on_port(cfg.port)
+        .into_iter()
+        .filter(|&pid| pid_image_name(pid).map(|n| is_ours_process(&n)).unwrap_or(false))
+        .collect();
+    if ours.is_empty() {
+        return Ok(0); // nobody of ours listening — already stopped
     }
-    let mut args: Vec<String> = vec!["/F".into()];
-    for pid in pids {
+    let mut args: Vec<String> = vec!["/F".into(), "/T".into()];
+    for pid in ours {
         args.push("/PID".into());
         args.push(pid.to_string());
     }
@@ -9224,7 +9248,17 @@ fn cmd_argv_safe(argv: &[String]) -> bool {
 /// live 2026-07-02 (upstream #3441 is closed): servers registered this way load in a session
 /// and their tools resolve via Codex's tool search. Returns the count added.
 #[tauri::command]
-fn run_codex_mcp() -> Result<serde_json::Value, String> {
+async fn run_codex_mcp() -> Result<serde_json::Value, String> {
+    // Blocking work — a std Mutex + N `cmd /C codex mcp add/remove` subprocesses + config IO — so run
+    // it off the async runtime; a synchronous command spawning subprocesses in a loop stalled the UI.
+    tokio::task::spawn_blocking(run_codex_mcp_blocking)
+        .await
+        .map_err(|e| format!("codex mcp task panicked: {e}"))?
+}
+
+/// The blocking body of `run_codex_mcp`. Kept a sync fn so `DEPLOY_CFG_LOCK` (a std Mutex) is never
+/// held across an `.await`.
+fn run_codex_mcp_blocking() -> Result<serde_json::Value, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // L4 (config.json ledger + config.toml)
     use std::os::windows::process::CommandExt;
     let home = std::env::var("USERPROFILE")
@@ -10321,7 +10355,7 @@ async fn run_plugin(
         {
             return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
         }
-        return spawn_streamed_prog(
+        let rc = spawn_streamed_prog(
             app,
             state,
             "plugin-mgr".to_string(),
@@ -10336,6 +10370,8 @@ async fn run_plugin(
             None,
         )
         .await;
+        invalidate_plugins_cache(); // the installed set changed — next list_plugins must re-read
+        return rc;
     }
     if !matches!(action.as_str(), "enable" | "disable" | "update") {
         return Err(trv(
@@ -10352,10 +10388,12 @@ async fn run_plugin(
     {
         return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
     }
-    run_native_streamed(app, state, stream_id::PLUGIN_MGR.to_string(), move |out, err| {
+    let rc = run_native_streamed(app, state, stream_id::PLUGIN_MGR.to_string(), move |out, err| {
         manage_plugin_native(&action, &id, out, err)
     })
-    .await
+    .await;
+    invalidate_plugins_cache(); // the enabled/scope set changed — next list_plugins must re-read
+    rc
 }
 
 /// Ф3: bump an OWN (directory-source) marketplace plugin's version via the vetted
@@ -13539,7 +13577,16 @@ fn launch_profile(name: String, mode: String) -> Result<(), String> {
     let lean = launch_mode == "lean";
     // Lean mode → append the lean CLI flags (--bare/--safe-mode + selected MCP).
     let claude_cmd = if lean {
-        format!("claude {}", lean_flags(&name).join(" "))
+        // `claude_cmd` is handed to `cmd /k` as one string and re-tokenized there, so quote any
+        // path-bearing flag value that contains a space — an unquoted --mcp-config / --add-dir path
+        // under e.g. `C:\Users\John Doe\...` would otherwise split into two args. Windows paths can't
+        // contain a literal `"`, so simple double-quoting is safe.
+        let flags = lean_flags(&name)
+            .into_iter()
+            .map(|f| if f.contains(' ') { format!("\"{f}\"") } else { f })
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("claude {flags}")
     } else {
         "claude".to_string()
     };
@@ -14687,7 +14734,13 @@ fn open_in_editor(app: AppHandle, path: String, line: Option<u32>) -> Result<(),
         Some(l) => format!("{canon_str}:{l}"),
         None => canon_str.clone(),
     };
-    if std::process::Command::new("code")
+    // `code` on Windows is usually a `code.cmd` shim, which spawning the bare name `code` won't
+    // resolve (only a `code.exe` is found on PATH). Resolve the real launcher PATHEXT-aware so
+    // installs that expose only code.cmd still get the --goto line jump instead of falling back to
+    // the default app. The target is a canonicalized path (metacharacters already rejected above),
+    // so passing it to the .cmd shim is safe.
+    let editor = exe_on_path("code").unwrap_or_else(|| "code".into());
+    if std::process::Command::new(&editor)
         .args(["--goto", &target])
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()

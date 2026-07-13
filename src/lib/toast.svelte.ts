@@ -134,7 +134,10 @@ export function clearHistory(): void {
   saveHistory();
 }
 
-export function dismissFromHistory(timestamp: number): void {
-  toastStore.history.items = toastStore.history.items.filter((x) => x.timestamp !== timestamp);
+export function dismissFromHistory(id: number): void {
+  // Filter by the unique id (renumberHistory keeps them unique + newest-first), NOT the timestamp:
+  // dismissAll() pushes a burst of items whose Date.now() stamps collide within a millisecond, so a
+  // timestamp filter would drop several entries on a single ×-click.
+  toastStore.history.items = toastStore.history.items.filter((x) => x.id !== id);
   saveHistory();
 }

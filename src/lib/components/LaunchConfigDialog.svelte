@@ -33,8 +33,12 @@
   const tokenAuth = $derived(profile?.tokenAuth ?? false);
 
   $effect(() => {
+    if (!open) {
+      seeded = ''; // reset on close so reopening the SAME profile after Cancel reseeds
+      return;
+    }
     const key = `${open}:${profile?.name ?? ''}`;
-    if (open && profile && key !== seeded) {
+    if (profile && key !== seeded) {
       seeded = key;
       lean = profile.mode === 'lean';
       claudeMd = profile.claudeMd;

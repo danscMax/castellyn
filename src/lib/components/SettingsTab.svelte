@@ -73,6 +73,8 @@
       [t('settings.language'), t('settings.languageDesc')],
       [t('settings.scriptsRoot'), t('settings.scriptsRootDesc')],
       [t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection')],
+      [t('settings.monitorsSection'), t('settings.limitsMonitor'), t('settings.stackHealthMonitor'), t('settings.updateCheckOnStart')],
+      [t('settings.sessionsSection'), t('sessions.statusSound'), t('sessions.statusToast'), t('sessions.limitMode')],
       [t('settings.timeouts'), t('settings.timeoutsDesc')],
       [t('settings.backupSection'), t('settings.exportConfig'), t('settings.importConfig')],
       [t('settings.about'), t('settings.version'), t('settings.scripts'), t('settings.config'), t('settings.checkUpdates'), t('settings.openScriptsFolder'), t('settings.openConfigFile'), t('settings.openStackFile'), t('settings.openBackupFolder')]

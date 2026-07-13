@@ -40,8 +40,12 @@
   let seeded = '';
 
   $effect(() => {
+    if (!open) {
+      seeded = ''; // reset on close so reopening the SAME provider after Cancel reseeds from props
+      return;
+    }
     const key = `${open}:${profileName}:${current?.baseUrl ?? ''}`;
-    if (open && key !== seeded) {
+    if (key !== seeded) {
       baseUrl = current?.baseUrl ?? '';
       model = current?.model ?? '';
       smallModel = current?.smallModel ?? '';

@@ -680,7 +680,11 @@ function Remove-OldBackups {
 function Confirm-Step {
     param([string]$Question, [switch]$Yes)
     if ($Yes) { return $true }
-    $a = (Read-Host "    $Question [y/N]").Trim()
+    # Coerce to a string BEFORE Trim: at EOF (an unattended run with no console) Read-Host returns
+    # $null, and $null.Trim() throws under ErrorActionPreference='Stop', aborting the whole run before
+    # the status is written. "$(...)" turns $null into '' → returns $false, a safe 'no'. Covers every
+    # call site (incl. the MERGED-PR delete path reachable unattended without -Yes).
+    $a = "$(Read-Host "    $Question [y/N]")".Trim()
     return ($a -match '^(y|yes|д|да)$')
 }
 
@@ -1086,6 +1090,12 @@ function Invoke-ForkSync {
                         $fresh | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $acts -Force
                         $i = [array]::IndexOf($managed, $rep)
                         if ($i -ge 0) { $managed[$i] = $fresh } else { $rep | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $acts -Force }
+                        # The JSON envelope is written from $reports (repos = $reports.ToArray()), and
+                        # $managed only holds references INTO it — swapping $managed[$i] doesn't replace
+                        # the $reports slot, so without this the written report keeps the pre-action
+                        # (stale) snapshot for a repo that was just synced.
+                        $ri = $reports.IndexOf($rep)
+                        if ($ri -ge 0) { $reports[$ri] = $fresh }
                     } else {
                         $rep | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $acts -Force
                     }

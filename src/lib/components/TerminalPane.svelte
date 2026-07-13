@@ -413,6 +413,15 @@
       term.writeln(`\r\n\x1b[31m${t('sessions.spawnError', { e: String(e) })}\x1b[0m`);
       return;
     }
+    // L13: the pane may have been closed (onDestroy) while the spawn/attach was in flight. onDestroy
+    // ran when `id` was still null, so it couldn't tear this session down — do it here, or the live
+    // PTY leaks as an orphan. Mirror onDestroy: detach a mirror, kill a session we spawned.
+    if (destroyed) {
+      if (attachId) sessionDetach(id, myToken);
+      else void sessionKill(id);
+      id = null;
+      return;
+    }
     onIdChange?.(paneKey, id);
     // L13: the pane can be closed (onDestroy) during the await below; onDestroy already drained
     // unlisteners, so a naive push would leak this listener — it'd later fire into a disposed term

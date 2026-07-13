@@ -33,8 +33,12 @@
   let seeded = '';
 
   $effect(() => {
+    if (!open) {
+      seeded = ''; // reset on close so reopening the SAME item after Cancel reseeds from props
+      return;
+    }
     const key = `${open}:${current?.id ?? ''}`;
-    if (open && key !== seeded) {
+    if (key !== seeded) {
       name = current?.name ?? '';
       baseUrl = current?.baseUrl ?? '';
       protocol = current?.protocol ?? 'openai';
