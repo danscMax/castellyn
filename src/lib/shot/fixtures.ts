@@ -250,35 +250,32 @@ const handlers: Record<string, (args: any) => any> = {
       plugins,
       mcp
     });
+    // Same profiles as read_profiles (B3: one merged table — the row expand edits this config), each
+    // row demonstrating a different matrix feature (proxy / bound provider / missing MCP / extra MCP).
     return [
-      mk('ccmy', 'Cyan', 'Personal'),
-      mk('cc1', 'Green', 'Med1', '', '', allLinked, mkPlugins('on', 'on', 'unset', 'on')),
-      mk('cc2', 'Green', 'Med2'),
-      // cc3: extra (non-canon) MCP server deployed + a socks5 proxy.
-      mk('cc3', 'Yellow', '3', '', 'socks5://127.0.0.1:1080', allLinked, mkPlugins('on', 'on', 'on', 'on'), {
+      mk('main', 'Blue', 'Primary daily driver'),
+      // work: a socks5 proxy + one plugin left to inherit (unset).
+      mk('work', 'Green', 'Client work — separate login', '', 'socks5://127.0.0.1:1080', allLinked, mkPlugins('on', 'on', 'unset', 'on')),
+      // research: bound to the local ccr engine + one canon MCP server not yet deployed + a plugin off.
+      mk('research', 'Magenta', 'Experiments & long-context', 'http://127.0.0.1:3456', '', allLinked, mkPlugins('on', 'off', 'on', 'on'), {
         canon: CANON,
-        deployed: CANON,
-        extras: ['filesystem']
+        deployed: CANON.slice(0, 4),
+        extras: []
       }),
-      mk('ccfree', 'Magenta', 'Free tier', 'https://api.deepseek.com', '', [
+      // opus-max: an extra (non-canon) MCP server + a shared folder holding real data instead of a link.
+      mk('opus-max', 'Yellow', 'Opus 4.8 1M context', '', '', [
         { name: 'agents', desired: true, actual: 'linked' },
         { name: 'commands', desired: true, actual: 'linked' },
         { name: 'hooks', desired: true, actual: 'linked' },
         { name: 'plugins', desired: true, actual: 'real' }, // holds real data instead of a link
         { name: 'skills', desired: true, actual: 'linked' },
-        { name: 'projects', desired: false, actual: 'missing' },
-        { name: 'history.jsonl', desired: false, actual: 'missing' }
-      ], mkPlugins('on', 'off', 'on', 'unset')),
-      mk('cc4', 'Blue', 'Med4'),
-      mk('cc5', 'DarkGreen', 'Med5'),
-      mk('cc6', 'DarkCyan', 'Med6'),
-      // cctest: two canon MCP servers not yet deployed (missing).
-      mk('cctest', 'Gray', 'Throwaway', '', '', allLinked, mkPlugins('on', 'on', 'on', 'on'), {
+        { name: 'projects', desired: true, actual: 'linked' },
+        { name: 'history.jsonl', desired: true, actual: 'linked' }
+      ], mkPlugins('on', 'on', 'on', 'off'), {
         canon: CANON,
-        deployed: CANON.slice(0, 3),
-        extras: []
-      }),
-      mk('research', 'DarkMagenta', 'Long-context', 'http://127.0.0.1:3456')
+        deployed: CANON,
+        extras: ['filesystem']
+      })
     ];
   },
   set_profile_proxy: () => null,

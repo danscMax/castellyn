@@ -26,10 +26,11 @@
   import ProviderEditDialog from './ProviderEditDialog.svelte';
   import ModalShell from './ModalShell.svelte';
   import DropdownMenu from './DropdownMenu.svelte';
-  import Toggle from './Toggle.svelte';
   import ProfileUsageBadge from './ProfileUsageBadge.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
-  import ProfilesMatrix from './ProfilesMatrix.svelte';
+  import MatrixRowEditor from './MatrixRowEditor.svelte';
+  import MatrixControls from './MatrixControls.svelte';
+  import { MatrixState } from '$lib/matrixState.svelte';
   import type { MatrixApply } from '$lib/ipc';
 
   let {
@@ -87,6 +88,36 @@
   const conflicts = $derived(data?.syncConflicts);
   const isAdmin = $derived(data?.isAdmin ?? false);
 
+  // B3: per-profile config (provider/proxy/folders/plugins/mcp) is edited inside each row's expand
+  // (MatrixRowEditor) with one shared controls bar (MatrixControls). A single MatrixState owns the
+  // accumulate → preview → apply model (moved verbatim from the old standalone ProfilesMatrix).
+  const mtx = new MatrixState();
+  $effect(() => {
+    mtx.engines = engines;
+    mtx.myProviders = myProviders;
+    mtx.running = running;
+    mtx.onApplyMatrix = onApplyMatrix;
+    mtx.onMcpDeployProfile = onMcpDeployProfile;
+    mtx.onMcpRemoveExtra = onMcpRemoveExtra;
+  });
+  // Load once when the tab first renders.
+  $effect(() => {
+    if (!mtx.loaded) mtx.load();
+  });
+  // An MCP deploy/remove elsewhere bumps mcpTick → re-read mcp facts without dropping the draft.
+  let lastMcpTick: number | null = null;
+  $effect(() => {
+    const tick = mcpTick;
+    if (!mtx.loaded) return;
+    if (lastMcpTick === null) {
+      lastMcpTick = tick;
+      return;
+    }
+    if (tick === lastMcpTick) return;
+    lastMcpTick = tick;
+    mtx.load(false);
+  });
+
   // Folder symlinks need admin. When elevated, repair inline (streamed); otherwise offer the
   // elevate dialog (one-off UAC repair or relaunch the whole app as admin).
   let elevOpen = $state(false);
@@ -100,14 +131,6 @@
     }
   }
 
-  // Configured (not just observed) linked folders, per profile.
-  const ALL_FOLDERS = ['agents', 'commands', 'hooks', 'plugins', 'skills', 'projects', 'history.jsonl'];
-  const cfgByName = $derived(new Map((config?.profiles ?? []).map((p) => [p.name, p])));
-  function configuredLinks(name: string): string[] {
-    const p = cfgByName.get(name);
-    if (p?.linkedFolders) return p.linkedFolders;
-    return config?.sharedFoldersDefault ?? ALL_FOLDERS;
-  }
 
   // Per-profile launch config (full vs lean) and provider.
   const launchByName = $derived(new Map((launchConfig?.profiles ?? []).map((p) => [p.name, p])));
@@ -222,24 +245,6 @@
     loadViewer();
   }
 
-  // Per-card shared-folder editor (set-links).
-  let linksFor = $state<string | null>(null);
-  let linkSel = $state<Record<string, boolean>>({});
-  function openLinks(name: string) {
-    if (linksFor === name) {
-      linksFor = null;
-      return;
-    }
-    const cur = configuredLinks(name);
-    linkSel = Object.fromEntries(ALL_FOLDERS.map((f) => [f, cur.includes(f)]));
-    linksFor = name;
-  }
-  function applyLinks(name: string) {
-    const enabled = ALL_FOLDERS.filter((f) => linkSel[f]);
-    onMgmt({ action: 'set-links', name, enabled });
-    linksFor = null;
-  }
-
   // Problems → recommendations. A profile is broken only when a shared folder is MISSING its link
   // (status null); real data ("none") or a present link is fine — so a clean repair clears it and a
   // folder kept as real data no longer nags. Shared with the sidebar badge (profileHasMissingLink)
@@ -251,25 +256,6 @@
 
   // Profile colour-name -> dot hex (shared source; falls back to neutral slate for unknown names).
   const dot = (c: string) => profileDotColor(c);
-
-  function linkLabel(kind: string | null) {
-    if (kind === 'Junction') return t('profiles.linkJunction');
-    if (kind === 'SymbolicLink') return t('profiles.linkSymlink');
-    if (kind === 'HardLink') return t('profiles.linkHardlink');
-    if (kind === 'none') return t('profiles.linkNotLink');
-    return t('profiles.linkNone');
-  }
-  function linkCls(kind: string | null) {
-    if (kind === 'Junction' || kind === 'SymbolicLink' || kind === 'HardLink') return 'badge-ok';
-    if (kind === 'none') return 'badge-warn';
-    return 'badge-err';
-  }
-  function linkTip(folder: string, kind: string | null) {
-    if (kind === 'Junction' || kind === 'SymbolicLink' || kind === 'HardLink')
-      return t('profiles.linkTipOk', { folder, kind: linkLabel(kind) });
-    if (kind === 'none') return t('profiles.linkTipNone', { folder });
-    return t('profiles.linkTipMissing', { folder });
-  }
 
   // Overflow menu items for a profile card.
   function menuItems(p: (typeof profiles)[number]) {
@@ -606,41 +592,7 @@
       {/snippet}
 
       {#snippet expand(p)}
-        {@const links = Object.entries(p.sharedLinks) as [string, string | null][]}
-        <div class="flex flex-col gap-sw-2">
-          <div class="flex items-center justify-between gap-sw-2">
-            <span class="text-sw-xs font-medium text-sw-text-secondary" title={t('profiles.sharedFoldersTip')}>{t('profiles.sharedFolders')}</span>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => openLinks(p.name)}
-              title={t('profiles.menuSharedFoldersTip')}>{linksFor === p.name ? t('common.cancel') : t('profiles.menuSharedFolders')}</button>
-          </div>
-          {#if linksFor === p.name}
-            <div class="rounded-sw-md border border-sw-border p-sw-2">
-              <div class="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                {#each ALL_FOLDERS as f (f)}
-                  <label class="flex items-center gap-sw-2 text-sw-xs">
-                    <Toggle bind:checked={linkSel[f]} disabled={busy} title={f} />
-                    <span class="font-mono">{f}</span>
-                  </label>
-                {/each}
-              </div>
-              <div class="mt-sw-2 flex gap-sw-2">
-                <button class="sw-btn text-sw-xs" disabled={busy} onclick={() => applyLinks(p.name)}
-                  title={t('profiles.applyLinksTip')}>{t('common.apply')}</button>
-                <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (linksFor = null)}
-                  title={t('profiles.linksCancelTip')}>{t('common.cancel')}</button>
-              </div>
-            </div>
-          {:else}
-            <dl class="grid grid-cols-2 gap-x-sw-4 gap-y-1 text-sw-xs sm:grid-cols-3">
-              {#each links as [folder, kind] (folder)}
-                <div class="flex items-center justify-between gap-sw-2">
-                  <dt class="truncate text-sw-text-muted">{folder}</dt>
-                  <dd><span class="badge {linkCls(kind)}" title={linkTip(folder, kind)}>{linkLabel(kind)}</span></dd>
-                </div>
-              {/each}
-            </dl>
-          {/if}
-        </div>
+        <MatrixRowEditor st={mtx} name={p.name} />
       {/snippet}
     </DataTable>
   {:else}
@@ -648,7 +600,7 @@
   {/if}
 
   {#if profiles.length}
-    <ProfilesMatrix engines={engines} myProviders={myProviders} {running} {onApplyMatrix} {onMcpDeployProfile} {onMcpRemoveExtra} {mcpTick} />
+    <MatrixControls st={mtx} />
   {/if}
 </div>
 
