@@ -1,7 +1,8 @@
 <script lang="ts">
   // OSS first-run: shown at the top of every script-backed tab when the maintenance scripts are
   // absent under SCRIPTS_ROOT. Explains that this tab drives the owner's PowerShell tooling and
-  // how to point at it (Settings → SCRIPTS_ROOT). Dismissable for the session.
+  // how to point at it (Settings → SCRIPTS_ROOT). Dismissable per tab (local $state,
+  // resets on remount) — not a single session-wide dismissal.
   import { t } from '$lib/i18n';
   import { X } from '@lucide/svelte';
 

@@ -28,7 +28,6 @@
   let logEl: HTMLDivElement | undefined = $state();
   let height = $state(220);
   let collapsed = $state(true);
-  let resizing = $state(false);
   let copied = $state(false);
 
   // Render only the tail by default (item V-5): the full buffer is capped at 5000 lines, but
@@ -70,6 +69,13 @@
     hasNewLines = false;
   }
 
+  // Re-engage windowing for each new run: Clear must undo a prior "Show all" opt-in, otherwise
+  // one full-render click disables windowing for the rest of the session.
+  function handleClear() {
+    showAll = false;
+    onClear();
+  }
+
   async function copyLog() {
     if (await copyText(log.join('\n'))) {
       copied = true;
@@ -81,12 +87,16 @@
   const CKEY = 'cmh-console-collapsed';
 
   onMount(() => {
-    const h = Number(localStorage.getItem(HKEY));
-    if (h > 0) height = Math.min(Math.max(h, 120), Math.round(window.innerHeight * 0.6));
-    const c = localStorage.getItem(CKEY);
-    // Default collapsed (it's a detail panel, not the main view); the user's explicit choice is
-    // remembered in CKEY. A toast's "Open log" can still reveal it on demand via revealSignal.
-    collapsed = c != null ? c === '1' : true;
+    try {
+      const h = Number(localStorage.getItem(HKEY));
+      if (h > 0) height = Math.min(Math.max(h, 120), Math.round(window.innerHeight * 0.6));
+      const c = localStorage.getItem(CKEY);
+      // Default collapsed (it's a detail panel, not the main view); the user's explicit choice is
+      // remembered in CKEY. A toast's "Open log" can still reveal it on demand via revealSignal.
+      collapsed = c != null ? c === '1' : true;
+    } catch {
+      /* ignore */
+    }
   });
 
   // A run does NOT force the console open — the collapsed/expanded choice is the user's
@@ -116,11 +126,14 @@
 
   function toggle() {
     collapsed = !collapsed;
-    localStorage.setItem(CKEY, collapsed ? '1' : '0');
+    try {
+      localStorage.setItem(CKEY, collapsed ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
   }
 
   function onResizeStart(e: PointerEvent) {
-    resizing = true;
     const startY = e.clientY;
     const startH = height;
     const target = e.currentTarget as HTMLElement;
@@ -130,11 +143,14 @@
       height = Math.min(Math.max(startH + (startY - ev.clientY), 120), max);
     };
     const up = (ev: PointerEvent) => {
-      resizing = false;
       target.releasePointerCapture(ev.pointerId);
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
-      localStorage.setItem(HKEY, String(height));
+      try {
+        localStorage.setItem(HKEY, String(height));
+      } catch {
+        /* ignore */
+      }
     };
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', up);
@@ -190,7 +206,7 @@
       </button>
       <button
         class="sw-btn sw-btn-ghost mini"
-        onclick={onClear}
+        onclick={handleClear}
         disabled={!!running}
         title={t('console.clearHint')}
       >

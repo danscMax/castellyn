@@ -141,13 +141,23 @@ export function getLocaleName(loc: Locale): string {
   return names[loc];
 }
 
+// One Intl.PluralRules instance per locale, built once and reused (they're
+// stateless and locale-only, so constructing a fresh one per plural() call
+// is wasted work).
+const prCache = new Map<Locale, Intl.PluralRules>();
+
 /**
  * Locale-aware plural form selection. Picks one/few/many via Intl.PluralRules
  * for the current locale (ru: one|few|many|other, en: one|other, zh: other).
  * `other` and `many` both resolve to the `many` argument.
  */
 export function plural(n: number, one: string, few: string, many: string): string {
-  const cat = new Intl.PluralRules(_locale).select(n);
+  let pr = prCache.get(_locale);
+  if (!pr) {
+    pr = new Intl.PluralRules(_locale);
+    prCache.set(_locale, pr);
+  }
+  const cat = pr.select(n);
   if (cat === 'one') return one;
   if (cat === 'few') return few;
   return many;

@@ -69,6 +69,11 @@
     const hit = cache.get(h);
     if (!force && hit && Date.now() - hit.ts < CACHE_TTL) {
       data = hit.data;
+      // Invalidate any outstanding fetch for a stale token/range: without this, an in-flight
+      // fetch for the previous range would still see loaded === its own token and clobber
+      // this cache-hit's data once it resolves.
+      loaded = '';
+      loading = false;
       return;
     }
     loading = true;
@@ -452,7 +457,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  {#each day.items as run (run.timestamp)}
+                  {#each day.items as run (run.timestamp + '/' + run.component)}
                     <tr class="border-b border-sw-border last:border-0">
                       <td class="px-sw-2 py-sw-1 font-medium">{run.component}</td>
                       <td class="px-sw-2 py-sw-1 text-right tabular-nums">{run.durationSec.toFixed(1)} {t('analytics.unitS')}</td>

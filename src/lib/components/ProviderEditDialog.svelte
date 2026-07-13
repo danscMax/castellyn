@@ -166,7 +166,8 @@
         <p class="mb-sw-2 text-sw-xs text-sw-text-muted">{modelsMsg}</p>
       {/if}
       <datalist id="engine-models">
-        {#each models as m (m)}<option value={m}></option>{/each}
+        <!-- No key: duplicate model ids in the fetched list would throw each_key_duplicate. -->
+        {#each models as m}<option value={m}></option>{/each}
       </datalist>
       <div class="two">
         <label class="dlg-fld">

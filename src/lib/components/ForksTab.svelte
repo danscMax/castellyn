@@ -3,6 +3,7 @@
   import { forkMode, t, plural, pRepo, pConflict } from '$lib/i18n';
   import { relTime, formatAbsTime } from '$lib/relativeTime';
   import { statusTextClass } from '$lib/statusColor';
+  import { pushToast } from '$lib/toast.svelte';
   import ForkRepoCard from './ForkRepoCard.svelte';
   import EmptyState from './EmptyState.svelte';
   import NoScriptsBanner from './NoScriptsBanner.svelte';
@@ -72,8 +73,12 @@
     cfgSaving = true;
     try {
       await writeForkConfig(forkCfg);
-      cfgDirty = false;
-      onAction('check'); // re-scan with the new config so the cards reflect it
+      cfgDirty = false; // saved: keep cfgDirty=true on failure below so the user can retry
+      // Don't kick off a whole-stack "check" while a fork run is already in flight — it would
+      // contend on the same repos' git + the shared status file.
+      if (!anyRunning && !anyForkRunning) onAction('check'); // re-scan with the new config so the cards reflect it
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
     } finally {
       cfgSaving = false;
     }
@@ -116,6 +121,10 @@
   let statusFilter = $state<
     'conflict' | 'needHands' | 'merged' | 'open' | null
   >(null);
+  // NOTE: these predicates classify REPOS (used for the card filter), while the KPI tile numbers
+  // below come from the backend `summary` counts, which count BRANCH occurrences across all repos
+  // (e.g. a repo with 2 conflicting branches adds 2 to summary.conflict but is 1 repo in the
+  // filter). The tile count and the number of cards a click reveals can legitimately differ.
   const repoHasConflict = (r: import('$lib/ipc').ForkRepo) =>
     (r.branches ?? []).some((b) => b.outcome === 'conflict' || confFiles(b.conflictFiles).length > 0);
   const repoNeedsHands = (r: import('$lib/ipc').ForkRepo) =>
@@ -324,7 +333,7 @@
 
   {#if summary}
     <div class="sw-card mb-sw-4 flex flex-wrap items-center gap-sw-6">
-      {#each kpis as k (k.label)}
+      {#each kpis as k (k.filter)}
         <button class="min-w-[92px] cursor-pointer rounded-sw-md border text-center {statusFilter === k.filter || (k.filter === 'repos' && !statusFilter) ? 'border-sw-accent bg-sw-accent-glow' : 'border-transparent hover:border-sw-border'}"
           title={k.tip} onclick={() => clickKpi(k.filter)}>
           <div class="text-2xl font-semibold tabular-nums {k.cls}">{k.value}</div>

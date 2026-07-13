@@ -120,12 +120,15 @@
     }
   });
   function doBackup() {
+    // #110: clamp — an emptied/typed-out-of-range field must not reach the backend unvalidated.
+    const keep = Math.min(200, Math.max(1, Number(keepSnapshots) || 30));
+    keepSnapshots = keep;
     try {
-      localStorage.setItem('cmh-backup-keep', String(keepSnapshots));
+      localStorage.setItem('cmh-backup-keep', String(keep));
     } catch {
       /* ignore */
     }
-    onAction('backup', { keepSnapshots });
+    onAction('backup', { keepSnapshots: keep });
   }
 
   // "2026-06-12_100002" -> "2026-06-12 10:00:02" (snapshot-name format). Returns null if it

@@ -48,12 +48,20 @@
       .finally(() => (uiPrefs.loaded = true));
     let unlisten: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
-    appWin.onResized(syncMax).then((u) => (unlisten = u)).catch(() => {});
+    // L124: the unlisten registration is async — if the component unmounts before it resolves,
+    // assigning into `unlisten`/`unlistenFocus` after teardown would leak the listener. Guard with
+    // `dead` so a late resolution unregisters immediately instead of being stored.
+    let dead = false;
+    appWin
+      .onResized(syncMax)
+      .then((u) => (dead ? u() : (unlisten = u)))
+      .catch(() => {});
     appWin
       .onFocusChanged(({ payload }) => (winFocused = payload))
-      .then((u) => (unlistenFocus = u))
+      .then((u) => (dead ? u() : (unlistenFocus = u)))
       .catch(() => {});
     return () => {
+      dead = true;
       unlisten?.();
       unlistenFocus?.();
     };

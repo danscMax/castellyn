@@ -1,3 +1,5 @@
+import { localeTag } from './relativeTime';
+
 // Human-readable byte size. `units` is the comma-joined unit list from i18n (sync.byteUnits),
 // passed in so this stays pure and the caller reads it reactively via t().
 export function fmtBytes(n: number, units: string): string {
@@ -8,5 +10,7 @@ export function fmtBytes(n: number, units: string): string {
     v /= 1024;
     i++;
   }
-  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+  // Use the locale decimal separator (ru/zh use ','), matching relativeTime.ts's formatting.
+  const formatted = v.toLocaleString(localeTag(), { maximumFractionDigits: v < 10 && i > 0 ? 1 : 0 });
+  return `${formatted} ${u[i]}`;
 }

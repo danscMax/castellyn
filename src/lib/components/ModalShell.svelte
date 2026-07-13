@@ -78,7 +78,13 @@
     }
     if (e.key === 'Enter' && onEnter) {
       const a = document.activeElement;
-      if (a instanceof HTMLElement && ['BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName)) return;
+      if (a instanceof HTMLElement) {
+        // Buttons/links/selects run their own native Enter activation. A <textarea> needs
+        // Enter for newlines. A plain <input> should still submit — only exclude one wired
+        // to a <datalist>, where Enter accepts the suggestion instead of submitting.
+        if (['BUTTON', 'A', 'SELECT', 'TEXTAREA'].includes(a.tagName)) return;
+        if (a instanceof HTMLInputElement && a.list) return;
+      }
       onEnter();
       return;
     }

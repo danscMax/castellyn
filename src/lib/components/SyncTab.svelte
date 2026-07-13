@@ -36,7 +36,11 @@
   let showConflicts = $state(false);
   // Parent folder of a conflict file (both slash styles), for the "open folder" action.
   const parentDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '');
-  const baseName = (p: string) => p.slice(parentDir(p).length + 1);
+  // Guard: no separator means parentDir(p) === p, so don't slice past the end.
+  const baseName = (p: string) => {
+    const d = parentDir(p);
+    return d === p ? p : p.slice(d.length + 1);
+  };
 
   const busy = $derived(!!running);
 

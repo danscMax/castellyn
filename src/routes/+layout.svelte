@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { initTheme } from '$lib/theme';
-  import { initLocale } from '$lib/i18n';
+  import { initLocale, t } from '$lib/i18n';
   import WindowTitleBar from '$lib/components/WindowTitleBar.svelte';
   import { requestPalette } from '$lib/palette.svelte';
   // DetachedView pulls in xterm (~480K). Only detached windows ever render it, so import it
@@ -39,6 +39,9 @@
 {#if isDetached}
   {#await import('$lib/components/DetachedView.svelte') then { default: DetachedView }}
     <DetachedView />
+  {:catch e}
+    <!-- Stale asset hash after an in-place update: show an error instead of a blank window. -->
+    <div class="m-sw-6 sw-card status-bad">{t('page.load_error', { e: String(e) })}</div>
   {/await}
 {:else}
   <div class="flex h-screen flex-col overflow-hidden">

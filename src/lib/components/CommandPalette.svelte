@@ -13,6 +13,7 @@
   let query = $state('');
   let active = $state(0);
   let input: HTMLInputElement | undefined = $state();
+  let list: HTMLUListElement | undefined = $state();
 
   // Simple subsequence match + rank by earliest match position.
   function score(label: string, q: string): number {
@@ -51,6 +52,11 @@
     query;
     active = 0;
   });
+  // Keep the highlighted row visible when navigating with arrow keys past the fold.
+  $effect(() => {
+    active;
+    list?.querySelector('.row.active')?.scrollIntoView({ block: 'nearest' });
+  });
 
   function run(c: Command) {
     onClose();
@@ -84,7 +90,7 @@
         autocomplete="off"
         onkeydown={onKey}
       />
-      <ul class="list">
+      <ul class="list" bind:this={list}>
         {#each filtered as c, i (c.id)}
           <li>
             <button type="button" class="row" class:active={i === active} onmouseenter={() => (active = i)} onclick={() => run(c)}>

@@ -67,7 +67,9 @@
       active = Math.max(0, active - 1);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (active >= 0) choose(opts[active].value);
+      // Guard against opts having shrunk while the panel was open (active may be stale).
+      const o = opts[active];
+      if (o) choose(o.value);
     }
   }
   // Outside-press dismissal is handled by the `anchored` action (onOutside) — one shared impl.

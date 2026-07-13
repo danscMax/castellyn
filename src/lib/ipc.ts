@@ -456,7 +456,17 @@ export function sshTarget(h: SshHost): string {
 }
 // Parse a typed ssh target ("user@host -p 22 -i ~/.ssh/key") back into structured host fields.
 export function parseSshTarget(s: string): { host: string; user: string | null; port: number | null; keyPath: string | null } {
-  const toks = s.trim().split(/\s+/).filter(Boolean);
+  let rest = s.trim();
+  // sshTarget() always appends `-i "<keyPath>"` last and quotes it, so a spaced path survives only
+  // if we pull it from the raw string (not a whitespace split, which would truncate at the first
+  // space) and strip the surrounding quotes — keeping the two functions round-trip symmetric.
+  let keyPath: string | null = null;
+  const iMatch = rest.match(/\s-i\s+(.+)$/);
+  if (iMatch) {
+    keyPath = iMatch[1].trim().replace(/^"(.*)"$/, '$1');
+    rest = rest.slice(0, iMatch.index).trim();
+  }
+  const toks = rest.split(/\s+/).filter(Boolean);
   let host = toks[0] ?? '';
   let user: string | null = null;
   if (host.includes('@')) {
@@ -465,13 +475,10 @@ export function parseSshTarget(s: string): { host: string; user: string | null; 
     host = host.slice(at + 1);
   }
   let port: number | null = null;
-  let keyPath: string | null = null;
   for (let i = 1; i < toks.length; i++) {
     if (toks[i] === '-p' && toks[i + 1]) {
       const p = parseInt(toks[++i], 10);
       port = Number.isFinite(p) ? p : null;
-    } else if (toks[i] === '-i' && toks[i + 1]) {
-      keyPath = toks[++i];
     }
   }
   return { host, user, port, keyPath };
@@ -690,7 +697,7 @@ export const readProfileUsage = (profile: string) =>
 // Returns null when the file doesn't exist yet (fresh machine → migrate from localStorage).
 export const readSessionsPrefs = () => invoke<string | null>('read_sessions_prefs');
 export const writeSessionsPrefs = (json: string) => invoke<void>('write_sessions_prefs', { json });
-export const readProfileFile =(name: string, which: 'claude' | 'settings') =>
+export const readProfileFile = (name: string, which: 'claude' | 'settings') =>
   invoke<string>('read_profile_file', { name, which });
 // Multi-key rotation pool (e.g. several aerolink keys rotated on balance exhaustion).
 export const addProviderKey = (id: string, apiKey: string) =>

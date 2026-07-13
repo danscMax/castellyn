@@ -63,6 +63,7 @@ Rules:
   let prompt = $state('');
   let loading = $state(false); // full file (prompt) is being read
   let saving = $state(false);
+  let loadError = $state(false); // readAgent failed: block Save so an empty prompt can't overwrite the file
 
   const editing = $derived(!!origPath);
 
@@ -82,6 +83,7 @@ Rules:
     model = '';
     tools = '';
     prompt = '';
+    loadError = false;
   }
 
   function openCreate() {
@@ -127,13 +129,15 @@ Rules:
       tools = d.tools;
       prompt = d.prompt;
     } catch {
-      /* keep the row values; body stays empty */
+      // Body failed to load and stays empty: block Save (see canSave) so an existing
+      // agent file's prompt can't be silently overwritten with empty content.
+      loadError = true;
     } finally {
       loading = false;
     }
   }
 
-  const canSave = $derived(!!name.trim() && !saving && !loading);
+  const canSave = $derived(!!name.trim() && !saving && !loading && !loadError);
 
   async function save() {
     if (!canSave) return;
@@ -259,6 +263,7 @@ Rules:
     <span>{t('agents.fldPrompt')}</span>
     <textarea class="sw-input" rows="10" bind:value={prompt}
       placeholder={loading ? t('common.busy') : t('agents.fldPromptPh')} spellcheck="false"></textarea>
+    {#if loadError}<p class="text-sw-xs text-sw-danger">{t('common.error')}: {t('agents.fldPrompt')}</p>{/if}
   </label>
 
   <div class="dlg-row">

@@ -271,6 +271,10 @@
   let stackData = $state<StackService[] | null>(null);
   let opencodeData = $state<OpencodeStatus | null>(null);
   let providersLoaded = $state(false);
+  // L54: set synchronously (unlike the async-populated stackData/opencodeData) so the effect below
+  // fires each loader exactly once, instead of re-firing while the IPC is still in flight.
+  let stackLoaded = $state(false);
+  let opencodeLoaded = $state(false);
   let schedulesData = $state<SchedulesStatus | null>(null);
   let schedulesLoaded = $state(false);
   let pluginsData = $state<PluginInfo[] | null>(null);
@@ -499,6 +503,9 @@
       action();
       return;
     }
+    // L131: don't silently replace an already-open dialog — a promise-based confirm relies on
+    // onCancel firing to resolve, and overwriting `confirm` here would otherwise leak it forever.
+    if (confirm.open) confirm.onCancel?.();
     confirm = {
       open: true,
       title,
@@ -650,28 +657,21 @@
 
   // --- Profiles tab ---
   async function reloadProfiles() {
-    try {
-      profilesData = await readProfiles();
-    } catch {
-      profilesData = null;
-    }
-    try {
-      profilesConfig = await readProfilesConfig();
-    } catch {
-      profilesConfig = null;
-    }
-    try {
-      launchConfig = await readLaunchConfig();
-    } catch {
-      launchConfig = null;
-    }
-    try {
-      // `?? []` — a mocked/dev IPC can resolve null (e.g. the ?shot harness), and the tab
-      // renders `orphans.length` unguarded; null here blanked the whole Profiles tab.
-      orphansData = (await readOrphanProfiles()) ?? [];
-    } catch {
-      orphansData = [];
-    }
+    // L53: these four reads are independent — run them concurrently instead of sequentially (this
+    // is a hot path: every profiles run-done, Home load, Sync-tab open, matrix-apply completion).
+    // allSettled preserves the original per-call null-on-error fallback semantics.
+    const [p, c, l, o] = await Promise.allSettled([
+      readProfiles(),
+      readProfilesConfig(),
+      readLaunchConfig(),
+      readOrphanProfiles()
+    ]);
+    profilesData = p.status === 'fulfilled' ? p.value : null;
+    profilesConfig = c.status === 'fulfilled' ? c.value : null;
+    launchConfig = l.status === 'fulfilled' ? l.value : null;
+    // `?? []` — a mocked/dev IPC can resolve null (e.g. the ?shot harness), and the tab
+    // renders `orphans.length` unguarded; null here blanked the whole Profiles tab.
+    orphansData = o.status === 'fulfilled' ? (o.value ?? []) : [];
   }
 
   async function onSaveLaunch(
@@ -1344,6 +1344,16 @@
 
   // F23: Home quick actions / per-chip actions → the parent's existing handlers.
   function onHomeAction(id: string) {
+    // L30: bail before showing a spinner if the dispatched action would immediately no-op on the
+    // same lock it's gated by — otherwise a click while another run is in flight leaves a stuck
+    // "busy" chip for an action that never started.
+    if (
+      (id === 'check-all' || id === 'refresh-forks' || id === 'relink' || id === 'clean-conflicts' || id === 'repair-profiles') &&
+      running
+    )
+      return;
+    if (id === 'start-stack' && stackRunning) return;
+    if (id === 'refresh-forks' && Object.values(forkRuns).some((r) => r?.running)) return;
     // U8: show inline progress on the clicked chip and let the outcome toast report the result —
     // don't yank the user to another tab. The clear effect below drops it when the run finishes.
     homeBusyAction = id;
@@ -1499,8 +1509,14 @@
       setLoading(tab, true);
       reloadProviders().finally(() => setLoading(tab, false));
     }
-    if (active === 'providers' && !stackData) reloadStack();
-    if (active === 'providers' && !opencodeData) reloadOpencode();
+    if (active === 'providers' && !stackLoaded) {
+      stackLoaded = true;
+      reloadStack();
+    }
+    if (active === 'providers' && !opencodeLoaded) {
+      opencodeLoaded = true;
+      reloadOpencode();
+    }
   });
 
   // Start / stop / restart the whole LLM stack (start includes the paid GLM router). The backend
@@ -2191,8 +2207,11 @@
     { id: 'act:checkall', label: t('page.cmd_check_all'), run: () => runOrToast(() => startRun('all', 'check')) },
     { id: 'act:forks', label: t('page.cmd_refresh_forks'), run: () => runOrToast(() => startForks('check')) },
     { id: 'act:backup', label: t('page.cmd_backup_now'), run: () => runOrToast(() => startBackup('backup')) },
-    { id: 'act:stack_start', label: t('page.cmd_stack_start'), run: () => runOrToast(() => onStack('start')) },
-    { id: 'act:stack_stop', label: t('page.cmd_stack_stop'), run: () => runOrToast(() => onStack('stop')) },
+    // L31: onStack lives in its OWN lock domain (stackRunning), not the maintenance `running` lock
+    // that runOrToast gates on — routing through runOrToast would block Stop whenever a maintenance
+    // op is running and silently no-op start/stop against the wrong lock. Call onStack directly.
+    { id: 'act:stack_start', label: t('page.cmd_stack_start'), run: () => onStack('start') },
+    { id: 'act:stack_stop', label: t('page.cmd_stack_stop'), run: () => onStack('stop') },
     { id: 'act:log', label: t('page.cmd_open_log'), run: () => consoleReveal++ },
     // U9: the palette could start runs but not stop them; new-session was likewise unreachable.
     { id: 'act:cancel_all', label: t('page.cmd_cancel_all'), run: () => cancelAllNow() },

@@ -210,6 +210,9 @@
       const c = await importConfig(src);
       await writeConfig(c);
       loadConfigFields(c);
+      // L19: refresh the shortcuts map too — loadConfigFields only updates toggleHotkey, and the
+      // shortcuts input reads from this record, so without this Apply would revert the import.
+      shortcuts = { toggle_window: c.toggleHotkey ?? '' };
       await setToggleHotkey(c.toggleHotkey ?? null).catch(() => {}); // re-register imported hotkey (ignore a taken combo)
       paths = await appPaths(); // scriptsRoot may have changed → refresh the About "currently used" path
       flash(t('settings.configImported'));

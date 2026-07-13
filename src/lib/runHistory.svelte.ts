@@ -13,7 +13,9 @@ const MAX = 200;
 function load(): RunRecord[] {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as RunRecord[]) : [];
+    // Guard against a corrupted/non-array value (localStorage key collision, manual edit, etc.)
+    const v = raw ? JSON.parse(raw) : [];
+    return Array.isArray(v) ? (v as RunRecord[]) : [];
   } catch {
     return [];
   }

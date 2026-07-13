@@ -66,9 +66,15 @@ async function flush(): Promise<void> {
   }
 }
 
+// ponytail: flushNow() on pagehide/hidden fires an async IPC write that can't be awaited during
+// teardown, so a debounced edit can still be lost if the window closes mid-flush. Keeping the
+// window short (was 800ms) bounds that loss instead of building a synchronous-flush-on-background
+// path; upgrade to that if reports of lost prefs on close show up.
+const FLUSH_DEBOUNCE_MS = 250;
+
 function scheduleFlush(): void {
   if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = setTimeout(() => void flush(), 800);
+  flushTimer = setTimeout(() => void flush(), FLUSH_DEBOUNCE_MS);
 }
 
 function flushNow(): void {

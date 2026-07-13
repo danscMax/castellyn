@@ -142,7 +142,7 @@
   let newOpen = $state(false);
   let newBtnEl = $state<HTMLButtonElement | undefined>(undefined);
   // A workspace is a named set of session configs you can re-launch with one click.
-  type WsConfig = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string };
+  type WsConfig = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; space?: string; name?: string };
   let workspaces = $state<Record<string, WsConfig[]>>({});
   // Lifecycle (L12): once opened this tab stays MOUNTED — it's display-toggled, not unmounted, on tab
   // switches (see +page.svelte's `sessionsEverOpened` + `{#if}`), so onDestroy does NOT fire when you
@@ -306,21 +306,23 @@
   // derived from `Date.now() - spawnedAt[id]` on render.
   let spawnedAt = $state<Record<string, number>>({});
   onMount(() => {
-    let un: UnlistenFn | undefined;
-    listen<AgentStatusEvent>('agent-status', (e) => {
-      const { id, state } = e.payload;
-      if (e.payload.claudeSessionId) claudeSids = { ...claudeSids, [id]: e.payload.claudeSessionId };
-      if (e.payload.spawnedAt && !spawnedAt[id]) spawnedAt = { ...spawnedAt, [id]: e.payload.spawnedAt };
-      const prev = agentStates[id];
-      const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
-      const focused = paneKey != null && activeKey === paneKey && visible;
-      const next: AgentPaneState =
-        state === 'idle' && (prev === 'working' || prev === 'blocked') && !focused && e.payload.hookIdle === true
-          ? 'done'
-          : (state as AgentPaneState);
-      agentStates = { ...agentStates, [id]: next };
-    }).then((u) => (un = u));
-    return () => un?.();
+    // L118: route through track()/disposed (like the main onMount) so a pre-resolution unmount
+    // still unregisters this listener instead of leaking it.
+    track(
+      listen<AgentStatusEvent>('agent-status', (e) => {
+        const { id, state } = e.payload;
+        if (e.payload.claudeSessionId) claudeSids = { ...claudeSids, [id]: e.payload.claudeSessionId };
+        if (e.payload.spawnedAt && !spawnedAt[id]) spawnedAt = { ...spawnedAt, [id]: e.payload.spawnedAt };
+        const prev = agentStates[id];
+        const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
+        const focused = paneKey != null && activeKey === paneKey && visible;
+        const next: AgentPaneState =
+          state === 'idle' && (prev === 'working' || prev === 'blocked') && !focused && e.payload.hookIdle === true
+            ? 'done'
+            : (state as AgentPaneState);
+        agentStates = { ...agentStates, [id]: next };
+      })
+    );
   });
   // Looking at a pane acknowledges its "done".
   $effect(() => {
@@ -342,10 +344,12 @@
   // z5_12: last real user keystroke per pane key — auto-continue defers while the user is typing.
   const lastUserInputAt: Record<string, number> = {};
   onMount(() => {
-    let un: UnlistenFn | undefined;
-    listen<LimitsStatusEvent>('limits-status', (e) => {
-      limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
-    }).then((u) => (un = u));
+    // L118: track() instead of a local `un` var — see the agent-status listener above.
+    track(
+      listen<LimitsStatusEvent>('limits-status', (e) => {
+        limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
+      })
+    );
     // P3: self-scheduling tick — 12s while visible, 60s when the window is hidden. Auto-continue is
     // still valuable in the background (that's the whole point), so gate the CADENCE, not the feature:
     // a limited pane still resumes within a minute of its reset when Castellyn sits in the tray.
@@ -358,7 +362,6 @@
     };
     scheduleTick();
     return () => {
-      un?.();
       if (tickTimer) clearTimeout(tickTimer);
     };
   });
@@ -433,9 +436,7 @@
     // Old pane is gone → purge its keys so the episode-tracking Sets/maps don't leak across switches.
     panes = panes.filter((x) => x.key !== p.key);
     delete paneRefs[p.key];
-    autoContinued.delete(p.key);
-    switchAttempted.delete(p.key);
-    delete contJitterMs[p.key];
+    prunePaneKey(p.key);
     if (maximized === p.key) maximized = null;
     return true;
   }
@@ -857,11 +858,25 @@
       /* ignore */
     }
   });
+  // L119/L120: drop pane.key-keyed episode/session bookkeeping when a pane closes — mirrors the L10
+  // prune for id-keyed maps (onIdChange) so these don't grow one entry per pane for the webview's lifetime.
+  function prunePaneKey(key: string) {
+    autoContinued.delete(key);
+    switchAttempted.delete(key);
+    delete contJitterMs[key];
+    delete lastUserInputAt[key];
+    delete pendingContinue[key];
+    if (key in unread) {
+      const { [key]: _u, ...rest } = unread;
+      unread = rest;
+    }
+  }
   function closePane(key: string) {
     const closed = panes.find((p) => p.key === key);
     const movedOut = peekMoved(sessionIds[key] ?? '');
     panes = panes.filter((p) => p.key !== key);
     delete paneRefs[key]; // drop the unmounted pane's ref so the map doesn't retain stale keys
+    prunePaneKey(key);
     if (maximized === key) maximized = null;
     // Broadcast is meaningless with one pane and its toggle is hidden — reset so input doesn't
     // keep getting mirrored invisibly.
@@ -882,6 +897,7 @@
     }
   }
   function closeAll() {
+    for (const p of panes) prunePaneKey(p.key);
     panes = [];
     maximized = null;
     broadcast = false;
@@ -1020,7 +1036,10 @@
       message: t('sessions.closeSpaceMsg', { n: keys.length }),
       run: () => {
         panes = panes.filter((p) => !keys.includes(p.key));
-        for (const k of keys) delete paneRefs[k];
+        for (const k of keys) {
+          delete paneRefs[k];
+          prunePaneKey(k);
+        }
         maximized = null;
         if (panes.length <= 1) broadcast = false;
       }
@@ -1742,7 +1761,9 @@
     if (!name || !panes.length) return;
     workspaces = {
       ...workspaces,
-      [name]: panes.map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget }))
+      // L18: keep each pane's project space + display name so relaunch doesn't collapse a
+      // multi-space workspace into one space (they already flow through addPane).
+      [name]: panes.map((p) => ({ tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, space: p.space, name: p.name }))
     };
     persistWs();
     savingWs = false;
@@ -1852,7 +1873,7 @@
       {/if}
     </div>
     <div class="flex shrink-0 items-center gap-sw-2">
-      {#if panes.length > 1}
+      {#if spacePanes.length > 1}
         <input class="sw-input text-sw-xs" style="width:120px" bind:value={searchAllText}
           placeholder={t('sessions.searchAllPlaceholder')} title={t('sessions.searchAllTip')} spellcheck="false"
           oninput={searchAllDebounced} onkeydown={(e) => e.key === 'Enter' && searchAll(!e.shiftKey)} />

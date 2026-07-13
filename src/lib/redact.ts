@@ -8,10 +8,13 @@ const MASK = '••••••[redacted]';
 // A JSON string value whose key name ends in a secret-ish word ("apiKey", "ANTHROPIC_AUTH_TOKEN", …).
 const SECRET_KV =
   /("[^"]*(?:api[_-]?key|_?key|_?token|secret|password|passwd|auth[_-]?token|auth|credential|bearer)"\s*:\s*")([^"]+)"/gi;
-// Provider/token prefixes (OpenAI sk-, xAI, GitHub PAT, GitLab, …).
-const TOKEN_PREFIX = /\b(?:sk|xai|ghp|gho|ghs|pk|rk|glpat)-[A-Za-z0-9_-]{12,}\b/g;
+// Provider/token prefixes (OpenAI sk-, xAI, GitHub PAT, GitLab, Slack, Google, fine-grained GH PAT, …).
+const TOKEN_PREFIX =
+  /\b(?:sk|xai|ghp|gho|ghs|pk|rk|glpat|xox[bpoa])-[A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b/g;
 // `Authorization: Bearer <token>` / bare `Bearer <token>`.
 const BEARER = /(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi;
+// Bare JWT (header.payload.signature) with no 'Bearer ' prefix — e.g. an id_token dumped raw in a config.
+const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
 
 /** Mask secret-looking values in arbitrary config text (JSON or markdown). */
 export function redactSecrets(text: string): string {
@@ -19,5 +22,6 @@ export function redactSecrets(text: string): string {
   return text
     .replace(SECRET_KV, (_m, keyPart: string) => `${keyPart}${MASK}"`)
     .replace(TOKEN_PREFIX, MASK)
-    .replace(BEARER, `$1${MASK}`);
+    .replace(BEARER, `$1${MASK}`)
+    .replace(JWT, MASK);
 }

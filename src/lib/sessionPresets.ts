@@ -13,7 +13,14 @@ export const MSG_SNIPPETS: string[] = ['/clear', '/compact', '/context', 'contin
 
 // Toggle a flag in a space-separated args string (add if absent, strip if present).
 export function toggleFlag(args: string, flag: string): string {
-  return args.includes(flag)
-    ? args.replace(flag, '').replace(/\s+/g, ' ').trim()
-    : `${args.trim()} ${flag}`.trim();
+  if (args.includes(flag)) {
+    return args.replace(flag, '').replace(/\s+/g, ' ').trim();
+  }
+  // --effort presets are mutually exclusive (max vs high): strip any existing
+  // --effort <level> before adding the newly selected one, so both callers can't
+  // produce a malformed "--effort max --effort high" args string.
+  const base = flag.startsWith('--effort ')
+    ? args.replace(/--effort\s+\S+/g, '').replace(/\s+/g, ' ').trim()
+    : args.trim();
+  return `${base} ${flag}`.trim();
 }

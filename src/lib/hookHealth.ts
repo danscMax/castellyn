@@ -25,8 +25,12 @@ export function hookHealth(state: AgentStatusHookState | null): HookHealth {
   const total = wired + state.unwired.length;
   const drift = state.partial.length;
   let status: HookHealthStatus;
-  if (wired === 0) status = 'off';
+  // Only "off" when there's truly nothing wired AND no drift to fix — otherwise a
+  // partially-wired profile (0 fully wired, some partial) would wrongly read as "nothing to fix".
+  if (wired === 0 && drift === 0) status = 'off';
   else if (!state.scriptPresent) status = 'script-missing';
+  // `drift > 0` is NOT redundant with unwired: a profile can have event-level drift (some-but-not-all
+  // events) while none are fully unwired, and that must still read as 'partial' (see hookHealth.test).
   else if (state.unwired.length > 0 || drift > 0) status = 'partial';
   else status = 'healthy';
   return { status, wired, total, drift };

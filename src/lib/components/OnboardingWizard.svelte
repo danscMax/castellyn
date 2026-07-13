@@ -55,6 +55,10 @@
     if (!open) {
       seeded = false;
       scriptsPresent = null;
+      // Reset step + stale save-error so reopening the wizard starts fresh instead of resuming
+      // on the last step with an old error banner.
+      stepIdx = 0;
+      saveErr = '';
     }
   });
   // The scripts step's "I don't have these scripts" escape: skip ahead and remember the absence so
@@ -67,6 +71,7 @@
   $effect(() => {
     void scriptsRoot;
     scriptsSaved = false;
+    saveErr = '';
   });
 
   let saveErr = $state('');

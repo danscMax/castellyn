@@ -185,10 +185,11 @@
     return providerChanged(name) || proxyChanged(name) || foldersChanged(name) || pluginsChanged(name);
   }
   const dirtyNames = $derived(rows.map((r) => r.name).filter((n) => rowDirty(n)));
-  // A proxy edit that isn't a clear must be a valid http(s)/socks5 URL, else Apply is blocked.
+  // A proxy edit that isn't a clear must be a valid http(s)/socks URL, else Apply is blocked.
+  // Accepts socks4, socks4a, socks5, socks5h (remote-DNS variant) — not just plain socks5.
   function proxyValid(name: string): boolean {
     const v = (draft[name]?.proxy ?? '').trim();
-    return v === '' || isValidHttpUrl(v) || /^socks5:\/\//i.test(v);
+    return v === '' || isValidHttpUrl(v) || /^socks(4a?|5h?):\/\//i.test(v);
   }
   const anyInvalid = $derived(dirtyNames.some((n) => !proxyValid(n)));
   const canApply = $derived(dirtyNames.length > 0 && !anyInvalid && !busy && !applying);
@@ -504,7 +505,7 @@
 <ModalShell open={previewOpen} onClose={() => (previewOpen = false)} size="md">
   <h3 class="mb-sw-3 text-base font-semibold">{t('profiles.matrixPreviewTitle')}</h3>
   <div class="mb-sw-3 flex flex-col">
-    {#each preview as c (c.who + c.cat)}
+    {#each preview as c (c.who + '\u0000' + c.cat)}
       <div class="chg">
         <span class="who">{c.who}</span>
         <span class="cat">{c.cat}</span>

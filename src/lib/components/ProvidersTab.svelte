@@ -18,7 +18,6 @@
   import StackHealthCard from './StackHealthCard.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { Plug, Puzzle } from '@lucide/svelte';
-  import SectionHeader from './SectionHeader.svelte';
 
   let {
     engines,

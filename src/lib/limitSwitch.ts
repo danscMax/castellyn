@@ -35,8 +35,9 @@ export type RejectedProfile = { name: string; reason: RejectReason };
  * positively dead (`credentialsValid !== false`), onboarding not stranded by `/logout` — (c) has
  * intact shared links so `--resume`/shared transcripts reach it, (d) is not in `exclude` (a profile
  * already claimed this tick, or the current one for a resume), and (e) has a KNOWN, RECENT
- * utilisation below `UTIL_THRESHOLD`. `util = max(5h, model-scoped weekly)` — an exhausted model week
- * gates a calm 5h. Unknown usage (null / stale / 429 / no datapoint) is a rejection, never zero.
+ * utilisation below `UTIL_THRESHOLD` — unless `extraEnabled` pay-as-you-go credits keep it working
+ * past the plan cap. `util = max(5h, model-scoped weekly)` — an exhausted model week gates a calm 5h.
+ * Unknown usage (null / stale / 429 / no datapoint) is a rejection, never zero.
  *
  * Both optional health fields are absent in older `profiles.last.json` snapshots, so absence means
  * "don't know" and stays eligible — only a positive `false` disqualifies.
@@ -76,7 +77,9 @@ export function evaluateProfiles(
     }
     // A model-scoped weekly cap gates real work even when 5h is calm. Absent = 0 (no cap).
     const util = Math.max(h5, l?.scoped ?? 0);
-    if (util >= UTIL_THRESHOLD) {
+    // extra_usage (pay-as-you-go) keeps the profile working past the plan cap — the reject-at-85
+    // gate only applies when there is no such credit coverage.
+    if (util >= UTIL_THRESHOLD && !l?.extraEnabled) {
       rejected.push({ name: p.name, reason: 'over-threshold' });
       continue;
     }

@@ -41,7 +41,9 @@ function initialOrder(): string[] {
   try {
     const saved = JSON.parse(localStorage.getItem(ORD_KEY) ?? '[]');
     if (localStorage.getItem(ORD_VER_KEY) === ORD_VER && Array.isArray(saved) && saved.length) {
-      const valid = saved.filter((id: string) => DEFAULT_ORDER.includes(id));
+      // Dedup: a repeated id in the persisted order would otherwise flow into
+      // navOrder.ids and collide with Sidebar's keyed {#each ... (it.id)}.
+      const valid = [...new Set(saved.filter((id: string) => DEFAULT_ORDER.includes(id)))];
       const missing = DEFAULT_ORDER.filter((id) => !valid.includes(id));
       return partitionByGroup([...valid, ...missing]);
     }

@@ -58,17 +58,18 @@
     if (h < 48) return t('common.hoursAgo', { n: Math.round(h) });
     return t('common.daysAgo', { n: Math.round(h / 24) });
   }
+  // Freshness must match the displayed set — `rest` excludes the `all` orchestrator, same as the grid.
   const lastChecked = $derived.by(() => {
-    const ts = Object.values(statuses)
-      .map((s: any) => Date.parse(s?.timestamp ?? ''))
+    const ts = rest
+      .map((c) => Date.parse(statuses[c.id]?.timestamp ?? ''))
       .filter(Number.isFinite);
     if (!ts.length) return null;
     return ageStr((Date.now() - Math.max(...ts)) / 3_600_000);
   });
   // Oldest component check — the roll-up flags it when it exceeds STALE_MS (lastChecked stays max).
   const oldest = $derived.by(() => {
-    const ts = Object.values(statuses)
-      .map((s: any) => Date.parse(s?.timestamp ?? ''))
+    const ts = rest
+      .map((c) => Date.parse(statuses[c.id]?.timestamp ?? ''))
       .filter(Number.isFinite);
     return ts.length ? Math.min(...ts) : null;
   });

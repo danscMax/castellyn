@@ -45,8 +45,8 @@ export async function pasteText(): Promise<string | null> {
 // execCommand('copy') is deprecated but still works in Chromium/WebView2 and needs no permission;
 // it requires a focused, selected element and a user gesture (the click that triggered the copy).
 function legacyCopy(text: string): boolean {
+  const ta = document.createElement('textarea');
   try {
-    const ta = document.createElement('textarea');
     ta.value = text;
     ta.setAttribute('readonly', '');
     // Keep it out of view and prevent the page from scrolling/zooming to it.
@@ -56,10 +56,11 @@ function legacyCopy(text: string): boolean {
     document.body.appendChild(ta);
     ta.select();
     ta.setSelectionRange(0, text.length); // iOS/WebView quirk: select() alone isn't always enough
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
+    return document.execCommand('copy');
   } catch {
     return false;
+  } finally {
+    // Remove the offscreen node even if execCommand('copy') throws, so it never leaks into the DOM.
+    ta.remove();
   }
 }

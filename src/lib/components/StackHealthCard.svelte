@@ -12,12 +12,24 @@
   let loading = $state(false);
   let loadedOnce = $state(false);
 
+  // Guards against a slow load() overwriting a fresher 'stack-health' event that arrived
+  // while it was in flight: only apply load()'s result if nothing newer has landed since
+  // it started. Timestamp (not a one-shot flag) so repeat manual Refresh clicks still work.
+  let lastAppliedAt = 0;
   async function load() {
     loading = true;
+    const startedAt = Date.now();
     try {
-      items = await readStackHealth();
+      const res = await readStackHealth();
+      if (startedAt >= lastAppliedAt) {
+        items = res;
+        lastAppliedAt = Date.now();
+      }
     } catch {
-      items = [];
+      if (startedAt >= lastAppliedAt) {
+        items = [];
+        lastAppliedAt = Date.now();
+      }
     } finally {
       loading = false;
       loadedOnce = true;
@@ -28,6 +40,7 @@
     // Live updates from the backend health-poll loop — no manual refresh needed.
     const un = listen<StackHealth[]>('stack-health', (e) => {
       items = e.payload;
+      lastAppliedAt = Date.now();
       loadedOnce = true;
     });
     return () => {

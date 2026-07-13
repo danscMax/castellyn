@@ -1,6 +1,7 @@
 export default {
   title: 'Analytics',
-  subtitle: 'Summary of ALL requests through the local freellmapi gateway (opencode & other clients) — across every cloud provider and model. Source: freeapi.db, read-only.',
+  // Source-neutral: this tab covers 4 data sources (gateway/Claude/maintenance/sessions), not just the gateway
+  subtitle: 'Usage analytics across the gateway, Claude limits, maintenance and sessions — pick a source below.',
   range1h: '1h',
   range24h: '24h',
   range7d: '7d',

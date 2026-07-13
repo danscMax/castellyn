@@ -66,6 +66,10 @@ export const toastStore = $state<{ items: Toast[]; history: { items: ToastWithMe
 // (errors are sticky and never armed). The remembered ttl lets resume restart a fresh countdown.
 const timers = new Map<number, { ttl: number; handle: ReturnType<typeof setTimeout> }>();
 
+// Tracks hover-pause state so a duplicate arrival (see pushToast) doesn't re-arm a live timer
+// while the user is hovering — otherwise it would defeat the hover-pause guarantee below.
+let paused = false;
+
 function arm(id: number, ttl: number): void {
   timers.set(id, { ttl, handle: setTimeout(() => dismiss(id), ttl) });
 }
@@ -82,7 +86,7 @@ export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
     const tm = timers.get(dup.id);
     if (tm) {
       clearTimeout(tm.handle);
-      arm(dup.id, tm.ttl);
+      if (!paused) arm(dup.id, tm.ttl);
     }
     return dup.id;
   }
@@ -95,9 +99,11 @@ export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
 // Pause/resume every pending auto-dismiss — wired to the toast host's hover so an actionable toast
 // (Open log / jump-to-tab) doesn't vanish mid-read or while the user reaches for its button.
 export function pauseToasts(): void {
+  paused = true;
   for (const tm of timers.values()) clearTimeout(tm.handle);
 }
 export function resumeToasts(): void {
+  paused = false;
   for (const [id, tm] of [...timers]) arm(id, tm.ttl);
 }
 

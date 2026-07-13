@@ -2,6 +2,7 @@
   import { pluginSyncSet, runManagedDeploy, type StackDriftItem } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import { statusFillVar } from '$lib/statusColor';
+  import { pushToast } from '$lib/toast.svelte';
   import { RefreshCw } from '@lucide/svelte';
 
   // Ф1 reconcile: "does Castellyn own the stack?" card. Prop-driven — the parent owns the drift
@@ -44,6 +45,9 @@
       if (item.fix === 'plugin_sync') await pluginSyncSet(true);
       else await runManagedDeploy();
       await onReload?.();
+    } catch (e) {
+      // surface backend rejection instead of letting it become an unhandled promise rejection
+      pushToast({ kind: 'error', title: String(e) });
     } finally {
       working = null;
     }

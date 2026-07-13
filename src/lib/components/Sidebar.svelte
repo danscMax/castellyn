@@ -217,6 +217,7 @@
             ondragstart={(e) => onDragStart(e, it.id)}
             ondragover={(e) => onDragOver(e, it.id)}
             ondrop={onDrop}
+            ondragend={onDrop}
             onkeydown={(e) => moveItem(e, it.id)}
             onclick={() => it.enabled && onSelect(it.id)}
             onpointerup={(e) => e.currentTarget.blur()}

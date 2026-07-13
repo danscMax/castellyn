@@ -104,6 +104,9 @@ export function deriveOutcome(input: DeriveInput): Outcome {
   // The script's own one-line summary, when it wrote one — preferred over generic fallback detail.
   const summaryStr =
     typeof status?.summary === 'string' && status.summary ? status.summary : undefined;
+  // Same staleness gate as the error path above: a leftover summary from a prior run of this
+  // component must not be shown as this run's detail.
+  const freshSummary = summaryStr && envelopeFresh(status, startedAt) ? summaryStr : undefined;
 
   if (st === 'error' || failed > 0) {
     return {
@@ -112,7 +115,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
         failed > 0
           ? t('page.out_failed_count', { name, failed })
           : t('page.out_failed_problems', { name }),
-      detail: summaryStr,
+      detail: freshSummary,
       action: { kind: 'log', label: t('page.toast_open_log') }
     };
   }
@@ -120,7 +123,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
   // R1: `held` (updates deliberately pinned/held back) is neither an error nor "up to date" —
   // without this branch it fell through to the success toast and contradicted the card badge.
   if (st === 'held') {
-    return { kind: 'info', title: t('page.out_held', { name }), detail: summaryStr ?? durationText(status) };
+    return { kind: 'info', title: t('page.out_held', { name }), detail: freshSummary ?? durationText(status) };
   }
 
   if (mode === 'apply') {
@@ -135,7 +138,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
         changed > 0
           ? t('page.out_changes_count', { name, changed })
           : t('page.out_changes_any', { name }),
-      detail: summaryStr ?? t('page.out_changes_detail')
+      detail: freshSummary ?? t('page.out_changes_detail')
     };
   }
 
@@ -145,7 +148,7 @@ export function deriveOutcome(input: DeriveInput): Outcome {
     return {
       kind: 'warn',
       title: t('page.out_unknown_status', { name, status: st }),
-      detail: summaryStr ?? durationText(status)
+      detail: freshSummary ?? durationText(status)
     };
   }
 

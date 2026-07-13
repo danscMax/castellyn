@@ -163,12 +163,16 @@
     changelogReleases = null;
     changelogError = null;
     changelogLoading = true;
+    const req = id; // guard: bail if a newer openChangelog() superseded this one while awaiting
     try {
-      changelogReleases = await listPluginReleases(id);
+      const releases = await listPluginReleases(id);
+      if (changelogPlugin !== req) return;
+      changelogReleases = releases;
     } catch (e) {
+      if (changelogPlugin !== req) return;
       changelogError = String(e);
     }
-    changelogLoading = false;
+    if (changelogPlugin === req) changelogLoading = false;
   }
   function closeChangelog() {
     changelogPlugin = null;

@@ -28,9 +28,15 @@ export function relTime(ts?: string | null, now = Date.now()): string {
   const sec = Math.round((d - now) / 1000);
   const abs = Math.abs(sec);
   if (abs < 60) return rtf.format(sec, 'second');
-  if (abs < 3600) return rtf.format(Math.round(sec / 60), 'minute');
-  if (abs < 86400) return rtf.format(Math.round(sec / 3600), 'hour');
-  if (abs < 2592000) return rtf.format(Math.round(sec / 86400), 'day');
+  // Round into each unit, then check the ROUNDED value against the next unit's boundary
+  // (not the raw seconds) so e.g. 3599s falls through to "an hour ago" instead of
+  // rounding up to "60 minutes ago".
+  const min = Math.round(sec / 60);
+  if (Math.abs(min) < 60) return rtf.format(min, 'minute');
+  const hr = Math.round(sec / 3600);
+  if (Math.abs(hr) < 24) return rtf.format(hr, 'hour');
+  const day = Math.round(sec / 86400);
+  if (Math.abs(day) < 30) return rtf.format(day, 'day');
   return rtf.format(Math.round(sec / 2592000), 'month');
 }
 
@@ -45,7 +51,9 @@ export function formatAbsTime(
 ): string {
   if (!ts) return t('common.dash');
   const ms = parseTsMs(ts);
-  if (!Number.isNaN(ms)) return new Date(ms).toLocaleString(localeTag());
+  // Reject epoch values outside Date's valid range (+/-8.64e15ms): new Date(ms) there
+  // yields Invalid Date, which would otherwise leak as the literal string "Invalid Date".
+  if (!Number.isNaN(ms) && Math.abs(ms) <= 8.64e15) return new Date(ms).toLocaleString(localeTag());
   return snapshotFallback?.(ts) ?? t('common.dash');
 }
 

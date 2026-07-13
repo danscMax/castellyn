@@ -11,8 +11,8 @@
   };
 </script>
 
-<script lang="ts">
-  import type { Snippet } from 'svelte';
+<script lang="ts" generics="Row">
+  import { onDestroy, type Snippet } from 'svelte';
   import { slide } from 'svelte/transition';
   import { t } from '$lib/i18n';
 
@@ -44,23 +44,25 @@
     empty
   }: {
     columns: DTColumn[];
-    rows: any[];
-    rowKey: (r: any) => string;
+    rows: Row[];
+    rowKey: (r: Row) => string;
+    // Row left untyped here: callers may derive the sort value via a dynamic `r[key]` lookup
+    // (e.g. EnvironmentsTab's skill matrix), which a concrete Row type would reject at compile time.
     sortAccessor?: (r: any, key: string) => string | number;
     search?: boolean;
-    searchValue?: (r: any) => string;
+    searchValue?: (r: Row) => string;
     searchPlaceholder?: string;
     defaultSort?: string;
     defaultDir?: 'asc' | 'desc';
     storageKey?: string; // persist sort in localStorage under this key
-    canExpand?: (r: any) => boolean;
+    canExpand?: (r: Row) => boolean;
     selectable?: boolean;
-    rowMuted?: (r: any) => boolean; // dim the row (e.g. disabled item)
-    rowAccent?: (r: any) => boolean; // left accent stripe (e.g. update available)
-    rowStyle?: (r: any) => string | undefined; // inline style per row
-    highlightAttr?: (r: any) => string | null | undefined; // data-highlight-id per row
-    cell: Snippet<[any, DTColumn]>;
-    expand?: Snippet<[any]>;
+    rowMuted?: (r: Row) => boolean; // dim the row (e.g. disabled item)
+    rowAccent?: (r: Row) => boolean; // left accent stripe (e.g. update available)
+    rowStyle?: (r: Row) => string | undefined; // inline style per row
+    highlightAttr?: (r: Row) => string | null | undefined; // data-highlight-id per row
+    cell: Snippet<[Row, DTColumn]>;
+    expand?: Snippet<[Row]>;
     toolbar?: Snippet;
     bulkbar?: Snippet<[string[], () => void]>;
     empty?: Snippet;
@@ -106,6 +108,9 @@
   // svelte-ignore state_referenced_locally
   let colW = $state<Record<string, string>>(readWidths());
   let resizing = $state(false);
+  // The in-flight drag's window listeners, so onDestroy can remove them if the component
+  // unmounts mid-drag (otherwise `up` never runs and the closures over colW/th/handle leak).
+  let activeDrag: { move: (ev: PointerEvent) => void; up: () => void } | null = null;
   function startResize(e: PointerEvent, key: string) {
     e.preventDefault();
     e.stopPropagation();
@@ -124,6 +129,7 @@
       handle.releasePointerCapture?.(e.pointerId);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      activeDrag = null;
       if (storageKey) {
         try {
           localStorage.setItem(`dt-w-${storageKey}`, JSON.stringify(colW));
@@ -133,9 +139,16 @@
       }
       setTimeout(() => (resizing = false), 0);
     };
+    activeDrag = { move, up };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   }
+  onDestroy(() => {
+    if (activeDrag) {
+      window.removeEventListener('pointermove', activeDrag.move);
+      window.removeEventListener('pointerup', activeDrag.up);
+    }
+  });
 
   $effect(() => {
     if (storageKey) {
@@ -213,7 +226,7 @@
   // resized width wins; else the configured width; else a default so the SPACER is the only auto col.
   const colWidth = (c: { key: string; width?: string; grow?: boolean }): string =>
     colW[c.key] ?? c.width ?? (c.grow ? '260px' : '160px');
-  const rowExpandable = (r: any) => !!expand && (!canExpand || canExpand(r));
+  const rowExpandable = (r: Row) => !!expand && (!canExpand || canExpand(r));
 </script>
 
 <div class="dt-card">
@@ -254,7 +267,6 @@
               class="dt-th align-{c.align ?? 'left'}"
               class:sortable={c.sortable}
               class:active={sortKey === c.key}
-              class:grow={c.grow}
               aria-sort={sortKey === c.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
             >
               {#if c.sortable}
