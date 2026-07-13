@@ -62,11 +62,15 @@ pub fn start(app: AppHandle) {
         loop {
             std::thread::sleep(Duration::from_secs(POLL_SECS));
             crate::run_guarded("schedules-watch", || {
-            let tasks = crate::read_schedules_cached_inner()
-                .ok()
-                .flatten()
-                .and_then(|doc| doc.get("tasks").and_then(|v| v.as_array()).cloned())
-                .unwrap_or_default();
+            let tasks = match crate::read_schedules_cached_inner() {
+                Ok(doc) => doc
+                    .and_then(|d| d.get("tasks").and_then(|v| v.as_array()).cloned())
+                    .unwrap_or_default(),
+                // A transient read/parse failure must NOT clear prev_failed — that would make an
+                // already-known failed task re-fire as a fresh transition once the file reads OK again.
+                // Skip the tick; a legitimately-absent file is Ok(None) and correctly yields no tasks.
+                Err(_) => return,
+            };
             let fired = newly_failed(&mut prev_failed, &tasks);
             if !baseline_taken {
                 baseline_taken = true;

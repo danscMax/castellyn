@@ -102,6 +102,11 @@ pub fn start(app: AppHandle) {
             let curr: Vec<(String, bool)> = health
                 .iter()
                 .filter(|h| h.enabled)
+                // Every ENABLED service alarms/counts on an outage, deliberately IGNORING the `critical`
+                // flag: it defaults to false in stack.json, so gating on it would silence outages for
+                // every service the user didn't explicitly mark critical. `critical` is surfaced to the
+                // UI (StackHealth is serialized) for display only. A disabled service being down is
+                // expected and never counts.
                 .map(|h| (h.id.clone(), !h.port_open || h.healthy == Some(false)))
                 .collect();
             note_seen_up(&mut seen_up, &curr);

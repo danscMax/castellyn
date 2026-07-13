@@ -31,9 +31,11 @@ const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CACHE_TTL_SECS: u64 = 300;
 
 /// Deduplicates usage requests across every caller, keyed by the profile's `.credentials.json` path
-/// (both callers derive the same path). Errors are cached too — a 429 must not trigger a retry storm.
+/// (both callers derive the same path). 401/429 and Ok are cached (a 429 must not trigger a retry
+/// storm); a transient transport failure is NOT (network recovery should take effect next poll). The
+/// stored token invalidates the entry on re-auth. Value = (fetched_at, token_used, result).
 #[allow(clippy::type_complexity)]
-static USAGE_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Result<serde_json::Value, u16>)>>> =
+static USAGE_CACHE: LazyLock<Mutex<HashMap<String, (Instant, String, Result<serde_json::Value, u16>)>>> =
     LazyLock::new(Default::default);
 
 /// The single entry point to the usage endpoint. `None` = this profile has no OAuth token at all
@@ -43,15 +45,21 @@ pub(crate) fn usage_cached(cred_path: &str) -> Option<Result<serde_json::Value, 
     let token = read_access_token(cred_path)?;
     {
         let cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((at, res)) = cache.get(cred_path) {
-            if at.elapsed().as_secs() < CACHE_TTL_SECS {
+        if let Some((at, cached_token, res)) = cache.get(cred_path) {
+            // Invalidate on re-auth: a fresh token for the same profile must not keep reading the old
+            // (e.g. 401) verdict from the cache until the TTL elapses.
+            if *cached_token == token && at.elapsed().as_secs() < CACHE_TTL_SECS {
                 return Some(res.clone());
             }
         }
     }
     let res = fetch_usage(&token);
-    let mut cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    cache.insert(cred_path.to_string(), (Instant::now(), res.clone()));
+    // Don't cache a transient transport failure (Err(0)) — a network recovery should take effect on
+    // the next poll, not 5 minutes later. Ok / 401 / 429 ARE cached.
+    if !matches!(res, Err(0)) {
+        let mut cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.insert(cred_path.to_string(), (Instant::now(), token, res.clone()));
+    }
     Some(res)
 }
 
@@ -266,9 +274,9 @@ fn fire_alert(app: &AppHandle, profile: &str, window: &str, level: u8, util: f64
         }
         return;
     }
-    if level < 99 {
-        return;
-    }
+    // Unreachable: the 85..99 branch above returned, and take_alert only ever emits 85 or 99, so the
+    // only level that reaches here is 99. (Was a dead `if level < 99 { return }`.)
+    debug_assert_eq!(level, 99, "fire_alert only receives 85 (handled above) or 99");
     let cfg = crate::read_config_file();
     if cfg.status_sounds.unwrap_or(true) {
         beep_crit();

@@ -444,12 +444,17 @@ fn expand_placeholders(s: &str) -> String {
 
 /// Read the canonical manifest from disk; fall back to the embedded copy if the
 /// file is missing or unreadable (e.g. relocated exe without the repo).
-fn manifest_text() -> String {
-    let path = format!(
+/// The on-disk maintenance manifest path under SCRIPTS_ROOT — one source for manifest_text +
+/// scripts_available, so a relocation/rename is a single edit (was built identically in both).
+fn manifest_path() -> String {
+    format!(
         "{}\\Castellyn\\manifest\\maintenance-manifest.json",
         scripts_root()
-    );
-    std::fs::read_to_string(&path).unwrap_or_else(|_| MANIFEST_FALLBACK.to_string())
+    )
+}
+
+fn manifest_text() -> String {
+    std::fs::read_to_string(manifest_path()).unwrap_or_else(|_| MANIFEST_FALLBACK.to_string())
 }
 
 /// True when the on-disk maintenance manifest exists — i.e. the owner's SCRIPTS_ROOT tooling is
@@ -457,11 +462,7 @@ fn manifest_text() -> String {
 /// that the script-backed tabs are the owner-tooling part rather than flashing empty/erroring tabs.
 #[tauri::command]
 fn scripts_available() -> bool {
-    let path = format!(
-        "{}\\Castellyn\\manifest\\maintenance-manifest.json",
-        scripts_root()
-    );
-    std::path::Path::new(&path).exists()
+    std::path::Path::new(&manifest_path()).exists()
 }
 
 #[derive(Deserialize, Clone)]
@@ -668,13 +669,18 @@ impl<'a> StackSlot<'a> {
     /// Claim the slot for a STOP, preempting any in-flight start (kill its tree first). Stop always
     /// proceeds; stop-stack then tears down by port, so aborting a half-done start is safe.
     fn reserve_preempt(s: &'a StackRun) -> Self {
-        let mut g = s.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(pid) = g.take() {
-            if pid != 0 {
-                let _ = kill_tree(pid);
-            }
+        // Take the in-flight pid and claim the slot UNDER the lock, then drop the guard BEFORE the
+        // blocking kill_tree (~600ms grace) — holding the StackRun mutex across the kill would block
+        // every other stack op, and this runs from an async command.
+        let victim = {
+            let mut g = s.0.lock().unwrap_or_else(|e| e.into_inner());
+            let victim = g.take().filter(|&pid| pid != 0);
+            *g = Some(0);
+            victim
+        };
+        if let Some(pid) = victim {
+            let _ = kill_tree(pid);
         }
-        *g = Some(0);
         StackSlot(s)
     }
     fn set_pid(&self, pid: u32) {
@@ -1079,7 +1085,17 @@ async fn pump_and_wait(
             if let Some(p) = pid {
                 let _ = kill_tree(p);
             }
-            child.wait().await
+            // Bound the post-kill reap too: a truly unkillable tree must still free the run slot
+            // instead of wedging maintenance forever. On expiry fall through to a synthetic error,
+            // which becomes exit -1 below.
+            const REAP_MAX: std::time::Duration = std::time::Duration::from_secs(10);
+            match tokio::time::timeout(REAP_MAX, child.wait()).await {
+                Ok(s) => s,
+                Err(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "child did not exit after kill",
+                )),
+            }
         }
     };
     // Await the pumps so their final coalesced flush lands BEFORE run-done — no lost tail lines.
@@ -1750,7 +1766,7 @@ fn reveal_backup(name: String) -> Result<(), String> {
 fn delete_backup(name: String) -> Result<(), String> {
     let path = weekly_archive_path(&name)?;
     std::fs::remove_file(&path)
-        .map_err(|e| trv("err.open_path", cur_lang(), &[("path", &path), ("e", &e)]))
+        .map_err(|e| trv("err.delete_failed", cur_lang(), &[("path", &path), ("e", &e)]))
 }
 
 /// `tar -tf`: entry count on success, tar's stderr when the zip is corrupt/truncated. Shared by
@@ -2134,6 +2150,22 @@ struct DriftDiff {
 fn compute_diff(a: &[String], b: &[String]) -> Vec<DiffLine> {
     let m = a.len();
     let n = b.len();
+    // Cap the O(m*n) LCS: two large line-lists allocate a quadratic matrix (two 20k-line files
+    // ~3.2 GB) and can OOM. Above the cap fall back to a whole-file replace (all deletes then all
+    // adds). The drift diff only runs on small config files, so the cap is never hit there.
+    const MAX_LCS_CELLS: usize = 4_000_000; // ~2000x2000 lines
+    if m.saturating_mul(n) > MAX_LCS_CELLS {
+        let mut result = Vec::with_capacity(m + n);
+        result.extend(a.iter().map(|line| DiffLine {
+            kind: DiffLineKind::Del,
+            text: line.clone(),
+        }));
+        result.extend(b.iter().map(|line| DiffLine {
+            kind: DiffLineKind::Add,
+            text: line.clone(),
+        }));
+        return result;
+    }
     let mut dp = vec![vec![0usize; n + 1]; m + 1];
     for i in 1..=m {
         for j in 1..=n {
@@ -2192,8 +2224,11 @@ fn read_drift_diff(name: String) -> Result<Option<DriftDiff>, String> {
         Err(_) => return Ok(None),
     };
 
-    let tip_lines: Vec<String> = tip_content.lines().map(String::from).collect();
-    let source_lines: Vec<String> = source_content.lines().map(String::from).collect();
+    // Strip a leading UTF-8 BOM before splitting: when one copy carries a BOM and the other doesn't,
+    // an un-stripped BOM makes the first line differ and shows a phantom change (U+FEFF is not
+    // trimmed by .lines()).
+    let tip_lines: Vec<String> = tip_content.trim_start_matches('\u{feff}').lines().map(String::from).collect();
+    let source_lines: Vec<String> = source_content.trim_start_matches('\u{feff}').lines().map(String::from).collect();
 
     let lines = compute_diff(&source_lines, &tip_lines);
 
@@ -2530,6 +2565,28 @@ fn is_secret_file(name: &str) -> bool {
 /// I/O beyond one `read_dir` of a small folder. A temp file younger than `stale` belongs to a
 /// concurrent writer (a second Castellyn instance) and is left alone; real debris is minutes old at
 /// least, since the process that made it is gone.
+/// Monotonic uniquifier for atomic-write temp names, so two concurrent writers of the SAME file
+/// (same pid) can't share one `<file>.tmp` and clobber each other's bytes before the rename.
+static ATOMIC_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Recover the real target filename from an atomic-write temp name — either "<file>.tmp" (legacy) or
+/// "<file>.<pid>.<seq>.tmp" (unique per writer) — so the secret-tmp sweep still recognises both. The
+/// ".<pid>.<seq>" tail is dropped only when both segments are all-digits; our secret filenames never
+/// end in a numeric segment, so a real name can't be over-stripped.
+fn tmp_secret_base(name: &str) -> Option<&str> {
+    let rest = name.strip_suffix(".tmp")?;
+    if let Some((head, seq)) = rest.rsplit_once('.') {
+        if !seq.is_empty() && seq.bytes().all(|b| b.is_ascii_digit()) {
+            if let Some((base, pid)) = head.rsplit_once('.') {
+                if !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) {
+                    return Some(base);
+                }
+            }
+        }
+    }
+    Some(rest)
+}
+
 fn sweep_stale_secret_tmp(dir: &std::path::Path, stale: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -2537,7 +2594,7 @@ fn sweep_stale_secret_tmp(dir: &std::path::Path, stale: std::time::Duration) {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Some(base) = name.strip_suffix(".tmp") else {
+        let Some(base) = tmp_secret_base(name) else {
             continue;
         };
         if !is_secret_file(base) {
@@ -2597,9 +2654,15 @@ fn write_json_atomic(path: &str, content: &str) -> std::io::Result<()> {
     if was_hidden || was_ro {
         run_attrib(&["-h", "-r"], path);
     }
-    // Temp in the SAME dir so the rename is a same-volume atomic replace.
-    let tmp = format!("{path}.tmp");
-    write_file_no_bom(&tmp, content)?;
+    // Temp in the SAME dir so the rename is a same-volume atomic replace. Unique per writer (pid + a
+    // monotonic counter) so two concurrent writers of this file don't share one temp and clobber each
+    // other's bytes before the rename. On a write failure remove the partial temp instead of leaking it.
+    let seq = ATOMIC_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = format!("{path}.{}.{}.tmp", std::process::id(), seq);
+    if let Err(e) = write_file_no_bom(&tmp, content) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     // Force the temp file's bytes to disk BEFORE the rename. The rename is atomic for metadata, but
     // without this the directory entry can land while the contents are still only in the page cache:
     // a power loss at that instant leaves a correctly-named, EMPTY config. Best-effort — a failed
@@ -3499,9 +3562,10 @@ fn teardown_started(
 /// a half-started stack (e.g. a router up with no backend behind it) is worse than none.
 async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&str>) -> i32 {
     STACK_CANCEL.store(false, Ordering::SeqCst);
+    let services = stack_services(); // read the manifest once; reused for the id check and the loop
     // A -Only id that isn't in the manifest otherwise looks just like "nothing started".
     if let Some(o) = only {
-        if !stack_services()
+        if !services
             .iter()
             .any(|s| s.get("id").and_then(|x| x.as_str()) == Some(o))
         {
@@ -3514,9 +3578,11 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     // pids this run actually spawned — rolled back in full if a teardownOnFailure service then fails.
     let mut started_pids: Vec<(String, u32)> = Vec::new();
     let mut teardown_fired = false;
-    for svc in order_services(&stack_services()) {
+    let mut cancelled = false;
+    for svc in order_services(&services) {
         if STACK_CANCEL.load(Ordering::SeqCst) {
             stack_emit(app, "[cancel] stop requested — aborting start".into());
+            cancelled = true;
             break;
         }
         let sid = svc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -3589,6 +3655,7 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
                         // teardown): the user asked for a stop, not for a half-started stack.
                         stack_emit(app, format!("[cancel] {name}: start aborted"));
                         teardown_started(app, procs, &name, &started_pids);
+                        cancelled = true;
                         break;
                     }
                     Readiness::Down => {
@@ -3636,6 +3703,10 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
     }
     if matched == 0 {
         stack_emit(app, "Nothing to start (check the service id / enabled flags).".into());
+    } else if cancelled {
+        // A Stop preempted this start — don't claim "Started N". The [cancel]/[teardown] lines above
+        // already reported the specifics (mid-wait services were torn down; a Stop reaps the rest).
+        stack_emit(app, "Start cancelled by a stop request.".into());
     } else if teardown_fired {
         // Don't claim "Started N" — those N were just rolled back. The [teardown] line already said what.
         stack_emit(app, "Stack rolled back — a teardown-on-failure service did not come up.".into());
@@ -4773,6 +4844,7 @@ async fn list_github_repos() -> Vec<GithubRepo> {
             "name,owner,nameWithOwner,isPrivate,isFork,isArchived,url,updatedAt,description,primaryLanguage,stargazerCount",
         ])
         .creation_flags(CREATE_NO_WINDOW)
+        .kill_on_drop(true) // on timeout the future is dropped — reap the child instead of orphaning gh
         .output();
     // Bound a hung `gh` (flaky network / auth prompt) — Err = timed out, Ok(Err) = spawn failed.
     let Ok(Ok(out)) = tokio::time::timeout(std::time::Duration::from_secs(30), fut).await else {
@@ -5891,10 +5963,18 @@ fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
 /// are allowed on purpose (local engines like LM Studio). Run before storing a key and before connect.
 fn valid_base_url(s: &str) -> Result<(), String> {
     let s = s.trim();
-    let rest = s
-        .strip_prefix("http://")
-        .or_else(|| s.strip_prefix("https://"))
-        .ok_or(tr("err.url_scheme", cur_lang()))?;
+    // Scheme is case-insensitive per RFC 3986 — case-fold only for the prefix test, keep the original
+    // host slice (host casing can matter to some backends).
+    let rest = {
+        let lower = s.to_ascii_lowercase();
+        if lower.starts_with("http://") {
+            &s[7..]
+        } else if lower.starts_with("https://") {
+            &s[8..]
+        } else {
+            return Err(tr("err.url_scheme", cur_lang()).into());
+        }
+    };
     let host_port = rest.split('/').next().unwrap_or("");
     let host = extract_host(host_port); // L3: shared IPv6-aware host extraction
     if host.is_empty() {
@@ -6121,8 +6201,15 @@ fn save_my_provider(p: MyProviderInput, api_key: Option<String>) -> Result<MyPro
         "keyCount": key_count,
         "activeKey": active_key,
     });
-    list.retain(|e| e.get("id").and_then(|x| x.as_str()) != Some(id.as_str()));
-    list.push(entry.clone());
+    // Update in place on edit (retain+push reordered the entry to the end on every save); append only
+    // when creating a new provider.
+    match list
+        .iter()
+        .position(|e| e.get("id").and_then(|x| x.as_str()) == Some(id.as_str()))
+    {
+        Some(idx) => list[idx] = entry.clone(),
+        None => list.push(entry.clone()),
+    }
     write_myproviders_raw(&list)?;
     if let Some(k) = api_key {
         if !k.trim().is_empty() {
@@ -6286,17 +6373,7 @@ fn remove_provider_key(id: String, index: u64) -> Result<MyProvider, String> {
             survivors.push(k);
         }
     }
-    // Rewrite compactly WITHOUT deleting first: write each survivor to its new slot, and only after
-    // every write succeeds delete the now-stale trailing slots. A mid-write failure then leaves every
-    // survivor key still present (old or new slot) instead of destroying the pool (the old order
-    // deleted all slots up front, so a failed re-write lost the survivors permanently).
     let new_count = survivors.len() as u64;
-    for (i, k) in survivors.iter().enumerate() {
-        kr_set(KR_PROVIDERS, &format!("provider:{id}:{i}"), k)?;
-    }
-    for i in new_count..count {
-        kr_delete(KR_PROVIDERS, &format!("provider:{id}:{i}"));
-    }
     // Keep the active key pointing at a valid slot: shift down if we removed at/below it.
     let new_active = if new_count == 0 {
         0
@@ -6305,9 +6382,20 @@ fn remove_provider_key(id: String, index: u64) -> Result<MyProvider, String> {
     } else {
         active.min(new_count - 1)
     };
+    // Persist myproviders.json FIRST (mirrors append_key_txn): a JSON-write failure must not have
+    // already mutated the keyring — with this order the survivors stay in their original slots and
+    // nothing is lost. Only after the JSON is durable do we compact the keyring, writing each survivor
+    // to its new slot BEFORE deleting stale trailing slots, so a mid-rewrite failure still keeps every
+    // survivor present.
     list[pos]["keyCount"] = serde_json::json!(new_count);
     list[pos]["activeKey"] = serde_json::json!(new_active);
     write_myproviders_raw(&list)?;
+    for (i, k) in survivors.iter().enumerate() {
+        kr_set(KR_PROVIDERS, &format!("provider:{id}:{i}"), k)?;
+    }
+    for i in new_count..count {
+        kr_delete(KR_PROVIDERS, &format!("provider:{id}:{i}"));
+    }
     Ok(myprovider_from_entry(&list[pos]))
 }
 
@@ -6838,6 +6926,7 @@ fn fetch_models_bearer(base_url: &str, authorization: &str) -> Vec<String> {
     let arr = v
         .get("data")
         .and_then(|x| x.as_array())
+        .or_else(|| v.get("models").and_then(|x| x.as_array())) // some APIs use `models[]` (matches count_models)
         .or_else(|| v.as_array());
     match arr {
         Some(items) => items
@@ -6937,8 +7026,9 @@ fn extract_balance(v: &serde_json::Value) -> Option<(f64, String)> {
         })
         .unwrap_or("")
         .to_string();
-    // Prefer keys that mean "remaining balance"; treat limit/quota fields as last-resort fallbacks
-    // so we don't report a hard limit (e.g. hard_limit_usd) as if it were the available balance.
+    // Prefer keys that mean "remaining balance"; treat quota fields as last-resort fallbacks. A hard
+    // limit (e.g. hard_limit_usd) is deliberately NOT here — reporting a plan ceiling as the available
+    // balance is misleading; the dedicated billing path labels that separately.
     for p in [
         "remaining",
         "balance",
@@ -6947,7 +7037,6 @@ fn extract_balance(v: &serde_json::Value) -> Option<(f64, String)> {
         "total_balance",
         "data.quota",
         "quota",
-        "hard_limit_usd",
     ] {
         if let Some(n) = json_f64(v, p) {
             return Some((n, cur));
@@ -8130,7 +8219,9 @@ fn own_marketplaces() -> std::collections::HashSet<String> {
 
 /// First-block YAML frontmatter (between the first `---` pair) of a SKILL.md.
 fn extract_frontmatter(content: &str) -> String {
-    let t = content.trim_start();
+    // Strip a leading UTF-8 BOM first — it isn't White_Space, so trim_start() leaves it and the
+    // `---` frontmatter fence then fails to match on a BOM-prefixed file.
+    let t = content.trim_start_matches('\u{feff}').trim_start();
     if let Some(rest) = t.strip_prefix("---") {
         if let Some(end) = rest.find("\n---") {
             return rest[..end].to_string();
@@ -8562,7 +8653,10 @@ fn read_environments_blocking() -> Vec<EnvInfo> {
     let claude_rtk = std::fs::read_to_string(format!("{home}\\.claude\\settings.json"))
         .map(|s| s.contains("rtk hook"))
         .unwrap_or(false);
-    let claude_mcp = read_mcp().map(|m| m.source.len()).unwrap_or(0);
+    // Read the canonical MCP set once — used both for the Claude source count here and the canon-name
+    // derivation below (was read_mcp() twice).
+    let mcp = read_mcp();
+    let claude_mcp = mcp.as_ref().map(|m| m.source.len()).unwrap_or(0);
 
     // OpenCode — read & parse the config exactly once; derive providers + MCP + parse-health from it.
     let opencode_cfg = opencode_config_path();
@@ -8611,7 +8705,8 @@ fn read_environments_blocking() -> Vec<EnvInfo> {
     let hub = read_config_file();
     // Deployable canon only (a commandless server is never fanned out → excluding it keeps drift from
     // false-flagging "missing canon server" right after a clean deploy).
-    let canon_mcp: Vec<String> = read_mcp()
+    let canon_mcp: Vec<String> = mcp
+        .as_ref()
         .map(|m| {
             m.source
                 .iter()
@@ -8783,7 +8878,15 @@ struct ShareResult {
 /// junctions, repair dangling ones (stale plugin-cache targets after an update), skip correct ones.
 /// Never deletes a real directory or a still-valid link; mklink /J needs no admin. Claude is untouched.
 #[tauri::command]
-fn share_skills() -> Result<ShareResult, String> {
+async fn share_skills() -> Result<ShareResult, String> {
+    // Off the async runtime: this spawns one `cmd /c mklink /J` subprocess per skill in a loop, which
+    // would stall the UI as a synchronous command.
+    tokio::task::spawn_blocking(share_skills_blocking)
+        .await
+        .map_err(|e| format!("share_skills task panicked: {e}"))?
+}
+
+fn share_skills_blocking() -> Result<ShareResult, String> {
     let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let target_dir = format!("{home}\\.agents\\skills");
     std::fs::create_dir_all(&target_dir).map_err(|e| format!("create {target_dir}: {e}"))?;
@@ -8960,21 +9063,11 @@ fn mcp_stale_names(managed: &[String], canon: &[String]) -> Vec<String> {
         .collect()
 }
 
-#[tauri::command]
-fn run_opencode_mcp() -> Result<usize, String> {
-    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4/L4
+/// Load opencode.json for an in-place edit: the parsed root object with `$schema` ensured, or a
+/// localized error when the file is missing / empty / not a JSON object. Shared preamble of the three
+/// opencode fan-out commands (mcp servers, providers, instructions); each then ensures its own block.
+fn load_opencode_cfg_for_edit() -> Result<serde_json::Value, String> {
     use serde_json::{json, Value};
-    let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    // Canonical source, placeholders expanded (same as write_temp_mcp_config).
-    let src = std::fs::read_to_string(abs(MCP_CONFIG_REL))
-        .map_err(|e| trv("err.mcp_read", cur_lang(), &[("e", &e)]))?
-        .replace("{{USERPROFILE_FWD}}", &home.replace('\\', "/"));
-    let canonical = parse_json_bom(&src).map_err(|e| trv("err.mcp_parse", cur_lang(), &[("e", &e)]))?;
-    let servers = canonical
-        .get("mcpServers")
-        .and_then(|m| m.as_object())
-        .ok_or_else(|| tr("err.mcp_no_servers", cur_lang()).to_string())?;
-
     let cfg_path = opencode_config_path();
     let mut cfg: Value = match std::fs::read_to_string(&cfg_path) {
         Ok(ref c) if !c.trim().is_empty() => {
@@ -8987,6 +9080,27 @@ fn run_opencode_mcp() -> Result<usize, String> {
     };
     obj.entry("$schema")
         .or_insert_with(|| json!("https://opencode.ai/config.json"));
+    Ok(cfg)
+}
+
+#[tauri::command]
+fn run_opencode_mcp() -> Result<usize, String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4/L4
+    use serde_json::json;
+    let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
+    // Canonical source, placeholders expanded (same as write_temp_mcp_config).
+    let src = std::fs::read_to_string(abs(MCP_CONFIG_REL))
+        .map_err(|e| trv("err.mcp_read", cur_lang(), &[("e", &e)]))?
+        .replace("{{USERPROFILE_FWD}}", &home.replace('\\', "/"));
+    let canonical = parse_json_bom(&src).map_err(|e| trv("err.mcp_parse", cur_lang(), &[("e", &e)]))?;
+    let servers = canonical
+        .get("mcpServers")
+        .and_then(|m| m.as_object())
+        .ok_or_else(|| tr("err.mcp_no_servers", cur_lang()).to_string())?;
+
+    let cfg_path = opencode_config_path();
+    let mut cfg = load_opencode_cfg_for_edit()?;
+    let obj = cfg.as_object_mut().unwrap(); // the helper guaranteed an object with $schema
     if !obj.get("mcp").map(|m| m.is_object()).unwrap_or(false) {
         obj.insert("mcp".into(), json!({}));
     }
@@ -9040,9 +9154,13 @@ fn run_opencode_mcp() -> Result<usize, String> {
     let serialized = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     write_json_atomic(&cfg_path, &serialized).map_err(|e| format!("write opencode.json: {e}"))?;
     // R7: update the ledger through the atomic patch (bumps rev; can't lose a concurrent write).
-    let _ = patch_config(|c| {
+    if let Err(e) = patch_config(|c| {
         c.managed_mcp.get_or_insert_default().opencode = Some(canon_names);
-    });
+    }) {
+        // Don't fail the deploy (opencode.json is already written), but don't swallow it either —
+        // a persistent ledger desync would keep drift mis-flagging otherwise.
+        eprintln!("[opencode-mcp] ledger update failed: {e}");
+    }
     Ok(count)
 }
 
@@ -9166,17 +9284,8 @@ fn run_opencode_providers() -> Result<usize, String> {
     }
 
     let cfg_path = opencode_config_path();
-    let mut cfg: Value = match std::fs::read_to_string(&cfg_path) {
-        Ok(ref c) if !c.trim().is_empty() => {
-            parse_json_bom(c).map_err(|e| trv("err.opencode_parse", cur_lang(), &[("e", &e)]))?
-        }
-        _ => return Err(tr("err.opencode_missing", cur_lang()).to_string()),
-    };
-    let Some(obj) = cfg.as_object_mut() else {
-        return Err(tr("err.opencode_not_object", cur_lang()).to_string());
-    };
-    obj.entry("$schema")
-        .or_insert_with(|| json!("https://opencode.ai/config.json"));
+    let mut cfg = load_opencode_cfg_for_edit()?;
+    let obj = cfg.as_object_mut().unwrap(); // the helper guaranteed an object with $schema
     if !obj.get("provider").map(|p| p.is_object()).unwrap_or(false) {
         obj.insert("provider".into(), json!({}));
     }
@@ -9340,9 +9449,11 @@ fn run_codex_mcp_blocking() -> Result<serde_json::Value, String> {
             }
         }
         // R7: advance the ledger through the atomic patch (bumps rev; can't lose a concurrent write).
-        let _ = patch_config(|c| {
+        if let Err(e) = patch_config(|c| {
             c.managed_mcp.get_or_insert_default().codex = Some(ledger);
-        });
+        }) {
+            eprintln!("[codex-mcp] ledger update failed: {e}");
+        }
     }
 
     // Partial-honest: report per-server outcome instead of an all-or-nothing Err. The hard Errs above
@@ -9537,7 +9648,7 @@ const CANON_RULES_REL: [&str; 2] = [
 #[tauri::command]
 fn run_opencode_instructions() -> Result<usize, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4
-    use serde_json::{json, Value};
+    use serde_json::json;
     let paths: Vec<String> = CANON_RULES_REL
         .iter()
         .map(|rel| abs(rel).replace('\\', "/"))
@@ -9548,17 +9659,8 @@ fn run_opencode_instructions() -> Result<usize, String> {
     }
 
     let cfg_path = opencode_config_path();
-    let mut cfg: Value = match std::fs::read_to_string(&cfg_path) {
-        Ok(ref c) if !c.trim().is_empty() => {
-            parse_json_bom(c).map_err(|e| trv("err.opencode_parse", cur_lang(), &[("e", &e)]))?
-        }
-        _ => return Err(tr("err.opencode_missing", cur_lang()).to_string()),
-    };
-    let Some(obj) = cfg.as_object_mut() else {
-        return Err(tr("err.opencode_not_object", cur_lang()).to_string());
-    };
-    obj.entry("$schema")
-        .or_insert_with(|| json!("https://opencode.ai/config.json"));
+    let mut cfg = load_opencode_cfg_for_edit()?;
+    let obj = cfg.as_object_mut().unwrap(); // the helper guaranteed an object with $schema
     if !obj
         .get("instructions")
         .map(|i| i.is_array())
@@ -10494,6 +10596,7 @@ async fn run_marketplace_bump(
             err(tr("log.bump_failed", cur_lang()));
             return 1;
         }
+        invalidate_plugins_cache(); // version bump + update changed the set — next list_plugins must re-read
         out(tr("log.done", cur_lang()));
         0
     })
@@ -10718,14 +10821,17 @@ fn slugify_agent(name: &str) -> String {
 /// UTF-8 without BOM (Castellyn's own writer convention). Unquoted scalars match the ecosystem
 /// convention (plugin agents ship unquoted) — the description is kept single-line by the UI.
 fn render_agent_md(name: &str, description: &str, model: &str, tools: &str, prompt: &str) -> String {
+    // Sanitize each scalar: a raw newline (or a line equal to `---`) in a value would break out of the
+    // YAML frontmatter block. Collapse interior CR/LF to spaces so every value stays on one line.
+    let clean = |v: &str| v.trim().replace(['\r', '\n'], " ");
     let mut s = String::from("---\n");
-    s.push_str(&format!("name: {}\n", name.trim()));
-    s.push_str(&format!("description: {}\n", description.trim()));
+    s.push_str(&format!("name: {}\n", clean(name)));
+    s.push_str(&format!("description: {}\n", clean(description)));
     if !model.trim().is_empty() {
-        s.push_str(&format!("model: {}\n", model.trim()));
+        s.push_str(&format!("model: {}\n", clean(model)));
     }
     if !tools.trim().is_empty() {
-        s.push_str(&format!("tools: {}\n", tools.trim()));
+        s.push_str(&format!("tools: {}\n", clean(tools)));
     }
     s.push_str("---\n\n");
     s.push_str(prompt.trim_end());
@@ -11209,23 +11315,34 @@ fn delete_orphan_profile(name: String) -> Result<(), String> {
     recycle_dir(&dir.to_string_lossy())
 }
 
-/// True if any immediate child of `dir` is a reparse point (junction/symlink) — OR the dir can't be
-/// enumerated. Checks the raw FILE_ATTRIBUTE_REPARSE_POINT bit (via symlink_metadata, so the link
-/// itself is stat'd, not its target) — this catches junctions AND symlinks, which `is_symlink()`
-/// alone can miss on Windows. Fails CLOSED on a read_dir error: if we can't prove the dir is
-/// junction-free, the destructive caller must refuse rather than risk sweeping a link target.
+/// True if any descendant of `dir` (at ANY depth, not just immediate children) is a reparse point
+/// (junction/symlink) — OR the dir can't be enumerated. `recycle_dir` recycles the WHOLE subtree, so
+/// a junction nested several levels down would otherwise be followed and its target swept; the check
+/// must therefore recurse. Checks the raw FILE_ATTRIBUTE_REPARSE_POINT bit (via symlink_metadata, so
+/// the link itself is stat'd, not its target) — this catches junctions AND symlinks, which
+/// `is_symlink()` alone can miss on Windows. Fails CLOSED on a read_dir error: if we can't prove the
+/// dir is junction-free, the destructive caller must refuse rather than risk sweeping a link target.
 fn has_reparse_child(dir: &std::path::Path) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
     let Ok(entries) = std::fs::read_dir(dir) else {
         return true;
     };
-    entries.flatten().any(|e| {
-        e.path()
+    for e in entries.flatten() {
+        let p = e.path();
+        let is_reparse = p
             .symlink_metadata()
             .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
-            .unwrap_or(false)
-    })
+            .unwrap_or(false);
+        if is_reparse {
+            return true;
+        }
+        // p is a real (non-reparse) entry; descend into real subdirectories to catch a nested link.
+        if p.is_dir() && has_reparse_child(&p) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Move a path to the Windows Recycle Bin via the .NET VisualBasic helper (no extra crate).
@@ -11817,7 +11934,9 @@ fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
 /// a fresh source↔deployed comparison, so a silent no-op deploy surfaces as lingering drift.
 #[tauri::command]
 async fn run_managed_deploy() -> Result<StackDriftItem, String> {
-    let deploy = abs(MANAGED_DEPLOY_SCRIPT_REL);
+    // Double any apostrophe so the path can't break out of the single-quoted PowerShell array element
+    // below (a username with a `'` would otherwise inject into the -ArgumentList string).
+    let deploy = abs(MANAGED_DEPLOY_SCRIPT_REL).replace('\'', "''");
     tokio::task::spawn_blocking(move || {
         let inner = format!(
             "Start-Process powershell -Verb RunAs -Wait -ArgumentList \
@@ -12371,7 +12490,10 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
                     let ver = ver_e.file_name().to_string_lossy().to_string();
                     if is_stale_ver(&org, &plugin, &ver, &pairs, &triples) {
                         items.push(gc_item(
-                            format!("stale:{org}/{plugin}/{ver}"),
+                            // Qualify with the store dirname: without it two profiles' caches can
+                            // produce the same id and run_gc_delete's first-match .find() resolves the
+                            // wrong item (or misses one).
+                            format!("stale:{dirname}:{org}/{plugin}/{ver}"),
                             format!("{plugin} {ver} ({org})"),
                             ver_p.to_string_lossy().into_owned(),
                             gc_dir_size(&ver_p),
@@ -12388,7 +12510,7 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
             let p = e.path();
             if name.starts_with("temp_git_") && p.is_dir() {
                 items.push(gc_item(
-                    format!("tempgit:{name}"),
+                    format!("tempgit:{dirname}:{name}"),
                     name.clone(),
                     p.to_string_lossy().into_owned(),
                     gc_dir_size(&p),
@@ -12399,7 +12521,7 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
 
         // 3. .bak files/dirs at store and cache top-levels (case-insensitive). Suffix match only:
         // a bare `contains(".bak")` would also flag `.backup`, `x.bak2`, `x.bak.zip` for deletion.
-        for base in [store.as_path(), cache.as_path()] {
+        for (base_tag, base) in [("store", store.as_path()), ("cache", cache.as_path())] {
             for e in gc_read_dir(base) {
                 let name = e.file_name().to_string_lossy().to_string();
                 if name.to_ascii_lowercase().ends_with(".bak") {
@@ -12410,7 +12532,9 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
                         p.symlink_metadata().map(|m| m.len()).unwrap_or(0)
                     };
                     items.push(gc_item(
-                        format!("bak:{name}"),
+                        // Qualify with store dirname + which base (store vs cache) so same-named .bak
+                        // entries across profiles/bases don't collide on run_gc_delete's first-match find.
+                        format!("bak:{dirname}:{base_tag}:{name}"),
                         name.clone(),
                         p.to_string_lossy().into_owned(),
                         size,
@@ -12425,7 +12549,7 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
         if wrong_count > 0 {
             items.push(gc_item(
                 format!("wrongos:{dirname}"),
-                format!("{wrong_count} darwin/linux files"),
+                format!("{wrong_count} darwin/linux entries"),
                 store.to_string_lossy().into_owned(),
                 wrong_bytes,
                 false,
@@ -12740,6 +12864,42 @@ fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> 
 #[cfg(test)]
 mod audit_fixes_tests {
     use super::*;
+
+    #[test]
+    fn tmp_secret_base_recovers_target_from_legacy_and_unique_temp_names() {
+        // Legacy "<file>.tmp" and unique "<file>.<pid>.<seq>.tmp" both resolve to the target file, so
+        // the secret-tmp sweep still recognises them (L91/L92).
+        assert_eq!(tmp_secret_base("settings.json.tmp"), Some("settings.json"));
+        assert_eq!(tmp_secret_base("settings.json.1234.5.tmp"), Some("settings.json"));
+        assert_eq!(
+            tmp_secret_base(".credentials.json.999.0.tmp"),
+            Some(".credentials.json")
+        );
+        assert_eq!(tmp_secret_base("not-a-temp.json"), None);
+    }
+
+    #[test]
+    fn is_stale_ver_classifies_only_old_versions_of_installed_plugins() {
+        // gc deletability classification (L138): an OLD version of an INSTALLED plugin is stale; the
+        // active version and any uninstalled plugin's dirs are kept.
+        let pairs: std::collections::HashSet<(String, String)> =
+            [("acme".to_string(), "widget".to_string())].into_iter().collect();
+        let triples: std::collections::HashSet<(String, String, String)> =
+            [("acme".to_string(), "widget".to_string(), "2.0.0".to_string())]
+                .into_iter()
+                .collect();
+        assert!(is_stale_ver("acme", "widget", "1.0.0", &pairs, &triples)); // old → stale
+        assert!(!is_stale_ver("acme", "widget", "2.0.0", &pairs, &triples)); // active → keep
+        assert!(!is_stale_ver("other", "thing", "1.0.0", &pairs, &triples)); // uninstalled → keep
+        assert!(is_stale_ver("ACME", "Widget", "1.0.0", &pairs, &triples)); // case-insensitive
+    }
+
+    #[test]
+    fn valid_base_url_scheme_is_case_insensitive() {
+        // L8: RFC 3986 schemes are case-insensitive — HTTP:// / HTTPS:// must be accepted.
+        assert!(valid_base_url("HTTP://127.0.0.1:1234").is_ok());
+        assert!(valid_base_url("HttpS://127.0.0.1:8080").is_ok());
+    }
 
     #[test]
     fn extract_host_handles_ipv6_and_ports() {
@@ -13922,11 +14082,15 @@ fn rebuild_tray_menu(app: &AppHandle, lang: Lang) {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = tray_menu(app, cur_lang())?;
 
-    TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().unwrap().clone())
+    let mut builder = TrayIconBuilder::with_id("main-tray")
         .tooltip("Castellyn")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+    // Degrade to an icon-less tray rather than panic if the window icon is somehow absent.
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => reveal(app),
             "check_all" => {
@@ -14097,11 +14261,11 @@ pub(crate) fn update_tray_tooltip(app: &AppHandle) {
 }
 
 /// Register a single shortcut (no unregister_all). Errors on a bad/taken combo.
-fn register_shortcut(app: &AppHandle, _accel: &str) -> Result<(), String> {
+fn register_shortcut(app: &AppHandle, accel: &str) -> Result<(), String> {
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
     let sc =
-        Shortcut::from_str(_accel).map_err(|e| trv("err.bad_hotkey", cur_lang(), &[("e", &e)]))?;
+        Shortcut::from_str(accel).map_err(|e| trv("err.bad_hotkey", cur_lang(), &[("e", &e)]))?;
     app.global_shortcut()
         .register(sc)
         .map_err(|e| format!("{e}"))
@@ -14110,7 +14274,9 @@ fn register_shortcut(app: &AppHandle, _accel: &str) -> Result<(), String> {
 /// Register (replacing any previous) the OS-global show/hide accelerator. Errors on a bad/taken combo.
 fn register_toggle_hotkey(app: &AppHandle, accel: &str) -> Result<(), String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    register_shortcut(app, accel)?;
+    // Teardown-FIRST (mirrors set_shortcuts): clear the old registration BEFORE registering, so
+    // re-applying the SAME accel doesn't fail register() with "already registered" and leave the
+    // toggle unbound. Replaces the old register→unregister_all→register dance (which registered twice).
     let _ = app.global_shortcut().unregister_all();
     register_shortcut(app, accel)
 }
@@ -14130,7 +14296,20 @@ fn set_toggle_hotkey(app: AppHandle, accel: Option<String>) -> Result<(), String
             register_toggle_hotkey(&app, a)
         }
         None => {
-            let _ = app.global_shortcut().unregister_all();
+            // Unregister ONLY the toggle accelerator, not every OS-global shortcut (unregister_all
+            // would also drop any other registered accelerator). Look up the currently-configured
+            // toggle and drop just it.
+            use std::str::FromStr;
+            use tauri_plugin_global_shortcut::Shortcut;
+            if let Some(cur) = read_config_file()
+                .shortcuts
+                .and_then(|m| m.get("toggle_window").cloned())
+                .filter(|s| !s.trim().is_empty())
+            {
+                if let Ok(sc) = Shortcut::from_str(&cur) {
+                    let _ = app.global_shortcut().unregister(sc);
+                }
+            }
             Ok(())
         }
     }
@@ -14532,9 +14711,15 @@ fn session_spawn(
                     transient_retries += 1;
                     std::thread::sleep(std::time::Duration::from_millis(backoff));
                     match child.try_wait() {
-                        Ok(Some(_)) => break,   // child exited → real end of session
-                        Ok(None) => continue,   // still alive → the PTY hiccuped; keep reading
-                        Err(_) => continue,     // can't tell → retry within the cap
+                        Ok(Some(_)) => break, // child exited → real end of session
+                        // Alive → a transient PTY hiccup. Reset the budget so a long-lived session
+                        // isn't reaped after 3 TOTAL hiccups over its lifetime; the cap only trips on
+                        // consecutive errors where we can't confirm the child is alive.
+                        Ok(None) => {
+                            transient_retries = 0;
+                            continue;
+                        }
+                        Err(_) => continue, // can't tell → retry within the cap
                     }
                 }
                 Ok(n) => {
@@ -15272,9 +15457,15 @@ fn open_monitor_window(app: AppHandle, label: String, monitor_index: usize) -> R
                 let _ = win.set_focus();
             }
             Err(e) => {
-                // Build failed — don't fail silently. The frontend stashed the pane spec under this
-                // label (prepare_detach) before calling us; clear it so it can't leak, and tell the UI
-                // so it can re-home the pane / toast instead of "losing" the detached session.
+                // If a window with this label already exists, ANOTHER open_monitor_window won the race
+                // (a duplicate-label build error). Don't clear the registry or report a failure — the
+                // winner owns the stashed spec and the live window.
+                if app2.get_webview_window(&label).is_some() {
+                    return;
+                }
+                // Genuine build failure — don't fail silently. The frontend stashed the pane spec under
+                // this label (prepare_detach) before calling us; clear it so it can't leak, and tell the
+                // UI so it can re-home the pane / toast instead of "losing" the detached session.
                 let _ = take_detach(label.clone());
                 let _ = app2.emit(
                     "monitor-window-failed",
@@ -15308,9 +15499,10 @@ pub fn run() {
         // session, so they never collide on restore).
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_denylist(&[
-                    "mon-0", "mon-1", "mon-2", "mon-3", "mon-4", "mon-5", "mon-6", "mon-7",
-                ])
+                // Skip the ephemeral detached windows by label PREFIX (mon-* monitor fills, pane-*
+                // popped-out panes) — robust to any monitor count, unlike an enumerated mon-0..mon-7
+                // list that let a 9th+ monitor window persist/restore a stale rect. `true` = save.
+                .with_filter(|label| !(label.starts_with("mon-") || label.starts_with("pane-")))
                 .build(),
         )
         // OS-global hotkey to show/hide the window; the actual combo is registered from config in setup.
@@ -15500,10 +15692,13 @@ read_opencode_models,
             std::thread::spawn(|| {
                 let _ = is_elevated();
             });
+            // Read config once (was read twice in setup): the locale seed, start-hidden and the
+            // shortcut registration below all read from it.
+            let cfg = read_config_file();
             // Seed the backend locale from config so the tray builds in the right language. The
             // frontend also re-syncs on mount (covers a fresh config with no language yet).
-            if let Some(lang) = read_config_file().language {
-                set_cur_lang(Lang::parse(&lang));
+            if let Some(lang) = cfg.language.as_deref() {
+                set_cur_lang(Lang::parse(lang));
             }
             build_tray(app.handle())?;
             // Agent-status engine for Sessions panes (hook files + PTY activity → events).
@@ -15519,7 +15714,6 @@ read_opencode_models,
             schedules_watch::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();
-            let cfg = read_config_file();
             // Start minimized to tray if configured.
             if cfg.start_hidden {
                 if let Some(w) = app.get_webview_window("main") {
@@ -15527,32 +15721,13 @@ read_opencode_models,
                 }
             }
             // Register all configured shortcuts. A bad/taken combo must not block startup.
-            use tauri_plugin_global_shortcut::GlobalShortcutExt;
             if let Some(shortcuts) = cfg.shortcuts.as_ref() {
-                let count: usize = shortcuts
-                    .values()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .map(|accel| {
-                        if let Err(e) = register_shortcut(app.handle(), accel) {
-                            eprintln!("shortcut register failed ({accel}): {e}");
-                            0
-                        } else {
-                            1
-                        }
-                    })
-                    .sum();
-                if count > 1 {
-                    // If >1 registered, the probe-registers in the loop left them all active but the
-                    // first probe's unregister_all + re-register would orphan the others. The probe-only
-                    // loop above already registered them; we unregister_all and re-register cleanly.
-                    let _ = app.global_shortcut().unregister_all();
-                    for accel in shortcuts
-                        .values()
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                    {
-                        let _ = register_shortcut(app.handle(), accel);
+                // register_shortcut does NOT unregister_all, so one pass registers each accel cleanly.
+                // The old `if count > 1 { unregister_all + re-register }` block was dead churn (stale
+                // copy-paste from an earlier probe-register design).
+                for accel in shortcuts.values().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    if let Err(e) = register_shortcut(app.handle(), accel) {
+                        eprintln!("shortcut register failed ({accel}): {e}");
                     }
                 }
             }

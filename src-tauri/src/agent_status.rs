@@ -450,8 +450,16 @@ fn prune_stale_hook_files() {
 pub fn start(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         prune_stale_hook_files();
+        // Re-prune periodically (~every 5 min) so a long-uptime session self-cleans hook files that go
+        // stale mid-run — the one startup prune never revisits them.
+        const PRUNE_EVERY: u32 = (5 * 60 * 1000 / POLL_MS) as u32;
+        let mut ticks: u32 = 0;
         loop {
         std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+        ticks = ticks.wrapping_add(1);
+        if ticks.is_multiple_of(PRUNE_EVERY) {
+            prune_stale_hook_files();
+        }
         crate::run_guarded("agent-status", || {
         // Nothing tracked (no session panes open) → no state can change, so skip the whole tick
         // instead of stat-ing the hook dir twice a second for the lifetime of the app.
