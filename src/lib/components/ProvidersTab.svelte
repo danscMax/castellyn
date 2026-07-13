@@ -80,14 +80,108 @@
   const engineList = $derived(engines ?? []);
   const providerList = $derived(providers ?? []);
   const profileNames = $derived(providerList.map((p) => p.name));
-  // Engines that are running AND expose a dashboard → "open all" target.
-  const runningDashboards = $derived(engineList.filter((e) => e.running && e.dashboardUrl));
   // LLM-stack services (from stack.json, the single source of truth).
   const stackList = $derived(stack ?? []);
 
-  // Collapsible heavy sections (this screen is long) — open by default.
-  let stackOpen = $state(true);
-  let enginesOpen = $state(true);
+  // B2: unified "Services" — one card per physical service (joined by port), merging the LLM-stack
+  // lifecycle view and the engines wiring view. A port present only in stack.json (fork backends)
+  // shows lifecycle actions; one that is also a bindable engine adds wiring. Order: stack first.
+  type MergedService = {
+    key: string;
+    name: string;
+    port: number;
+    protocol: string;
+    running: boolean;
+    baseUrl: string;
+    dashboard: string;
+    paid: boolean;
+    stack: StackService | null;
+    engine: EngineStatus | null;
+  };
+  const serviceList = $derived.by<MergedService[]>(() => {
+    const byPort = new Map<number, MergedService>();
+    for (const s of stackList) {
+      byPort.set(s.port, {
+        key: 'stk:' + s.id,
+        name: s.name,
+        port: s.port,
+        protocol: s.protocol,
+        running: s.running,
+        baseUrl: 'http://127.0.0.1:' + s.port,
+        dashboard: s.dashboard,
+        paid: s.group === 'router',
+        stack: s,
+        engine: null
+      });
+    }
+    for (const e of engineList) {
+      const cur = byPort.get(e.port);
+      if (cur) {
+        cur.engine = e;
+        if (e.baseUrl) cur.baseUrl = e.baseUrl;
+        if (e.dashboardUrl) cur.dashboard = e.dashboardUrl;
+        cur.running = cur.running || e.running;
+      } else {
+        byPort.set(e.port, {
+          key: 'eng:' + e.id,
+          name: e.name,
+          port: e.port,
+          protocol: e.protocol,
+          running: e.running,
+          baseUrl: e.baseUrl,
+          dashboard: e.dashboardUrl,
+          paid: false,
+          stack: null,
+          engine: e
+        });
+      }
+    }
+    return [...byPort.values()];
+  });
+  // Running services that expose a dashboard → "open all" target (stack or engine origin).
+  const openableDashboards = $derived(serviceList.filter((s) => s.running && s.dashboard));
+  // Secondary per-card actions live in a kebab (keeps the card from becoming a wall of buttons).
+  function svcMenu(svc: MergedService) {
+    const items: { label: string; title?: string; onClick: () => void; disabled?: boolean }[] = [];
+    if (svc.dashboard) {
+      items.push({
+        label: t('providers.dashboard'),
+        title: svc.running
+          ? t('providers.openDashboardTitle', { url: svc.dashboard })
+          : t('providers.dashboardWhenRunningTitle'),
+        disabled: !svc.running,
+        onClick: () => onOpenUrl(svc.dashboard)
+      });
+    }
+    if (svc.engine) {
+      const e = svc.engine;
+      items.push({
+        label: t('providers.portUrl'),
+        title: t('providers.editEndpointTitle'),
+        disabled: busy,
+        onClick: () => openEdit(e)
+      });
+    }
+    if (svc.stack && !svc.running) {
+      const s = svc.stack;
+      items.push({
+        label: t('providers.openLog'),
+        title: t('providers.openLogTip', { name: svc.name }),
+        onClick: () => openStackLog(s.id)
+      });
+    }
+    const hc = health['svc:' + svc.port];
+    items.push({
+      label: t('common.check'),
+      title: t('providers.checkTip'),
+      disabled: busy || hc === 'checking',
+      onClick: () => checkUrl('svc:' + svc.port, svc.baseUrl, svc.protocol)
+    });
+    return items;
+  }
+
+  // Collapsible heavy section (this screen is long) — open by default.
+  let servicesOpen = $state(true);
   // Redesign 2C: per-card "details" expander — PID/uptime are diagnostics, not headline info.
   let advOpen = $state<Record<string, boolean>>({});
   // Anchor chips: the tab is long — jump straight to a section.
@@ -378,46 +472,54 @@
 
   <!-- Anchor chips (redesign 2C): quick jumps down the long page. -->
   <div class="mb-sw-4 flex flex-wrap gap-sw-2">
-    <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-stack')}>{t('providers.stackHeading')}</button>
-    <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-engines')}>{t('providers.enginesHeading')}</button>
+    <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-services')}>{t('providers.servicesHeading')}</button>
     <button class="badge badge-muted chip-btn" onclick={() => jumpTo('sec-my')}>{t('myProviders.title')}</button>
   </div>
 
-  <!-- LLM stack (single source of truth: stack.json) -->
-  {#if stackList.length}
-    <section class="mb-sw-6" id="sec-stack">
-      <div class="mb-sw-2 flex items-start justify-between gap-sw-2">
-        <button class="flex min-w-0 items-center gap-sw-2 border-0 bg-transparent p-0 text-left" onclick={() => (stackOpen = !stackOpen)}>
-          <span class="text-sw-text-muted transition-transform" class:rotate-90={stackOpen}>▸</span>
-          <span class="min-w-0">
-            <span class="block section-title">{t('providers.stackHeading')}</span>
-            <span class="block text-sw-xs text-sw-text-muted">{t('providers.stackSub')}</span>
-          </span>
+  <!-- B2: unified Services — LLM-stack lifecycle + engine wiring merged into one card per port. -->
+  <section class="mb-sw-6" id="sec-services">
+    <div class="mb-sw-2 flex items-start justify-between gap-sw-2">
+      <button class="flex min-w-0 items-center gap-sw-2 border-0 bg-transparent p-0 text-left" onclick={() => (servicesOpen = !servicesOpen)}>
+        <span class="text-sw-text-muted transition-transform" class:rotate-90={servicesOpen}>▸</span>
+        <span class="min-w-0">
+          <span class="block section-title">{t('providers.servicesHeading')}</span>
+          <span class="block text-sw-xs text-sw-text-muted">{t('providers.servicesSub')}</span>
+        </span>
+      </button>
+      <div class="flex shrink-0 flex-wrap justify-end gap-sw-2">
+        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start')}
+          title={t('providers.stackStartTip')}>{stackBusy ? t('providers.busy') : t('providers.stackStartAll')}</button>
+        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop')}
+          title={t('providers.stackStopTip')}>{stopBusy ? t('providers.busy') : t('providers.stackStopAll')}</button>
+        <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !openableDashboards.length}
+          onclick={() => openableDashboards.forEach((s) => onOpenUrl(s.dashboard))}
+          title={openableDashboards.length
+            ? t('providers.openAllDashboardsTitle', { n: openableDashboards.length })
+            : t('providers.openAllDashboardsNoneTitle')}>
+          {t('providers.openAllDashboards')}{openableDashboards.length ? ` (${openableDashboards.length})` : ''}
         </button>
-        <div class="flex shrink-0 gap-sw-2">
-          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start')}
-            title={t('providers.stackStartTip')}>{stackBusy ? t('providers.busy') : t('providers.stackStartAll')}</button>
-          <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop')}
-            title={t('providers.stackStopTip')}>{stopBusy ? t('providers.busy') : t('providers.stackStopAll')}</button>
-        </div>
       </div>
-      {#if stackOpen}
+    </div>
+    {#if servicesOpen}
+      {#if serviceList.length}
       <div class="card-grid">
-        {#each stackList as s (s.id)}
-          {@const hc = health['stack:' + s.id]}
-          <div class="sw-card flex flex-col gap-sw-2" class:opacity-60={!s.enabled}>
+        {#each serviceList as svc (svc.key)}
+          {@const hc = health['svc:' + svc.port]}
+          {@const s = svc.stack}
+          {@const e = svc.engine}
+          <div class="sw-card flex flex-col gap-sw-2" class:opacity-60={s ? !s.enabled : false}>
             <div class="flex items-start justify-between gap-sw-2">
               <div class="min-w-0">
-                <h3 class="truncate font-medium" title={s.name}>{s.name}</h3>
-                <p class="truncate font-mono text-[11px] text-sw-text-muted">:{s.port} · {s.protocol}</p>
-                {#if s.running}
-                  {@const pr = procByPort.get(s.port)}
+                <h3 class="truncate font-medium" title={svc.name}>{svc.name}</h3>
+                <p class="truncate font-mono text-[11px] text-sw-text-muted">{svc.baseUrl} · :{svc.port} · {svc.protocol}</p>
+                {#if svc.running && s}
+                  {@const pr = procByPort.get(svc.port)}
                   {#if pr}
                     <!-- Diagnostics live behind "Details" — the headline stays name/port/state. -->
-                    <button class="adv-toggle" onclick={() => (advOpen[s.id] = !advOpen[s.id])} aria-expanded={!!advOpen[s.id]}>
-                      {advOpen[s.id] ? '▾' : '▸'} {t('providers.advanced')}
+                    <button class="adv-toggle" onclick={() => (advOpen[svc.key] = !advOpen[svc.key])} aria-expanded={!!advOpen[svc.key]}>
+                      {advOpen[svc.key] ? '▾' : '▸'} {t('providers.advanced')}
                     </button>
-                    {#if advOpen[s.id]}
+                    {#if advOpen[svc.key]}
                       <p class="truncate font-mono text-[11px] text-sw-text-muted" title={t('providers.procTitle', { pid: pr.pid })}>
                         PID {pr.pid}{fmtUptime(pr.uptimeSec) ? ` · ${fmtUptime(pr.uptimeSec)}` : ''}
                       </p>
@@ -426,43 +528,76 @@
                 {/if}
               </div>
               <div class="flex shrink-0 flex-col items-end gap-1">
-                {#if s.enabled}
-                  <span class="badge {s.running ? 'badge-ok' : 'badge-muted'}"
-                    title={s.running ? t('providers.portListening') : t('providers.portNotResponding')}>
-                    {s.running ? t('providers.running') : t('providers.stopped')}
-                  </span>
-                {:else}
+                {#if s && !s.enabled}
                   <span class="badge badge-muted" title={t('providers.svcDisabled')}>{t('providers.svcDisabled')}</span>
+                {:else}
+                  <span class="badge {svc.running ? 'badge-ok' : 'badge-muted'}"
+                    title={svc.running ? t('providers.portListening') : t('providers.portNotResponding')}>
+                    {svc.running ? t('providers.running') : t('providers.stopped')}
+                  </span>
                 {/if}
-                {#if s.group === 'router'}
+                {#if e}
+                  <span class="badge {svc.protocol === 'anthropic' ? 'badge-info' : 'badge-warn'}"
+                    title={svc.protocol === 'anthropic' ? t('providers.protoAnthropicTitle') : t('providers.protoOpenaiTitle')}>
+                    {svc.protocol}
+                  </span>
+                {/if}
+                {#if svc.paid}
                   <span class="badge badge-muted" title={t('providers.stackPaidTip')}>💲 {t('providers.stackPaid')}</span>
+                {/if}
+                {#if e && e.router && e.installed !== null}
+                  <span class="badge {e.installed ? 'badge-ok' : 'badge-muted'}"
+                    title={e.installed ? t('providers.ccrInstalledTitle') : t('providers.ccrNotInstalledTitle')}>
+                    {e.installed ? t('providers.installed') : t('providers.notInstalled')}
+                  </span>
+                {/if}
+                {#if s}
+                  <span class="badge badge-muted" title={t('providers.managedTip')}>{t('providers.managed')}</span>
                 {/if}
               </div>
             </div>
-            <div class="mt-auto flex flex-wrap gap-sw-2 border-t border-sw-border pt-sw-2">
-              {#if s.enabled}
-                {#if s.running}
+            {#if e && editId === e.id}
+              <div class="rounded-sw-md border border-sw-border p-sw-2">
+                <p class="mb-sw-2 text-sw-xs font-medium text-sw-text-secondary">{t('providers.endpointEditorTitle')}</p>
+                <div class="flex flex-col gap-sw-2">
+                  <input class="sw-input text-sw-xs" bind:value={editUrl} placeholder="http://localhost:1234" spellcheck="false" title={t('providers.editUrlInputTip')} />
+                  <input class="sw-input text-sw-xs" type="number" bind:value={editPort} placeholder={t('providers.portPlaceholder')} title={t('providers.editPortInputTip')} />
+                </div>
+                <div class="mt-sw-2 flex gap-sw-2">
+                  <button class="sw-btn text-sw-xs" onclick={saveEdit} title={t('providers.saveEngineTitle')}>{t('providers.save')}</button>
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (editId = null)} title={t('providers.cancelEditTip')}>{t('common.cancel')}</button>
+                </div>
+              </div>
+            {/if}
+            <div class="mt-auto flex flex-wrap items-center gap-sw-2 border-t border-sw-border pt-sw-2">
+              {#if s && s.enabled}
+                {#if svc.running}
                   <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stopBusy} onclick={() => onStack?.('stop', s.id)}
-                    title={t('providers.stackStopOneTip', { name: s.name })}>{t('providers.stop')}</button>
+                    title={t('providers.stackStopOneTip', { name: svc.name })}>{t('providers.stop')}</button>
                   <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('restart', s.id)}
-                    title={t('providers.stackRestartOneTip', { name: s.name })}>{t('providers.restart')}</button>
+                    title={t('providers.stackRestartOneTip', { name: svc.name })}>{t('providers.restart')}</button>
                 {:else}
                   <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={stackBusy} onclick={() => onStack?.('start', s.id)}
-                    title={t('providers.stackStartOneTip', { name: s.name })}>{t('providers.start')}</button>
-                  <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => openStackLog(s.id)}
-                    title={t('providers.openLogTip', { name: s.name })}>{t('providers.openLog')}</button>
+                    title={t('providers.stackStartOneTip', { name: svc.name })}>{t('providers.start')}</button>
                 {/if}
               {/if}
-              {#if s.dashboard}
-                <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!s.running} onclick={() => onOpenUrl(s.dashboard)}
-                  title={s.running ? t('providers.openDashboardTitle', { url: s.dashboard }) : t('providers.dashboardWhenRunningTitle')}>
-                  {t('providers.dashboard')}
-                </button>
+              {#if e}
+                {#if e.router && e.installed === false}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={onRouterInstall}
+                    title={t('providers.installCcrTitle')}>{t('providers.install')}</button>
+                {:else if e.protocol === 'anthropic' && !e.router}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !e.running} onclick={() => openConnect(e)}
+                    title={e.running ? t('providers.bindReadyTitle') : t('providers.bindNotReadyTitle')}>
+                    {t('providers.bindToProfile')}
+                  </button>
+                {:else if e.protocol === 'openai' && !e.router}
+                  <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !e.running} onclick={() => openConnect(e)}
+                    title={e.running ? t('providers.connectReadyTitle') : t('providers.connectNotReadyTitle')}>
+                    {t('providers.connectViaRouter')}
+                  </button>
+                {/if}
               {/if}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || hc === 'checking'} onclick={() => checkUrl('stack:' + s.id, 'http://127.0.0.1:' + s.port, s.protocol)}
-                title={t('providers.checkTip')}>
-                {hc === 'checking' ? t('common.busy') : t('common.check')}
-              </button>
+              <DropdownMenu title={t('providers.moreActions')} items={svcMenu(svc)} />
             </div>
             {#if hc && hc !== 'checking'}
               <p class="text-sw-xs {statusTextClass(hc.ok ? 'ok' : 'bad')}">{hc.ok ? '✓' : '✗'} {hc.detail}</p>
@@ -470,110 +605,11 @@
           </div>
         {/each}
       </div>
+      {:else}
+        <EmptyState icon={Plug} description={t('providers.noEngines')} />
       {/if}
-    </section>
-  {/if}
-
-  <!-- Engines -->
-  <div class="mb-sw-2 flex items-center justify-between gap-sw-2" id="sec-engines">
-    <button class="flex min-w-0 items-center gap-sw-2 border-0 bg-transparent p-0 text-left" onclick={() => (enginesOpen = !enginesOpen)}>
-      <span class="text-sw-text-muted transition-transform" class:rotate-90={enginesOpen}>▸</span>
-      <span class="section-title">{t('providers.enginesHeading')}</span>
-    </button>
-    {#if engineList.length}
-      <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !runningDashboards.length}
-        onclick={() => runningDashboards.forEach((e) => onOpenUrl(e.dashboardUrl))}
-        title={runningDashboards.length
-          ? t('providers.openAllDashboardsTitle', { n: runningDashboards.length })
-          : t('providers.openAllDashboardsNoneTitle')}>
-        {t('providers.openAllDashboards')}{runningDashboards.length ? ` (${runningDashboards.length})` : ''}
-      </button>
     {/if}
-  </div>
-  {#if enginesOpen}
-  <p class="mb-sw-2 text-sw-xs text-sw-text-muted">{t('providers.enginesDesc')}</p>
-  {#if engineList.length}
-    <div class="card-grid">
-      {#each engineList as e (e.id)}
-        {@const he = health['engine:' + e.id]}
-        <div class="sw-card flex flex-col gap-sw-3">
-          <div class="flex items-start justify-between gap-sw-2">
-            <div class="min-w-0">
-              <h3 class="truncate font-medium" title={e.name}>{e.name}</h3>
-              <p class="truncate font-mono text-[11px] text-sw-text-muted">{e.baseUrl} · :{e.port}</p>
-            </div>
-            <div class="flex shrink-0 flex-col items-end gap-1">
-              <span class="badge {e.running ? 'badge-ok' : 'badge-muted'}" title={e.running ? t('providers.portListening') : t('providers.portNotResponding')}>
-                {e.running ? t('providers.running') : t('providers.stopped')}
-              </span>
-              <span class="badge {e.protocol === 'anthropic' ? 'badge-info' : 'badge-warn'}"
-                title={e.protocol === 'anthropic' ? t('providers.protoAnthropicTitle') : t('providers.protoOpenaiTitle')}>
-                {e.protocol}
-              </span>
-              {#if e.router && e.installed !== null}
-                <span class="badge {e.installed ? 'badge-ok' : 'badge-muted'}"
-                  title={e.installed ? t('providers.ccrInstalledTitle') : t('providers.ccrNotInstalledTitle')}>
-                  {e.installed ? t('providers.installed') : t('providers.notInstalled')}
-                </span>
-              {/if}
-            </div>
-          </div>
-          {#if editId === e.id}
-            <div class="rounded-sw-md border border-sw-border p-sw-2">
-              <p class="mb-sw-2 text-sw-xs font-medium text-sw-text-secondary">{t('providers.endpointEditorTitle')}</p>
-              <div class="flex flex-col gap-sw-2">
-                <input class="sw-input text-sw-xs" bind:value={editUrl} placeholder="http://localhost:1234" spellcheck="false" title={t('providers.editUrlInputTip')} />
-                <input class="sw-input text-sw-xs" type="number" bind:value={editPort} placeholder={t('providers.portPlaceholder')} title={t('providers.editPortInputTip')} />
-              </div>
-              <div class="mt-sw-2 flex gap-sw-2">
-                <button class="sw-btn text-sw-xs" onclick={saveEdit} title={t('providers.saveEngineTitle')}>{t('providers.save')}</button>
-                <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (editId = null)} title={t('providers.cancelEditTip')}>{t('common.cancel')}</button>
-              </div>
-            </div>
-          {/if}
-
-          <div class="mt-auto flex flex-wrap gap-sw-2 border-t border-sw-border pt-sw-2">
-            {#if e.router && e.installed === false}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={onRouterInstall}
-                title={t('providers.installCcrTitle')}>{t('providers.install')}</button>
-            {/if}
-            {#if e.protocol === 'anthropic' && !e.router}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !e.running} onclick={() => openConnect(e)}
-                title={e.running
-                  ? t('providers.bindReadyTitle')
-                  : t('providers.bindNotReadyTitle')}>
-                {t('providers.bindToProfile')}
-              </button>
-            {/if}
-            {#if e.protocol === 'openai' && !e.router}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !e.running} onclick={() => openConnect(e)}
-                title={e.running
-                  ? t('providers.connectReadyTitle')
-                  : t('providers.connectNotReadyTitle')}>
-                {t('providers.connectViaRouter')}
-              </button>
-            {/if}
-            {#if e.dashboardUrl}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!e.running} onclick={() => onOpenUrl(e.dashboardUrl)}
-                title={e.running ? t('providers.openDashboardTitle', { url: e.dashboardUrl }) : t('providers.dashboardWhenRunningTitle')}>{t('providers.dashboard')}</button>
-            {/if}
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => openEdit(e)}
-              title={t('providers.editEndpointTitle')}>{t('providers.portUrl')}</button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || he === 'checking'} onclick={() => checkUrl('engine:' + e.id, e.baseUrl, e.protocol)}
-              title={t('providers.checkTip')}>
-              {he === 'checking' ? t('common.busy') : t('common.check')}
-            </button>
-          </div>
-          {#if he && he !== 'checking'}
-            <p class="text-sw-xs {statusTextClass(he.ok ? 'ok' : 'bad')}">{he.ok ? '✓' : '✗'} {he.detail}</p>
-          {/if}
-        </div>
-      {/each}
-    </div>
-  {:else}
-    <EmptyState icon={Plug} description={t('providers.noEngines')} />
-  {/if}
-  {/if}
+  </section>
   {/if}
 
   <!-- Provider per profile lives on the Profiles tab (single source of truth) — no duplicate
