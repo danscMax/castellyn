@@ -228,8 +228,8 @@
     { key: 'language', label: t('forks.ghColLang'), width: '80px', sortable: true },
     { key: 'stars', label: t('forks.ghColStars'), width: '56px', align: 'right', sortable: true },
     { key: 'updated', label: t('forks.ghColUpdated'), width: '100px', sortable: true },
-    { key: 'kind', label: t('forks.ghColKind'), width: '110px' },
-    { key: 'actions', label: t('forks.ghColActions'), width: '190px', align: 'right', interactive: true }
+    { key: 'kind', label: t('forks.ghColKind'), width: '90px' },
+    { key: 'actions', label: t('forks.ghColActions'), width: '165px', align: 'right', interactive: true }
   ]);
   function ghSort(g: Gh, key: string): string | number {
     if (key === 'full') return g.nameWithOwner.toLowerCase();

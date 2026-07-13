@@ -5,6 +5,7 @@ export default {
   installed: 'installed',
   notInstalled: 'not installed',
   notInstalledHint: 'This harness was not found on this machine',
+  claudeHomeNote: 'Castellyn’s home harness — its skills, providers and MCP are managed on the Profiles, Providers and MCP tabs.',
   skills: 'Skills',
   providers: 'Providers',
   rtk: 'RTK',

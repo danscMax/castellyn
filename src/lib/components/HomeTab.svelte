@@ -207,8 +207,6 @@
   const attention = $derived(chips.filter((c) => c.level === 'bad' || c.level === 'warn'));
   const calm = $derived(chips.filter((c) => c.level !== 'bad' && c.level !== 'warn'));
   const issues = $derived(attention.length);
-  // U4: the quick-action bar shows ONE contextual stack button (like the stack chip), not both.
-  const stackUp = $derived(((stack ?? []).filter((s) => s.enabled && s.running)).length);
   const overall = $derived(
     chips.some((c) => c.level === 'bad' || c.level === 'warn') ? 'warn' : chips.some((c) => c.level === 'ok') ? 'ok' : 'muted'
   );
@@ -266,15 +264,8 @@
         <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('refresh-forks')}>
           {#if busyAction === 'refresh-forks'}<Spinner size={12} />{/if}{t('page.home_refreshForks')}
         </button>
-        {#if stackUp === 0}
-          <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('start-stack')}>
-            {#if busyAction === 'start-stack'}<Spinner size={12} />{/if}{t('page.home_stackStart')}
-          </button>
-        {:else}
-          <button class="sw-btn sw-btn-ghost text-sw-xs inline-flex items-center gap-sw-1" disabled={busy} title={busy ? t('page.home_busy') : undefined} onclick={() => onAction('stop-stack')}>
-            {#if busyAction === 'stop-stack'}<Spinner size={12} />{/if}{t('page.home_stackStop')}
-          </button>
-        {/if}
+        <!-- B1: stack start/stop lives on the LLM-stack tile below (with its running-count context) —
+             not duplicated here. Check-all / Refresh-forks stay: they have no tile of their own. -->
       </span>
     {/if}
   </div>

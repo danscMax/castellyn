@@ -30,6 +30,7 @@
   import DataTable, { type DTColumn } from './DataTable.svelte';
   import MatrixRowEditor from './MatrixRowEditor.svelte';
   import MatrixControls from './MatrixControls.svelte';
+  import Segmented from './Segmented.svelte';
   import { MatrixState } from '$lib/matrixState.svelte';
   import type { MatrixApply } from '$lib/ipc';
 
@@ -608,10 +609,15 @@
   <div class="mb-sw-3 flex flex-wrap items-center justify-between gap-sw-2">
     <h3 class="font-semibold">{t('profiles.menuViewConfig')}: {viewerName}</h3>
     <div class="flex gap-sw-2">
-      <button class="sw-btn text-sw-xs {viewerWhich === 'settings' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-        onclick={() => setWhich('settings')}>{t('profiles.viewSettings')}</button>
-      <button class="sw-btn text-sw-xs {viewerWhich === 'claude' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-        onclick={() => setWhich('claude')}>{t('profiles.viewClaudeMd')}</button>
+      <Segmented
+        compact
+        value={viewerWhich}
+        options={[
+          { value: 'settings', label: t('profiles.viewSettings') },
+          { value: 'claude', label: t('profiles.viewClaudeMd') }
+        ]}
+        onChange={(v) => setWhich(v)}
+      />
       <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!viewerContent} onclick={() => copyText(viewerDisplay)}
         title={t('common.copy')}>{t('common.copy')}</button>
     </div>

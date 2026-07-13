@@ -5,6 +5,7 @@ export default {
   installed: '已安装',
   notInstalled: '未安装',
   notInstalledHint: '此机器上未找到该工具',
+  claudeHomeNote: 'Castellyn 的主工具 — 其技能、提供商和 MCP 在“配置”“提供商”和 MCP 标签页中管理。',
   skills: '技能',
   providers: '提供商',
   rtk: 'RTK',

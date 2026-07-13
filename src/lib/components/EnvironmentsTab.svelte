@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
+  import Segmented from './Segmented.svelte';
   import { Compass, Check, X } from '@lucide/svelte';
 
   let {
@@ -82,12 +83,16 @@
     </div>
     <div class="flex shrink-0 items-center gap-sw-2">
       <!-- Cards / Table view switch (#20) -->
-      <div class="flex rounded-md border border-sw-border p-[2px] text-sw-xs">
-        <button class="rounded px-sw-2 py-[2px] {view === 'cards' ? 'bg-sw-bg-secondary text-sw-text' : 'text-sw-text-muted'}"
-          onclick={() => (view = 'cards')}>{t('environments.viewCards')}</button>
-        <button class="rounded px-sw-2 py-[2px] {view === 'table' ? 'bg-sw-bg-secondary text-sw-text' : 'text-sw-text-muted'}"
-          onclick={showTable}>{t('environments.viewTable')}</button>
-      </div>
+      <Segmented
+        compact
+        value={view}
+        options={[
+          { value: 'cards', label: t('environments.viewCards') },
+          { value: 'table', label: t('environments.viewTable') }
+        ]}
+        onChange={(v) => (v === 'table' ? showTable() : (view = 'cards'))}
+        ariaLabel={t('environments.viewCards')}
+      />
       <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onRefresh}
         title={t('environments.refreshTitle')}>
         {running === 'envs' ? t('common.busy') : t('common.refresh')}
@@ -231,6 +236,10 @@
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
                   onclick={onConnectOmniroute} title={t('environments.connectOmnirouteTitle')}>{t('environments.connectOmniroute')}</button>
               </div>
+            {:else if e.id === 'claude'}
+              <!-- C2: the home harness has no deploy actions of its own — say so instead of leaving the
+                   card looking half-empty next to OpenCode/Codex. -->
+              <p class="text-sw-xs text-sw-text-muted">{t('environments.claudeHomeNote')}</p>
             {/if}
 
             {#if !e.configOk}

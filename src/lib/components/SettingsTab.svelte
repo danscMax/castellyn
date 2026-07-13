@@ -27,6 +27,7 @@
   import { pushToast } from '$lib/toast.svelte';
   import Toggle from './Toggle.svelte';
   import Select from './Select.svelte';
+  import Segmented from './Segmented.svelte';
   import { uiPrefs } from '$lib/uiPrefs.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import EmptyState from './EmptyState.svelte';
@@ -389,14 +390,16 @@
         <div class="font-medium">{t('settings.theme')}</div>
         <div class="text-sw-sm text-sw-text-secondary">{t('settings.themeDesc')}</div>
       </div>
-      <div class="flex gap-sw-2">
-        <button class="sw-btn {theme === 'dark' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-          onclick={() => onSetTheme('dark')} title={t('settings.themeDarkTip')}>{t('settings.themeDark')}</button>
-        <button class="sw-btn {theme === 'light' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-          onclick={() => onSetTheme('light')} title={t('settings.themeLightTip')}>{t('settings.themeLight')}</button>
-        <button class="sw-btn {theme === 'system' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-          onclick={() => onSetTheme('system')} title={t('settings.themeSystemTip')}>{t('settings.themeSystem')}</button>
-      </div>
+      <Segmented
+        value={theme}
+        options={[
+          { value: 'dark', label: t('settings.themeDark'), title: t('settings.themeDarkTip') },
+          { value: 'light', label: t('settings.themeLight'), title: t('settings.themeLightTip') },
+          { value: 'system', label: t('settings.themeSystem'), title: t('settings.themeSystemTip') }
+        ]}
+        onChange={(v) => onSetTheme(v)}
+        ariaLabel={t('settings.theme')}
+      />
     </div>
     {/if}
 
@@ -409,12 +412,15 @@
       </div>
       <div class="flex items-center justify-between gap-sw-4">
         <div class="text-sw-sm text-sw-text-secondary">{t('settings.density')}</div>
-        <div class="flex gap-sw-2">
-          <button class="sw-btn {density === 'comfortable' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-            onclick={() => onSetDensity?.('comfortable')}>{t('settings.densityComfortable')}</button>
-          <button class="sw-btn {density === 'compact' ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-            onclick={() => onSetDensity?.('compact')}>{t('settings.densityCompact')}</button>
-        </div>
+        <Segmented
+          value={density}
+          options={[
+            { value: 'comfortable', label: t('settings.densityComfortable') },
+            { value: 'compact', label: t('settings.densityCompact') }
+          ]}
+          onChange={(v) => onSetDensity?.(v)}
+          ariaLabel={t('settings.density')}
+        />
       </div>
       <label class="flex items-center justify-between gap-sw-4">
         <span class="text-sw-sm">{t('settings.fullWidth')}
@@ -440,17 +446,12 @@
         <div class="font-medium">{t('settings.language')}</div>
         <div class="text-sw-sm text-sw-text-secondary">{t('settings.languageDesc')}</div>
       </div>
-      <div class="flex gap-sw-2">
-        {#each locale.supported as loc (loc)}
-          <button
-            class="sw-btn {locale.current === loc ? 'sw-btn-primary' : 'sw-btn-ghost'}"
-            onclick={() => { locale.set(loc as Locale); setLanguage(loc).catch((e) => pushToast({ kind: 'error', title: t('common.error'), detail: String(e) })); }}
-            title={t('settings.languageTip')}
-          >
-            {getLocaleName(loc as Locale)}
-          </button>
-        {/each}
-      </div>
+      <Segmented
+        value={locale.current}
+        options={locale.supported.map((loc) => ({ value: loc, label: getLocaleName(loc as Locale), title: t('settings.languageTip') }))}
+        onChange={(loc) => { locale.set(loc as Locale); setLanguage(loc).catch((e) => pushToast({ kind: 'error', title: t('common.error'), detail: String(e) })); }}
+        ariaLabel={t('settings.language')}
+      />
     </div>
 
     {/if}

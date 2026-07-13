@@ -213,10 +213,10 @@
     { key: 'name', label: t('plugins.colName'), sortable: true, grow: true },
     // V2: the fixed columns summed past the content width at 1440px → horizontal scroll with the
     // status/actions columns clipped. Trimmed to real content; name (grow) + spacer absorb slack.
-    { key: 'market', label: t('plugins.colMarket'), sortable: true, width: '110px' },
-    { key: 'version', label: t('plugins.colVersion'), sortable: true, width: '110px' },
-    { key: 'desc', label: t('plugins.skillColDesc'), width: '240px' },
-    { key: 'contents', label: t('plugins.colContents'), width: '110px' },
+    { key: 'market', label: t('plugins.colMarket'), sortable: true, width: '96px' },
+    { key: 'version', label: t('plugins.colVersion'), sortable: true, width: '96px' },
+    { key: 'desc', label: t('plugins.skillColDesc'), width: '190px' },
+    { key: 'contents', label: t('plugins.colContents'), width: '92px' },
     { key: 'status', label: t('plugins.colStatus'), sortable: true, align: 'center', width: '74px', interactive: true },
     { key: 'actions', label: t('plugins.colActions'), align: 'right', width: '124px', interactive: true }
   ]);

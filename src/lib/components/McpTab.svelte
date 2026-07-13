@@ -136,8 +136,8 @@
     // note and the last chip clipped against the actions column on a 1440px window.
     { key: 'command', label: t('mcp.colCommand'), width: '200px' },
     { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
-    { key: 'profiles', label: t('mcp.colProfiles'), width: '300px', interactive: true },
-    { key: 'actions', label: t('mcp.colActions'), width: '200px', align: 'right', interactive: true }
+    { key: 'profiles', label: t('mcp.colProfiles'), width: '230px', interactive: true },
+    { key: 'actions', label: t('mcp.colActions'), width: '140px', align: 'right', interactive: true }
   ]);
   type Srv = (typeof sortedSource)[number];
   function sortVal(s: Srv, key: string): string | number {

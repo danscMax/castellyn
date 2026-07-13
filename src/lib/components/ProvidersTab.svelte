@@ -286,6 +286,19 @@
     mpCurrent = p;
     mpDlgOpen = true;
   }
+  // A2: secondary my-provider actions (balance/keys/rotate/edit/delete) live in a per-card kebab so
+  // the card shows just Connect + Check inline instead of a 7-button wall.
+  function mpMenu(p: MyProvider, balChecking: boolean) {
+    const items: { label: string; title?: string; onClick: () => void; disabled?: boolean; danger?: boolean }[] = [];
+    if (p.keyCount > 1) {
+      items.push({ label: t('myProviders.nextKey'), title: t('myProviders.nextKeyTitle'), disabled: busy, onClick: () => onMyProviderNextKey(p.id) });
+    }
+    items.push({ label: t('myProviders.balance'), title: t('myProviders.balanceTitle'), disabled: busy || !p.hasKey || balChecking, onClick: () => checkBalance(p.id) });
+    items.push({ label: t('myProviders.keys') + (p.keyCount > 1 ? ` (${p.keyCount})` : ''), title: t('myProviders.keysTitle'), onClick: () => toggleKeys(p.id) });
+    items.push({ label: t('myProviders.edit'), title: t('myProviders.editTitle'), disabled: busy, onClick: () => mpEdit(p) });
+    items.push({ label: t('myProviders.delete'), title: t('myProviders.deleteTitle'), disabled: busy, danger: true, onClick: () => onMyProviderDelete(p.id) });
+    return items;
+  }
   function mpDlgSubmit(p: MyProviderInput, apiKey: string) {
     mpDlgOpen = false;
     onMyProviderSave(p, apiKey);
@@ -713,34 +726,17 @@
               </span>
             {/if}
           </div>
-          <div class="mt-auto flex flex-wrap gap-sw-2 border-t border-sw-border pt-sw-2">
+          <div class="mt-auto flex flex-wrap items-center gap-sw-2 border-t border-sw-border pt-sw-2">
             <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !p.hasKey || openaiDirect}
               onclick={() => onMyProviderConnect(p.id)}
               title={openaiDirect ? t('myProviders.openaiNeedsRouter') : !p.hasKey ? t('myProviders.noKey') : t('myProviders.connectTitle')}>
               {t('myProviders.connect')}
             </button>
-            {#if p.keyCount > 1}
-              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                onclick={() => onMyProviderNextKey(p.id)} title={t('myProviders.nextKeyTitle')}>
-                {t('myProviders.nextKey')}
-              </button>
-            {/if}
             <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !p.hasKey || h === 'checking'}
               onclick={() => check(p.id)} title={t('myProviders.checkTitle')}>
               {h === 'checking' ? t('myProviders.checking') : t('myProviders.check')}
             </button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy || !p.hasKey || bal === 'checking'}
-              onclick={() => checkBalance(p.id)} title={t('myProviders.balanceTitle')}>
-              {bal === 'checking' ? t('myProviders.checking') : t('myProviders.balance')}
-            </button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => toggleKeys(p.id)}
-              title={t('myProviders.keysTitle')}>
-              {t('myProviders.keys')}{p.keyCount > 1 ? ` (${p.keyCount})` : ''}
-            </button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => mpEdit(p)}
-              title={t('myProviders.editTitle')}>{t('myProviders.edit')}</button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onMyProviderDelete(p.id)}
-              title={t('myProviders.deleteTitle')}>{t('myProviders.delete')}</button>
+            <DropdownMenu title={t('providers.moreActions')} items={mpMenu(p, bal === 'checking')} />
           </div>
           {#if bal && bal !== 'checking' && !bal.ok}
             <p class="text-sw-xs text-sw-text-muted">{bal.detail}</p>

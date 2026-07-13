@@ -5,6 +5,7 @@
   import { pushToast } from '$lib/toast.svelte';
   import { chartSeriesColor } from '$lib/statusColor';
   import Sparkline from './Sparkline.svelte';
+  import Segmented from './Segmented.svelte';
   import { runHistory, clearRunHistory, type RunRecord } from '$lib/runHistory.svelte';
   import { limitsStore } from '$lib/limits.svelte';
   import { agentSummary } from '$lib/agentStatus.svelte';
@@ -363,15 +364,13 @@
     </div>
     {#if source === 'gateway'}
       <div class="flex shrink-0 items-center gap-sw-2">
-        <div class="flex gap-1">
-          {#each ranges as r (r.hours)}
-            <button
-              class="sw-btn sw-btn-ghost text-sw-xs {rangeHours === r.hours ? 'is-active' : ''}"
-              aria-pressed={rangeHours === r.hours}
-              disabled={loading}
-              onclick={() => (rangeHours = r.hours)}>{t(r.key)}</button>
-          {/each}
-        </div>
+        <Segmented
+          compact
+          value={rangeHours}
+          options={ranges.map((r) => ({ value: r.hours, label: t(r.key) }))}
+          onChange={(v) => (rangeHours = v)}
+          disabled={loading}
+        />
         {#if available && models.length}
           <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={exportCsv} title={t('analytics.exportCsvTip')}>
             {t('analytics.exportCsv')}
@@ -386,14 +385,14 @@
   </header>
 
   <!-- Source switch: one dashboard, four independent data sources (Wave C-4). -->
-  <div class="mb-sw-4 flex flex-wrap gap-1" role="tablist" aria-label={t('analytics.sourceLabel')}>
-    {#each sources as s (s.key)}
-      <button
-        class="sw-btn sw-btn-ghost text-sw-xs {source === s.key ? 'is-active' : ''}"
-        role="tab"
-        aria-selected={source === s.key}
-        onclick={() => (source = s.key)}>{t(s.label)}</button>
-    {/each}
+  <div class="mb-sw-4">
+    <Segmented
+      compact
+      value={source}
+      options={sources.map((s) => ({ value: s.key, label: t(s.label) }))}
+      onChange={(v) => (source = v)}
+      ariaLabel={t('analytics.sourceLabel')}
+    />
   </div>
 
   {#if source === 'maintenance'}
@@ -405,18 +404,15 @@
         <p class="text-sw-xs text-sw-text-muted">{t('analytics.scriptMetricsDesc')}</p>
       </div>
       <div class="flex shrink-0 items-center gap-sw-2">
-        <div class="flex gap-1" role="tablist">
-          <button
-            class="sw-btn sw-btn-ghost text-sw-xs {histMode === 'duration' ? 'is-active' : ''}"
-            onclick={() => (histMode = 'duration')}>
-            {t('analytics.scriptHistDuration')}
-          </button>
-          <button
-            class="sw-btn sw-btn-ghost text-sw-xs {histMode === 'runs' ? 'is-active' : ''}"
-            onclick={() => (histMode = 'runs')}>
-            {t('analytics.scriptHistRuns')}
-          </button>
-        </div>
+        <Segmented
+          compact
+          value={histMode}
+          options={[
+            { value: 'duration', label: t('analytics.scriptHistDuration') },
+            { value: 'runs', label: t('analytics.scriptHistRuns') }
+          ]}
+          onChange={(v) => (histMode = v)}
+        />
         {#if runHistory.items.length}
           <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={clearRunHistory}>{t('analytics.scriptClear')}</button>
         {/if}
@@ -751,10 +747,6 @@
 </div>
 
 <style>
-  .is-active {
-    border-color: var(--sw-border-focus);
-    color: var(--sw-text-primary);
-  }
   table th {
     position: sticky;
     top: 0;

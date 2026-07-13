@@ -5,6 +5,7 @@ export default {
   installed: 'установлена',
   notInstalled: 'не установлена',
   notInstalledHint: 'Среда не найдена на этом компьютере',
+  claudeHomeNote: 'Домашняя среда Castellyn — её навыки, провайдеры и MCP настраиваются на вкладках «Профили», «Провайдеры» и MCP.',
   skills: 'Скиллы',
   providers: 'Провайдеры',
   rtk: 'RTK',
