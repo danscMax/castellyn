@@ -3,33 +3,40 @@
 All notable changes to **Castellyn** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] — 2026-07-04
+## [0.7.0] — 2026-07-13
 
-The reliability-and-polish release: two audit-driven improvement runs, a visual redesign, a live
-usage-limit monitor for the Anthropic 5-hour window, cross-profile plugin sync, and full profile
-hygiene including orphan-directory management.
+The multi-agent-and-gateway release. Castellyn grows from a Claude Code maintenance shell into a
+control center for a whole local AI-coding stack: a single OmniRoute front gateway for every client,
+first-class Codex/OpenCode agents, a native stack supervisor, a custom-subagent manager, a live
+Anthropic usage-limit monitor, and a large audit-driven reliability + UI-consolidation pass.
 
 ### Added
-- **Orphan profile management** — the Profiles tab now surfaces `~/.claude-<name>` directories on disk that aren't canon profiles (abandoned or foreign configs), each with **Adopt** (register as a real profile) and **Delete** (to the Recycle Bin). Guarded against canon-profile data loss (Windows trailing-space/dot path normalization and case-insensitive bypasses) and against sweeping junction targets — a dir with shared-folder junctions is refused, not recycled.
-- **Usage-limit monitor** — watches the Anthropic 5-hour OAuth window and detects "limit reached" from live PTY output; a limited Sessions pane can **auto-continue after its reset** or **switch to another profile**.
+- **OmniRoute unified gateway** — one front (`:20128`) routes every client: Claude Code (Anthropic `/v1/messages`), Codex (OpenAI `/v1/responses`), and OpenCode (OpenAI `/v1`). A **Connect OmniRoute** button on the Codex environment card wires `~/.codex` to the gateway (Codex 0.142+ format: `wire_api="responses"` + per-profile config file). Verified end-to-end live across all three client protocols.
+- **Native stack supervisor** — Castellyn starts/stops the LLM-stack services itself (no console windows, reliable Stop), with dependency-ordered startup (topological sort over `dependsOn`), per-service readiness waits, and an opt-in `teardownOnFailure`. Falls back to the legacy PowerShell scripts when disabled.
+- **Stack-health monitor** — a background poller checks LLM-stack service liveness (real HTTP health where configured, not just an open port) every 30 s and raises an error toast, tray count, and live card update when an unexpected outage happens; a service Castellyn stopped on purpose stays silent.
+- **Subagents tab** — manage your own Claude Code subagents (`~/.claude/agents/*.md`) with create/edit/delete, model + tool-scope badges, and fan-out to every profile and machine; includes a Codex-delegate template.
+- **Usage-limit monitor** — watches the Anthropic 5-hour OAuth window and detects "limit reached" from live PTY output; a limited Sessions pane can **auto-continue after its reset** or **switch to another profile**. A launch advisor recommends a profile + reasoning effort from live limits.
+- **Orphan profile management** — the Profiles tab surfaces `~/.claude-<name>` directories that aren't canon profiles, each with **Adopt** and **Delete** (to the Recycle Bin), guarded against canon-profile data loss and against sweeping junction targets.
 - **Cross-profile plugin sync** — on-demand reconcile plus a SessionStart hook that keeps every profile's plugin set aligned.
-- **Sessions: agent status** — lifecycle hooks + PTY activity drive per-pane status, with sound and OS notifications on transitions; the previous run's session set is restored after an app restart; `Shift+PgUp/PgDn` scrollback and `Alt+N` pane focus.
-- **Durable personalization sidecar** — session personalization survives restarts.
-- **Create one missing profile** without reinstalling the rest.
+- **Sessions: agent status** — lifecycle hooks + PTY activity drive per-pane status with sound and OS notifications; the previous run's session set is restored after a restart; `Shift+PgUp/PgDn` scrollback and `Alt+N` pane focus.
 - **Updates** — auto re-check of the whole stack after Update-All, with live per-component progress.
 
-### Fixed
-- **Security & reliability hardening** — settings-write races, single-instance handling, status-engine correctness, and confirmed reliability bugs across three hardening waves.
-- **Providers** — a failed new-key write now rolls back the migrated slot 0 instead of losing the key.
-- **Shortcuts** — global shortcuts re-register teardown-first, so changing one while keeping another no longer silently fails ("already registered").
-- **Sync** — the Syncthing GUI address is read from `config.xml` (non-standard ports/binds work) instead of a hardcoded `127.0.0.1:8384`.
-- **Environments** — MCP deploy now reconciles: a server removed from the canonical `.mcp.json` is pulled from OpenCode and Codex too (with a "stale" drift badge), instead of lingering as a tail.
-- **Home** — profile counts and the "Repair" target match the sidebar badges.
-- **Hooks** — Castellyn's hook entries are unwired from orphaned/renamed profiles on disable.
-
 ### Changed
-- **Visual redesign (waves 1.5–2D)** — a typography + density foundation, an actionable Home cockpit, a rolled-up Updates header with state sections, Providers chips + diagnostics behind Details, and a split Sessions toolbar.
-- **Build** — migrated to Vite 8 (Rolldown) + vite-plugin-svelte 7, TypeScript 6, Svelte 5.5; dependency bumps.
+- **Providers — one "Services" section** — the former separate "LLM stack" (lifecycle) and "Engines" (wiring) lists are merged into a single card per service (joined by port), with lifecycle + wiring actions together and secondary actions in a per-card menu; the duplicated running badge / Dashboard / Check are gone.
+- **Profiles — one table** — the health/status table and the separate provider/proxy/folders/plugins/MCP "Matrix" are merged: each profile row expands to its own config editor, with a single accumulate → preview → apply bar. No more two tables keyed on the same profiles.
+- **Unified UI controls** — one segmented control (Settings theme/density/language, Analytics source + range, Environments Cards/Table, the config viewer) instead of four hand-rolled variants; the "My providers" cards drop a 7-button row for Connect + Check + a kebab; wide tables (MCP, Plugins, Forks) no longer clip their actions column.
+- **Visual redesign (waves 1.5–2D)** — a typography + density foundation, an actionable Home cockpit, a rolled-up Updates header, Providers chips + diagnostics behind Details, and a split Sessions toolbar.
+- **Build** — migrated the Rust crate to **edition 2024**; Vite 8 (Rolldown) + vite-plugin-svelte 7, TypeScript 6, Svelte 5.5; dependency bumps (windows 0.61, @sveltejs/kit, tsx, vitest).
+
+### Fixed
+- **Global audit hardening (2026-07-12)** — ~155 verified correctness / reliability / quality findings fixed across the backend, frontend, PowerShell, and CI, each validated for reachability. Notably: the launch advisor + auto-switch were dead in production (a profile-key prefix mismatch) and now work end-to-end.
+- **Security & reliability hardening** — settings-write races, single-instance handling, status-engine correctness, and confirmed reliability bugs across multiple hardening waves; UTF-8-safe parsing of user files; BOM-tolerant JSON reads.
+- **Providers** — a failed new-key write rolls back the migrated slot 0 instead of losing the key.
+- **Shortcuts** — global shortcuts re-register teardown-first, so changing one while keeping another no longer silently fails.
+- **Sync** — the Syncthing GUI address is read from `config.xml` (non-standard ports/binds work) instead of a hardcoded `127.0.0.1:8384`.
+- **Environments** — MCP deploy reconciles: a server removed from the canonical `.mcp.json` is pulled from OpenCode and Codex too (with a "stale" drift badge).
+- **Home** — profile counts and the "Repair" target match the sidebar badges; the stack start/stop action is no longer duplicated between the quick-action bar and the LLM-stack tile.
+- **Hooks** — Castellyn's hook entries are unwired from orphaned/renamed profiles on disable.
 
 ## [0.6.1] — 2026-07-02
 
