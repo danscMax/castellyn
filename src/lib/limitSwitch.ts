@@ -77,9 +77,11 @@ export function evaluateProfiles(
     }
     // A model-scoped weekly cap gates real work even when 5h is calm. Absent = 0 (no cap).
     const util = Math.max(h5, l?.scoped ?? 0);
-    // extra_usage (pay-as-you-go) keeps the profile working past the plan cap — the reject-at-85
-    // gate only applies when there is no such credit coverage.
-    if (util >= UTIL_THRESHOLD && !l?.extraEnabled) {
+    // extra_usage (pay-as-you-go) keeps the profile working past the plan cap — but only WHILE its
+    // credits remain (extraPct < 100). An exhausted extra-cap (extraPct == 100) is over-threshold like
+    // any other; unknown extraPct (null) is treated as "credit remains" so we don't over-block.
+    const extraCovers = !!l?.extraEnabled && (l?.extraPct ?? 0) < 100;
+    if (util >= UTIL_THRESHOLD && !extraCovers) {
       rejected.push({ name: p.name, reason: 'over-threshold' });
       continue;
     }
