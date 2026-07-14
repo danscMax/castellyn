@@ -38,6 +38,29 @@ git config core.hooksPath .githooks
 
 Bypass a single push with `git push --no-verify`.
 
+## Live-verify (dev only): attach to the running window over CDP
+
+Gates are blind to xterm/WebView2 runtime, so UI-affecting changes must be *looked at* in the
+live app. A **debug** build (`npm run tauri dev`) opens a Chrome DevTools Protocol endpoint on
+`http://127.0.0.1:9222` — set in `run()` behind `#[cfg(debug_assertions)]`, so it is **never
+present in a release exe**. Attach a browser tool to that endpoint to observe the real window
+(it has the Tauri IPC bridge; a plain browser tab pointed at the Vite URL does **not** — see the
+`tauri-webview2-live-verify` skill).
+
+```js
+import { chromium } from '@playwright/test';               // global: %APPDATA%\npm\node_modules
+const b = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const page = b.contexts().flatMap(c => c.pages())[0];      // the live WebView2 window
+await page.screenshot({ path: 'shot.png' });
+```
+
+- **Do NOT** `navigate` to the dev URL (`127.0.0.1:1420`) — no IPC bridge, backend values come
+  up empty, and the `invoke is undefined` errors are an artifact of the method, not app bugs.
+- Only one CDP client at a time; a running release exe blocks a second (debug) instance
+  (single-instance plugin). Kill it first.
+- Build-order gotcha: with `custom-protocol`, `cargo build` embeds `frontendDist` — run
+  `npm run build` **before** `cargo build`, or the exe ships a stale frontend.
+
 ## Release build
 
 ```powershell

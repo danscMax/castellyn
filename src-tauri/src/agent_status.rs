@@ -756,6 +756,26 @@ mod tests {
     }
 
     #[test]
+    fn permission_menus_never_trigger_an_auto_keypress() {
+        // SAFETY: Claude Code's approval prompts also render numbered options ("1. Yes / 2. No"),
+        // and auto-continue presses "1". None of the three detectors may match a permission/approval
+        // menu, or Castellyn would silently approve an edit/command on the user's behalf. Lock it.
+        let permission_menus = [
+            "Do you want to make this edit to lib.rs?\n\u{276f} 1. Yes\n  2. Yes, allow all edits this session\n  3. No, and tell Claude what to do differently (esc)",
+            "Do you want to proceed?\n\u{276f} 1. Yes\n  2. Yes, and don't ask again for pwsh commands\n  3. No, and tell Claude what to do differently (esc)",
+            "Do you trust the files in this folder?\n 1. Yes, proceed\n 2. No, exit",
+            // Adversarial: an approval prompt that mentions "limit" must still not match — the
+            // detectors anchor on "usage limit reached" / "hit your…limit" / the menu option labels.
+            "Do you want to raise your usage limit?\n 1. Yes\n 2. No",
+        ];
+        for m in permission_menus {
+            assert!(!is_limit_line(m), "is_limit_line matched a permission menu: {m:?}");
+            assert!(!is_limit_menu(m), "is_limit_menu matched a permission menu: {m:?}");
+            assert!(!is_resume_menu(m), "is_resume_menu matched a permission menu: {m:?}");
+        }
+    }
+
+    #[test]
     fn limited_state_outranks_and_clears_on_resume() {
         let now = 1_000_000;
         let t = track("claude", now);
