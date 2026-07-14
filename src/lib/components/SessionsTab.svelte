@@ -1704,6 +1704,11 @@
   // no drift). Pure & reactive; launches nothing. Applying it just fills the launcher fields, which
   // stay fully editable before spawn. Rendered only for the claude harness.
   const advice = $derived(launchAdvisor(profileInfos, limitsByProfile, lTaskClass, reservedClaude));
+  // Mockup #3 (owner-picked): live preview card — the EXACT command that will run and the
+  // chosen profile's remaining 5h/7d windows, so launching is never a guess.
+  const previewCmd = $derived(lEnv === 'shell' ? 'pwsh' : `${lEnv} ${composeArgs(lEnv, lArgs)}`.trim());
+  const previewLimits = $derived(lEnv === 'claude' ? (limitsByProfile[lProfile] ?? null) : null);
+  const barClass = (v: number | null | undefined) => (v == null ? '' : v >= 95 ? 'max' : v >= 70 ? 'hot' : '');
   // Council U-4: when every profile is maxed the advisor used to dead-end — surface WHEN the
   // nearest 5h window resets so "wait or switch" becomes an informed decision.
   const nearestReset = $derived.by(() => {
@@ -2363,7 +2368,7 @@
         {#each ENVS as e (e.id)}
           <button type="button" class="env-btn" class:sel={lEnv === e.id} onclick={() => selectEnv(e.id)}
             title={e.title} role="tab" aria-selected={lEnv === e.id}>
-            <span class="env-ic">{@html e.icon}</span>{e.label}
+            <span class="env-ic env-tint-{e.id}">{@html e.icon}</span>{e.label}
           </button>
         {/each}
       </div>
@@ -2371,9 +2376,10 @@
         onclick={() => openSettings()} title={t('sessions.settingsTip')}>⚙ {t('sessions.settings')}</button>
     </div>
 
-    <!-- The phrase: reads as a sentence and adapts to the chosen environment / location -->
-    <!-- Redesign: the wrapping "sentence" became a labelled-field grid — connective words (на / в
-         папке / с) are now field labels, so nothing orphans on wrap and every control aligns. -->
+    <!-- Mockup #3: fields on the left, a live "will launch" preview card on the right — the
+         command, the profile's remaining windows, the advisor and the launch buttons live where
+         the user's eye lands last. -->
+    <div class="launch-split">
     <div class="phrase">
       <div class="launchgrid">
         {#if lEnv === 'claude'}
@@ -2471,35 +2477,53 @@
         <span class="ssh-hint" title={t('sessions.sshToolHint', { tool: lEnv })}>{t('sessions.sshToolHint', { tool: lEnv })}</span>
       {/if}
 
+    </div>
+
+    <!-- The preview card: what EXACTLY will run, how much quota the chosen profile has left,
+         the advisor's verdict, and the launch buttons — decision and action in one place. -->
+    <aside class="launch-preview" aria-label={t('sessions.previewTitle')}>
+      <div class="lp-hdr">{t('sessions.previewTitle')}</div>
+      <div class="row lp-who">
+        <span class="env-ic env-tint-{lEnv}">{@html envIcon(lEnv)}</span>
+        <b>{ENVS.find((e) => e.id === lEnv)?.label ?? lEnv}{#if lEnv === 'claude' && lProfile}&nbsp;· {lProfile}{/if}</b>
+      </div>
+      <div class="lp-cmd font-mono" title={previewCmd}>{previewCmd}</div>
+      {#if previewLimits}
+        <div class="lp-meters">
+          <div class="um">
+            <span class="um-lab"><span>5{t('sessions.unitHour')}</span><span>{previewLimits.h5 != null ? `${Math.round(previewLimits.h5)}%` : '—'}</span></span>
+            <span class="um-track"><span class="um-fill {barClass(previewLimits.h5)}" style="width:{Math.min(100, previewLimits.h5 ?? 0)}%"></span></span>
+          </div>
+          <div class="um">
+            <span class="um-lab"><span>7{t('sessions.unitDay')}</span><span>{previewLimits.d7 != null ? `${Math.round(previewLimits.d7)}%` : '—'}</span></span>
+            <span class="um-track"><span class="um-fill {barClass(previewLimits.d7)}" style="width:{Math.min(100, previewLimits.d7 ?? 0)}%"></span></span>
+          </div>
+        </div>
+      {/if}
       {#if lEnv === 'claude'}
-        <!-- Task 5 / council F: quota-aware recommendation sits ABOVE the launch button (advice
-             before the decision, not after it). Launches nothing; Apply just fills the fields.
-             Redone per owner screenshot: a flat one-liner (separator, no nested box), compact
-             task select, advice text gets the remaining width instead of wrapping into a column. -->
-        <div class="advisor-row" role="group" aria-label={t('sessions.advisorLabel')}>
-          <span class="stk-label">{t('sessions.advisorTask')}</span>
-          <div class="psel adv-task"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
+        <div class="row lp-task" role="group" aria-label={t('sessions.advisorLabel')}>
+          <span class="fld-lbl" style="margin:0">{t('sessions.advisorTask')}</span>
+          <div class="psel grow"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
+        </div>
+        <div class="advis">
+          <span class="advis-ico">💡</span>
           {#if advice.recommendation}
             {@const r = advice.recommendation}
-            <span class="adv-rec" title={t('sessions.advisorRecTip')}>
-              {t('sessions.advisorRec', { profile: r.profile, effort: r.effort, util: Math.round(r.util) })}
-            </span>
+            <span class="advis-txt" title={t('sessions.advisorRecTip')}>{t('sessions.advisorRec', { profile: r.profile, effort: r.effort, util: Math.round(r.util) })}</span>
             <button type="button" class="sw-btn sw-btn-ghost text-sw-xs" onclick={applyAdvice}
               disabled={lProfile === r.profile && lClaudeEffort === r.effort}
               title={t('sessions.advisorApplyTip')}>{t('sessions.advisorApply')}</button>
           {:else}
-            <!-- Council F: the dead-end "no free profile" now says WHY inline, not only on hover. -->
-            <span class="adv-none" title={advice.rejected.map((x) => `${x.name}: ${x.reason}`).join(', ')}>
+            <span class="advis-txt" title={advice.rejected.map((x) => `${x.name}: ${x.reason}`).join(', ')}>
               {t('sessions.advisorNone')}{#if advice.rejected.length}&nbsp;— {advice.rejected[0].name}: {advice.rejected[0].reason}{#if advice.rejected.length > 1}&nbsp;(+{advice.rejected.length - 1}){/if}{/if}{#if nearestReset}&nbsp;· {t('sessions.advisorNextReset', { profile: nearestReset.profile, d: humanizeMs(nearestReset.at - nowTick) })}{/if}
             </span>
           {/if}
         </div>
       {/if}
-
-      <div class="launchactions">
-        <button type="button" class="sw-btn sw-btn-primary" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
-        <button type="button" class="sw-btn sw-btn-ghost fav-btn" onclick={pinCurrent} title={t('sessions.pin')}>☆ {t('sessions.pin')}</button>
-      </div>
+      <span class="lp-spacer"></span>
+      <button type="button" class="sw-btn sw-btn-primary" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
+      <button type="button" class="sw-btn sw-btn-ghost" onclick={pinCurrent} title={t('sessions.pin')}>☆ {t('sessions.pin')}</button>
+    </aside>
     </div>
 
     {#if lEnv === 'opencode'}
@@ -3191,7 +3215,7 @@
   /* The launcher rendered as an anchored popover: an elevated card (use:anchored sets position:fixed
      + top/left inline), overriding the inline .launcher border-bottom/margins. */
   .launcher-pop {
-    width: min(720px, 92vw);
+    width: min(820px, 94vw);
     margin-bottom: 0;
     padding: var(--sw-space-3);
     border: 1px solid var(--sw-border);
@@ -3298,11 +3322,6 @@
     min-width: 200px;
     flex: 1;
   }
-  .launchactions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
   /* Council V-3: the pin button stays NEUTRAL (ghost) — amber pulled the eye harder than the
      primary «Запустить» and broke the blue brand palette; amber is reserved for warnings/limits. */
   .phrase .ph-note {
@@ -3326,38 +3345,118 @@
     font-weight: 500;
     margin-right: auto;
   }
-  /* Advisor: a flat one-line row inside the form (owner rejected the nested box — the advice
-     text was squeezed into a 3-line column). Compact task select, advice takes the rest. */
-  .advisor-row {
+  /* Mockup #3: form fields left, live preview card right. */
+  .launch-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 248px;
+    gap: var(--sw-space-3);
+    align-items: stretch;
+  }
+  .launch-preview {
     display: flex;
-    align-items: center;
-    gap: var(--sw-space-2);
-    border-top: 1px solid var(--sw-border);
-    margin-top: 2px;
-    padding-top: var(--sw-space-2);
-    font-size: var(--sw-text-xs);
+    flex-direction: column;
+    gap: 8px;
+    background: var(--sw-bg-secondary);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-md);
+    padding: 12px;
     min-width: 0;
   }
-  .advisor-row .stk-label {
-    flex-shrink: 0;
-    font-weight: 500;
+  .launch-preview .sw-btn {
+    justify-content: center;
   }
-  .advisor-row .adv-task {
-    flex: 0 0 130px;
+  .lp-hdr {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--sw-text-muted);
   }
-  .adv-rec,
-  .adv-none {
-    flex: 1;
+  .lp-who {
+    gap: 8px;
+    font-size: var(--sw-text-sm);
+    flex-wrap: nowrap;
     min-width: 0;
+  }
+  .lp-who b {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .adv-rec {
-    font-weight: 500;
+  .lp-cmd {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--sw-text-secondary);
+    background: var(--sw-bg-subtle);
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-sm);
+    padding: 7px 10px;
+    word-break: break-all;
+    max-height: 64px;
+    overflow: hidden;
   }
-  .adv-none {
+  /* Remaining-quota meters (5h / 7d) for the chosen profile. */
+  .lp-meters {
+    display: flex;
+    gap: 10px;
+  }
+  .um {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .um-lab {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9.5px;
     color: var(--sw-text-muted);
+  }
+  .um-track {
+    display: block;
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--sw-bg-hover);
+    overflow: hidden;
+  }
+  .um-fill {
+    display: block;
+    height: 100%;
+    border-radius: 9999px;
+    background: var(--sw-status-up);
+  }
+  .um-fill.hot {
+    background: var(--sw-status-warn);
+  }
+  .um-fill.max {
+    background: var(--sw-danger, #f85149);
+  }
+  .lp-task {
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .lp-spacer {
+    flex: 1;
+  }
+  /* Advisor callout — the one accented element of the card. */
+  .advis {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: var(--sw-radius-sm);
+    border: 1px solid color-mix(in srgb, var(--sw-accent) 35%, transparent);
+    background: linear-gradient(90deg, var(--sw-accent-glow), transparent 75%);
+    font-size: var(--sw-text-xs);
+  }
+  .advis-ico {
+    flex-shrink: 0;
+  }
+  .advis-txt {
+    flex: 1;
+    min-width: 0;
+    color: var(--sw-text-secondary);
   }
   .phrase .ssh-hint {
     flex-basis: 100%;

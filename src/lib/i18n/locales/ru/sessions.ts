@@ -74,6 +74,7 @@ export default {
   unitDay: 'д',
   advisorNextReset: 'ближайший сброс: {profile} через {d}',
   limitModeDefault: 'как в настройках',
+  previewTitle: 'Будет запущено',
   restoredPartial: 'Восстановлено {n} из {m} — достигнут лимит сессий',
   activeFor: 'активна {d}',
   layout: 'Колонок:',

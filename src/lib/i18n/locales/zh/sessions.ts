@@ -74,6 +74,7 @@ export default {
   unitDay: '天',
   advisorNextReset: '最近重置：{profile}，{d} 后',
   limitModeDefault: '按全局设置',
+  previewTitle: '将启动',
   restoredPartial: '已恢复 {m} 个中的 {n} 个 — 已达会话上限',
   activeFor: '活动 {d}',
   layout: '列数：',

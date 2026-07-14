@@ -74,6 +74,7 @@ export default {
   unitDay: 'd',
   advisorNextReset: 'next reset: {profile} in {d}',
   limitModeDefault: 'as in settings',
+  previewTitle: 'Will launch',
   restoredPartial: 'Restored {n} of {m} — session limit reached',
   activeFor: 'active {d}',
   layout: 'Columns:',
