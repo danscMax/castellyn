@@ -19,7 +19,7 @@
 #     drift between copies is visible (Sync-ScriptKit.ps1 -Check).
 # ============================================================================
 
-$script:SK_Version = 2   # drift marker -- Sync-ScriptKit.ps1 compares this
+$script:SK_Version = 3   # drift marker -- Sync-ScriptKit.ps1 compares this
 
 # --- UTF-8 console (box glyphs + check marks render instead of mojibake) ----
 # Non-intrusive: merely dot-sourcing this helper must NOT permanently flip the
@@ -281,6 +281,41 @@ function Write-StatusJson {
         try { Write-Log ("Write-StatusJson failed: {0}" -f $_.Exception.Message) -Level 'WARN' -Color 'Yellow' } catch { }
         return $null
     }
+}
+
+# ----------------------------------------------------------------------------
+# Update-hold guard. A component listed in <Root>\update-holds.json is locally
+# patched and must NOT be auto-updated (its fix isn't upstream yet). This is the
+# single DRY guard every direct-run Update-*.ps1 calls right after sourcing
+# ScriptKit: it prints the hold notice AND refreshes the component's envelope to
+# 'held', so the dashboard reflects reality instead of the last non-held run's
+# stale status (e.g. an old 'install failed'). Returns $true when held -> the
+# caller should `exit 0`. Callers gate on Get-Command, so if ScriptKit itself is
+# absent (never in practice — it's vendored beside every script) the guard is
+# simply skipped rather than crashing.
+function Invoke-UpdateHoldGuard {
+    param(
+        [Parameter(Mandatory)][string]$Root,       # dir holding update-holds.json (usually $PSScriptRoot)
+        [Parameter(Mandatory)][string]$HoldKey,     # key in update-holds.json (e.g. 'RTK')
+        [Parameter(Mandatory)][string]$Component,   # envelope component name (e.g. 'rtk')
+        [string]$Mode = 'check'
+    )
+    $holds = Join-Path $Root 'update-holds.json'
+    if (-not (Test-Path -LiteralPath $holds)) { return $false }
+    try {
+        $entry = (Get-Content -Raw -LiteralPath $holds | ConvertFrom-Json).PSObject.Properties[$HoldKey]
+    } catch {
+        # An existing-but-unreadable holds file must not silently un-hold a patched build:
+        # fail CLOSED (treat as held) so a corrupt file blocks updates instead of clobbering.
+        Write-Host ("[HELD] {0}: update-holds.json unreadable, holding to be safe -- {1}" -f $HoldKey, $_.Exception.Message) -ForegroundColor Yellow
+        return $true
+    }
+    if (-not $entry) { return $false }
+    Write-Host ("[HELD] {0}: {1}" -f $HoldKey, $entry.Value.reason) -ForegroundColor Yellow
+    Write-Host ("  (to update anyway: delete the '{0}' entry from update-holds.json)" -f $HoldKey) -ForegroundColor DarkGray
+    Write-StatusJson -Root $Root -Component $Component -Status 'held' `
+        -Mode $Mode -Summary ("held: " + $entry.Value.reason) | Out-Null
+    return $true
 }
 
 # ============================================================================

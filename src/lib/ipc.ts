@@ -895,6 +895,9 @@ export const readSkillMatrix = () => invoke<SkillRow[]>('read_skill_matrix');
 // Additive & idempotent (directory junctions, no admin); never deletes. Claude is untouched.
 export type ShareResult = { created: number; skipped: number; failed: number; target: string; details: string[] };
 export const shareSkills = () => invoke<ShareResult>('share_skills');
+/** Generate SKILL.md wrappers for your own slash-commands into ~/.agents/skills so Codex/OpenCode
+ *  can invoke them (`$max-rootcause`). Commands aren't a cross-harness concept; a skill is. */
+export const shareCommands = () => invoke<ShareResult>('share_commands');
 // Enable/disable RTK command-rewriting for OpenCode (writes a Windows-safe plugin). Returns new state.
 export const runOpencodeRtk = (action: 'enable' | 'disable') =>
   invoke<boolean>('run_opencode_rtk', { action });
@@ -935,6 +938,9 @@ export const saveAgent = (a: {
 }) => invoke<string>('save_agent', a);
 // Delete a subagent .md (guarded server-side to ~/.claude/agents).
 export const deleteAgent = (path: string) => invoke<void>('delete_agent', { path });
+// Smoke-test a subagent without invoking it: validate frontmatter/body + probe wrapper CLIs.
+export type AgentTestResult = { ok: boolean; lines: { ok: boolean; text: string }[] };
+export const testSubagent = (path: string) => invoke<AgentTestResult>('test_subagent', { path });
 export type PluginRelease = {
   tag_name: string;
   name: string;

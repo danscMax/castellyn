@@ -4,12 +4,13 @@
   // agents. A save fans out to every profile + machine via the existing `agents` folder sync — no
   // extra step here (see ipc.ts saveAgent / lib.rs agents_dir comment).
   import type { AgentInfo } from '$lib/ipc';
-  import { readAgent } from '$lib/ipc';
+  import { readAgent, testSubagent } from '$lib/ipc';
   import { t } from '$lib/i18n';
+  import { pushToast } from '$lib/toast.svelte';
   import EmptyState from './EmptyState.svelte';
   import ModalShell from './ModalShell.svelte';
   import Select from './Select.svelte';
-  import { Bot, Pencil, Trash2, Plus } from '@lucide/svelte';
+  import { Bot, Pencil, Trash2, Plus, FlaskConical } from '@lucide/svelte';
 
   let {
     data,
@@ -111,6 +112,24 @@ Rules:
     }
   }
 
+  // Smoke-test: validate the agent + probe any wrapper CLI, without invoking it in a real session.
+  let testingPath = $state<string | null>(null);
+  async function onTest(a: AgentInfo) {
+    testingPath = a.path;
+    try {
+      const r = await testSubagent(a.path);
+      pushToast({
+        kind: r.ok ? 'success' : 'error',
+        title: r.ok ? t('agents.testOk', { name: a.name }) : t('agents.testFail', { name: a.name }),
+        detail: r.lines.map((l) => `${l.ok ? '✓' : '✗'} ${l.text}`).join('\n')
+      });
+    } catch (e) {
+      pushToast({ kind: 'error', title: t('agents.testError'), detail: String(e) });
+    } finally {
+      testingPath = null;
+    }
+  }
+
   async function openEdit(a: AgentInfo) {
     resetForm();
     origPath = a.path;
@@ -200,6 +219,8 @@ Rules:
           <div class="flex items-center justify-between gap-sw-2">
             <span class="text-base font-semibold truncate" title={a.name}>{a.name}</span>
             <div class="flex shrink-0 items-center gap-sw-1">
+              <button class="sw-btn sw-btn-ghost text-sw-sm" disabled={testingPath === a.path} onclick={() => onTest(a)}
+                title={t('agents.testTip')} aria-label={t('agents.testTip')}><FlaskConical size={14} aria-hidden="true" /></button>
               <button class="sw-btn sw-btn-ghost text-sw-sm" onclick={() => openEdit(a)}
                 title={t('agents.edit')} aria-label={t('agents.edit')}><Pencil size={14} aria-hidden="true" /></button>
               <button class="sw-btn sw-btn-ghost text-sw-sm" onclick={() => onDelete(a)}
@@ -252,10 +273,12 @@ Rules:
     <div class="dlg-fld">
       <span>{t('agents.fldModel')}</span>
       <Select bind:value={model} options={modelOptions} />
+      <span class="text-sw-xs text-sw-text-muted">{t('agents.fldModelHint')}</span>
     </div>
     <label class="dlg-fld">
       <span>{t('agents.fldTools')}</span>
       <input class="sw-input" bind:value={tools} placeholder={t('agents.fldToolsPh')} spellcheck="false" />
+      <span class="text-sw-xs text-sw-text-muted">{t('agents.fldToolsHint')}</span>
     </label>
   </div>
 

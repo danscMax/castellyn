@@ -190,7 +190,7 @@
   import { deriveOutcome } from '$lib/outcome';
   import { t, locale } from '$lib/i18n';
   import { componentName } from '$lib/componentLabel';
-  import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, runCodexOmniroute, type EnvInfo, type SkillRow } from '$lib/ipc';
+  import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, shareCommands, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, runCodexOmniroute, type EnvInfo, type SkillRow } from '$lib/ipc';
 
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
@@ -1250,6 +1250,29 @@
     );
   }
 
+  // Wrap your own slash-commands as SKILL.md into ~/.agents/skills so Codex/OpenCode can run them.
+  function onShareCommands() {
+    askConfirm(
+      t('environments.shareCmdConfirmTitle'),
+      t('environments.shareCmdConfirmMsg'),
+      t('environments.shareCmdConfirmBtn'),
+      async () => {
+        try {
+          const r = await shareCommands();
+          pushToast({
+            kind: r.failed ? 'error' : 'success',
+            title: t('environments.shareCmdDone', { created: r.created, skipped: r.skipped, failed: r.failed }),
+            detail: r.failed && r.details.length ? r.details.join('\n') : undefined
+          });
+          await reloadEnvs();
+          if (envsMatrix !== null) await reloadSkillMatrix();
+        } catch (e) {
+          pushToast({ kind: 'error', title: t('environments.shareError'), detail: String(e) });
+        }
+      }
+    );
+  }
+
   // --- Sync tab ---
   async function reloadSync() {
     try {
@@ -1406,6 +1429,10 @@
     // resolving IS the completion signal. Clear the lock here; otherwise `running='sync'` sticks
     // forever and `busy` disables controls across every tab (the "everything is dead" symptom).
     runSync(action, enabled)
+      // Re-read syncData after the run so the UI reflects reality — otherwise after "Применить"
+      // (set) the "требует применения" banner never clears (stignoreMatches stays false) and the
+      // button just re-appears, reading as a no-op. reloadSync is self-guarded (never throws).
+      .then(() => reloadSync())
       .catch(onSpawnErr)
       .finally(() => {
         if (running === 'sync') running = null;
@@ -1451,7 +1478,16 @@
           ? t('page.drift_verb_sync')
           : t('page.drift_verb_check');
     log = [t('page.drift_log', { verb })];
-    runConfigDrift(action).catch(onSpawnErr);
+    // Re-read drift + sync state after the run (relink/sync-now/check) so the UI reflects the result
+    // — without this "Починить связи" finished (exit 0) but the drift status never refreshed, so the
+    // banner looked unchanged ("did it work?"). Also clear the 'sync' lock (run_config_drift is a
+    // direct invoke with no run-done, so nothing else releases it → the whole UI stayed busy).
+    runConfigDrift(action)
+      .then(() => Promise.all([reloadConfigDrift(), reloadSync()]))
+      .catch(onSpawnErr)
+      .finally(() => {
+        if (running === 'sync') running = null;
+      });
   }
 
   function onSyncDrift(action: ConfigDriftAction) {
@@ -1760,16 +1796,26 @@
   let lastFocusPluginCheck = 0;
 
   async function reloadExtensions() {
-    try {
-      pluginsData = await listPlugins();
-    } catch {
-      pluginsData = null;
-    }
-    try {
-      skillsData = await listSkills();
-    } catch {
-      skillsData = null;
-    }
+    // Load plugins + skills INDEPENDENTLY: list_plugins spawns the (slow, sometimes-hanging) claude
+    // CLI and must not gate the local skill scan. On failure set [] (not null) and surface the real
+    // error — a null rendered as an eternal skeleton, indistinguishable from loading, was the
+    // "infinite loading" bug (the empty-state already hints "or claude CLI unavailable").
+    const pP = listPlugins()
+      .then((v) => {
+        pluginsData = v;
+      })
+      .catch((e) => {
+        pluginsData = [];
+        pushToast({ kind: 'error', title: String(e) });
+      });
+    const pS = listSkills()
+      .then((v) => {
+        skillsData = v;
+      })
+      .catch(() => {
+        skillsData = [];
+      });
+    await Promise.allSettled([pP, pS]);
     try {
       pluginContents = await listPluginContents();
     } catch {
@@ -2741,7 +2787,7 @@
           onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra} />
       {:else if active === 'envs'}
         <EnvironmentsTab data={envsData} {running} matrix={envsMatrix} onRefresh={reloadEnvs}
-          onShare={onShareSkills} onRtk={onEnvRtk} onLoadMatrix={reloadSkillMatrix}
+          onShare={onShareSkills} onShareCommands={onShareCommands} onRtk={onEnvRtk} onLoadMatrix={reloadSkillMatrix}
           onOpenConfig={(p) => openPath(p).catch(toastErr)} onOpenProviders={() => (active = 'providers')}
           onOpenMcp={() => (active = 'mcp')} onDeployMcp={onDeployMcp}
           onDeployProviders={onDeployProviders} onDeployInstructions={onDeployInstructions}

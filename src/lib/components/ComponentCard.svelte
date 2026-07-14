@@ -5,6 +5,7 @@
   import { t, pUpdate, plural } from '$lib/i18n';
   import { relTime, formatAbsTime, parseTsMs } from '$lib/relativeTime';
   import { countOf, isUnknownStatus } from '$lib/envelope';
+  import Spinner from './Spinner.svelte';
 
   // A run older than this reads as stale — the "last run" value is flagged, not silently trusted.
   const STALE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -157,9 +158,9 @@
   {/if}
 
   <div class="mt-auto flex gap-sw-2 pt-sw-2">
-    <button class="sw-btn sw-btn-ghost flex-1" disabled={anyRunning} onclick={onCheck}
+    <button class="sw-btn sw-btn-ghost flex-1 inline-flex items-center justify-center gap-sw-1" disabled={anyRunning} onclick={onCheck}
       title={t('updates.checkTip')}>
-      {busy ? t('updates.checking') : t('updates.checkBtn')}
+      {#if busy}<Spinner size={13} />{/if}{busy ? t('updates.checking') : t('updates.checkBtn')}
     </button>
     {#if comp.id === 'forks' && onOpenForks}
       <button class="sw-btn sw-btn-primary flex-1" disabled={anyRunning} onclick={onOpenForks}
@@ -175,9 +176,9 @@
     {/if}
     {#if comp.supportsApply}
       {#if updateInfo.has}
-        <button class="sw-btn sw-btn-primary flex-1" disabled={anyRunning} onclick={onApply}
+        <button class="sw-btn sw-btn-primary flex-1 inline-flex items-center justify-center gap-sw-1" disabled={anyRunning} onclick={onApply}
           title={t('updates.updateTip')}>
-          {updateInfo.count > 1 ? t('updates.updateBtnCount', { count: updateInfo.count }) : t('updates.updateBtn')}
+          {#if busy}<Spinner size={13} />{/if}{updateInfo.count > 1 ? t('updates.updateBtnCount', { count: updateInfo.count }) : t('updates.updateBtn')}
         </button>
       {:else if !updateInfo.known}
         <button class="sw-btn sw-btn-ghost flex-1" disabled={anyRunning} onclick={onApply}

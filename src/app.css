@@ -458,6 +458,46 @@
       background-position: 0 50%;
     }
   }
+  /* Canonical row-action cluster: a framed group of compact icon-buttons for table action columns.
+     Replaces per-tab text buttons ("Изменить"/"Удалить") that clipped in a narrow actions column
+     (MCP/Profiles/Forks). Icons stay visible; the group has one width across every row. */
+  .acts {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 2px;
+    border: 1px solid var(--sw-border);
+    border-radius: 9px;
+    background: var(--sw-bg-hover);
+  }
+  .iact {
+    width: 28px;
+    height: 26px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--sw-text-secondary);
+    cursor: pointer;
+    display: inline-grid;
+    place-items: center;
+    transition: background 0.1s, color 0.1s;
+  }
+  .iact svg {
+    width: 15px;
+    height: 15px;
+  }
+  .iact:hover:not(:disabled) {
+    background: var(--sw-accent-glow);
+    color: var(--sw-accent-text);
+  }
+  .iact.danger:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.14);
+    color: var(--sw-danger);
+  }
+  .iact:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
   /* Unified responsive card grid — same card width across all tabs/groups. */
   .card-grid {
     display: grid;

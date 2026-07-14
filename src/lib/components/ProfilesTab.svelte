@@ -14,7 +14,7 @@
   } from '$lib/ipc';
   import { pProfile, t } from '$lib/i18n';
   import { readProfileFile } from '$lib/ipc';
-  import { Users } from '@lucide/svelte';
+  import { Users, Play, FolderOpen } from '@lucide/svelte';
   import EmptyState from './EmptyState.svelte';
   import { copyText } from '$lib/clipboard';
   import { redactSecrets } from '$lib/redact';
@@ -338,10 +338,12 @@
   const COLS: DTColumn[] = $derived([
     { key: 'name', label: t('profiles.colName'), grow: true, sortable: true },
     { key: 'status', label: t('profiles.colStatus'), width: '120px', sortable: true },
-    { key: 'usage', label: t('profiles.colUsage'), width: '140px' },
-    { key: 'provider', label: t('profiles.colProvider'), width: '170px', interactive: true, sortable: true },
+    // Widened: the usage badge (5h/7d/scoped + reset) wrapped to 3-4 lines at 140px; the 3 action
+    // buttons (Launch/Folder/⋯) overflowed 210px and the leftmost (Launch) was clipped on the left.
+    { key: 'usage', label: t('profiles.colUsage'), width: '208px' },
+    { key: 'provider', label: t('profiles.colProvider'), width: '156px', interactive: true, sortable: true },
     { key: 'links', label: t('profiles.colLinks'), width: '80px', align: 'center', sortable: true },
-    { key: 'actions', label: t('profiles.colActions'), width: '210px', interactive: true }
+    { key: 'actions', label: t('profiles.colActions'), width: '200px', interactive: true }
   ]);
   function linkedCount(p: Prof): number {
     return Object.values(p.sharedLinks).filter(
@@ -582,12 +584,16 @@
             <span class="text-sw-text-muted">—</span>
           {/if}
         {:else if col.key === 'actions'}
-          <span class="flex items-center justify-end gap-sw-1">
-            <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!p.exists} onclick={() => onLaunch(p.name, 'terminal')}
-              title={t('profiles.launchTip', { name: p.name })}>{t('profiles.launch')}</button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!p.exists} onclick={() => onOpen(p.name)}
-              title={t('profiles.folderTip', { name: p.name })}>{t('profiles.folder')}</button>
-            <DropdownMenu title={t('profiles.menuTitle')} items={menuItems(p)} />
+          <!-- Canon: primary action stays a labelled button; secondary (folder) + overflow (⋯) become
+               a compact icon cluster so the column never clips. -->
+          <span class="flex items-center justify-end gap-sw-2">
+            <button class="sw-btn sw-btn-primary text-sw-xs inline-flex items-center gap-sw-1" disabled={!p.exists} onclick={() => onLaunch(p.name, 'terminal')}
+              title={t('profiles.launchTip', { name: p.name })}><Play size={12} />{t('profiles.launch')}</button>
+            <span class="acts">
+              <button class="iact" disabled={!p.exists} onclick={() => onOpen(p.name)}
+                title={t('profiles.folderTip', { name: p.name })} aria-label={t('profiles.folder')}><FolderOpen size={15} /></button>
+              <DropdownMenu title={t('profiles.menuTitle')} items={menuItems(p)} />
+            </span>
           </span>
         {/if}
       {/snippet}

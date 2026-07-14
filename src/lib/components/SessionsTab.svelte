@@ -164,7 +164,17 @@
       const favs = JSON.parse(localStorage.getItem(VKEY) ?? '[]');
       if (Array.isArray(favs)) favorites = favs;
       const recs = JSON.parse(localStorage.getItem(RECKEY) ?? '[]');
-      if (Array.isArray(recs)) recents = recs;
+      // Dedupe on load: older builds could persist exact-duplicate recipes (the add-path dedupe
+      // didn't run on stored data), which surfaced as two identical rows in the ▾ recents menu.
+      if (Array.isArray(recs)) {
+        const seen = new Set<string>();
+        recents = recs.filter((r) => {
+          const k = recipeKey(r);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
       const sr = JSON.parse(localStorage.getItem(SRKEY) ?? '{}');
       if (sr && typeof sr === 'object' && !Array.isArray(sr)) spaceRecipe = sr;
       remoteRecent = JSON.parse(localStorage.getItem(RRKEY) ?? '[]');
@@ -1376,7 +1386,9 @@
   // Per-harness launch chips (claude seeds from ⚙ default-args instead — no chips there). The codex
   // `--profile` selection is now a first-class picker (below), not a chip.
   let codexProfiles = $state<string[]>([]);
-  const launchChips = $derived(lEnv === 'claude' ? [] : (ARG_PRESETS[lEnv] ?? []));
+  // Preset flag chips for the launch form, per harness (claude included now — the redesigned form is
+  // the ONE place args are set, so claude's flags live here beside the input, not only in ⚙ defaults).
+  const launchChips = $derived(ARG_PRESETS[lEnv] ?? []);
   // First-class identity selectors for the non-claude agents (parity with claude's profile dropdown):
   // codex → a `config.toml` profile (--profile), opencode → a provider/model (--model). Empty = the
   // tool's own default. The selection is composed into the launch args at spawn time (composeArgs),
@@ -1646,8 +1658,19 @@
       /* ignore */
     }
   });
-  // A pinned recipe lives in the favorites section only — no duplicate row under "recent".
-  const menuRecents = $derived(recents.filter((r) => !favorites.some((f) => recipeKey(f) === recipeKey(r))));
+  // A pinned recipe lives in the favorites section only — no duplicate row under "recent". Also
+  // collapse rows that RENDER identically (same label): two recipes to the same profile+folder that
+  // differ only by args have distinct recipeKeys but look like duplicates — keep the newest.
+  const menuRecents = $derived.by(() => {
+    const seenLabel = new Set<string>();
+    return recents
+      .filter((r) => !favorites.some((f) => recipeKey(f) === recipeKey(r)))
+      .filter((r) => {
+        if (seenLabel.has(r.label)) return false;
+        seenLabel.add(r.label);
+        return true;
+      });
+  });
   function launchRecent(r: Recent) {
     const v = paneFrom(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args);
     if (v) {
@@ -2071,68 +2094,93 @@
     </div>
 
     <!-- The phrase: reads as a sentence and adapts to the chosen environment / location -->
+    <!-- Redesign: the wrapping "sentence" became a labelled-field grid — connective words (на / в
+         папке / с) are now field labels, so nothing orphans on wrap and every control aligns. -->
     <div class="phrase">
-      <span class="pw">{t('sessions.phRun')}</span>
-      {#if lEnv === 'claude'}
-        <span class="pw">{t('sessions.phProfile')}</span>
-        <div class="psel"><Select bind:value={lProfile} options={profiles} placeholder={t('sessions.dlgProfile')} /></div>
-        <span class="pw">{t('sessions.phEffort')}</span>
-        <div class="psel"><Select bind:value={lClaudeEffort} options={effortOptions} placeholder={t('sessions.effortDefault')} /></div>
-        <span class="pw">{t('sessions.phModel')}</span>
-        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lClaudeModel}
-          placeholder={t('sessions.phClaudeModelPlaceholder')} spellcheck="false" autocomplete="off" />
-      {:else if lEnv === 'codex'}
-        <!-- Codex identity: config.toml profile (when any exist) + a --model override, so the launch
-             model is explicit instead of "whatever codex defaulted to". -->
-        {#if codexProfiles.length}
-          <span class="pw">{t('sessions.phProfile')}</span>
-          <div class="psel"><Select bind:value={lCodexProfile} options={codexProfiles} placeholder={t('sessions.phCodexDefault')} /></div>
+      <div class="launchgrid">
+        {#if lEnv === 'claude'}
+          <div class="fld">
+            <span class="fld-lbl">{t('sessions.phProfile')}</span>
+            <div class="psel"><Select bind:value={lProfile} options={profiles} placeholder={t('sessions.dlgProfile')} /></div>
+          </div>
+          <div class="fld">
+            <span class="fld-lbl">{t('sessions.phEffort')}</span>
+            <div class="psel"><Select bind:value={lClaudeEffort} options={effortOptions} placeholder={t('sessions.effortDefault')} /></div>
+          </div>
+          <div class="fld">
+            <span class="fld-lbl">{t('sessions.phModel')}</span>
+            <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lClaudeModel}
+              placeholder={t('sessions.phClaudeModelPlaceholder')} spellcheck="false" autocomplete="off" />
+          </div>
+        {:else if lEnv === 'codex'}
+          <!-- Codex identity: config.toml profile (when any exist) + a --model override. -->
+          {#if codexProfiles.length}
+            <div class="fld">
+              <span class="fld-lbl">{t('sessions.phProfile')}</span>
+              <div class="psel"><Select bind:value={lCodexProfile} options={codexProfiles} placeholder={t('sessions.phCodexDefault')} /></div>
+            </div>
+          {/if}
+          <div class="fld">
+            <span class="fld-lbl">{t('sessions.phModel')}</span>
+            <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lCodexModel}
+              placeholder={t('sessions.phCodexModelPlaceholder')} spellcheck="false" autocomplete="off" />
+            {#if !codexProfiles.length}
+              <span class="ph-note" title={t('sessions.codexNoProfilesHint')}>{t('sessions.codexNoProfiles')}</span>
+            {/if}
+          </div>
+        {:else if lEnv === 'opencode'}
+          <!-- opencode model as provider/model — themed Select of the real catalog, free-form fallback. -->
+          <div class="fld">
+              <span class="fld-lbl">{t('sessions.phModel')}</span>
+            {#if opencodeModels.length}
+              <div class="psel psel-wide"><Select bind:value={lOpencodeModel} options={opencodeModels} placeholder={opencodeModel || t('sessions.phModelPlaceholder')} /></div>
+            {:else}
+              <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel}
+                placeholder={opencodeModel || t('sessions.phModelPlaceholder')} spellcheck="false" autocomplete="off" />
+            {/if}
+          </div>
         {/if}
-        <span class="pw">{t('sessions.phModel')}</span>
-        <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lCodexModel}
-          placeholder={t('sessions.phCodexModelPlaceholder')} spellcheck="false" autocomplete="off" />
-        {#if !codexProfiles.length}
-          <span class="ph-note" title={t('sessions.codexNoProfilesHint')}>{t('sessions.codexNoProfiles')}</span>
-        {/if}
-      {:else if lEnv === 'opencode'}
-        <!-- opencode model as provider/model — a themed Select of the real catalog (fetched from the
-             providers) when we have one; a free-form input as fallback so an unlisted model can be typed. -->
-        <span class="pw">{t('sessions.phModel')}</span>
-        {#if opencodeModels.length}
-          <div class="psel psel-wide"><Select bind:value={lOpencodeModel} options={opencodeModels} placeholder={opencodeModel || t('sessions.phModelPlaceholder')} /></div>
-        {:else}
-          <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lOpencodeModel}
-            placeholder={opencodeModel || t('sessions.phModelPlaceholder')} spellcheck="false" autocomplete="off" />
-        {/if}
-      {/if}
-      <span class="pw">{t('sessions.phOn')}</span>
-      <div class="psel"><Select value={lLoc} onChange={onLocChange} options={locOptions} placeholder={t('sessions.locThisPc')} /></div>
-      <span class="pw">{t('sessions.phIn')}</span>
-      {#if lLoc === ''}
-        <div class="pfolder"><FolderField bind:value={lFolder} placeholder={t('sessions.cwdShort')} /></div>
-      {:else}
-        <input class="sw-input grow font-mono text-sw-xs pfolder" bind:value={lRemoteDir}
-          list="remote-dirs" placeholder={t('sessions.dlgSshRemoteDirPlaceholder')} spellcheck="false" autocomplete="off" />
-        <datalist id="remote-dirs">
-          {#each remoteRecent as d (d)}<option value={d}></option>{/each}
-        </datalist>
-      {/if}
+        <div class="fld">
+          <span class="fld-lbl">{t('sessions.phOn')}</span>
+          <div class="psel"><Select value={lLoc} onChange={onLocChange} options={locOptions} placeholder={t('sessions.locThisPc')} /></div>
+        </div>
+        <div class="fld fld-folder">
+          <span class="fld-lbl">{t('sessions.phIn')}</span>
+          {#if lLoc === ''}
+            <div class="pfolder"><FolderField bind:value={lFolder} placeholder={t('sessions.cwdShort')} /></div>
+          {:else}
+            <input class="sw-input grow font-mono text-sw-xs pfolder" bind:value={lRemoteDir}
+              list="remote-dirs" placeholder={t('sessions.dlgSshRemoteDirPlaceholder')} spellcheck="false" autocomplete="off" />
+            <datalist id="remote-dirs">
+              {#each remoteRecent as d (d)}<option value={d}></option>{/each}
+            </datalist>
+          {/if}
+        </div>
+      </div>
+
       {#if lEnv !== 'shell'}
-        <span class="pw">{t('sessions.phWith')}</span>
-        <input class="sw-input grow font-mono text-sw-xs pargs" bind:value={lArgs} oninput={() => (argsTouched = true)}
-          placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
-        <!-- Per-harness flag chips: claude gets its flags via the ⚙ default-args seeding, so chips
-             here cover the OTHER harnesses (codex --yolo etc. + its config.toml profiles). -->
-        {#each launchChips as flag (flag)}
-          <button type="button" class="argchip" class:on={lArgs.includes(flag)}
-            onclick={() => { lArgs = toggleFlag(lArgs, flag); argsTouched = true; }}>{flag}</button>
-        {/each}
+        <!-- Args live in ONE place now (the form) — input + quick preset chips for every harness. The
+             ⚙ default-args below just PREFILL this for new sessions (clearly a separate role). -->
+        <div class="fld launchargs">
+          <span class="fld-lbl">{t('sessions.phWith')}</span>
+          <div class="argsrow">
+            <input class="sw-input grow font-mono text-sw-xs pargs" bind:value={lArgs} oninput={() => (argsTouched = true)}
+              placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
+            {#each launchChips as flag (flag)}
+              <button type="button" class="argchip" class:on={lArgs.includes(flag)}
+                onclick={() => { lArgs = toggleFlag(lArgs, flag); argsTouched = true; }}>{flag}</button>
+            {/each}
+          </div>
+        </div>
       {/if}
       {#if lLoc && lEnv !== 'shell'}
         <span class="ssh-hint" title={t('sessions.sshToolHint', { tool: lEnv })}>{t('sessions.sshToolHint', { tool: lEnv })}</span>
       {/if}
-      <button type="button" class="sw-btn sw-btn-ghost star" onclick={pinCurrent} title={t('sessions.pin')} aria-label={t('sessions.pin')}>★</button>
-      <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
+
+      <div class="launchactions">
+        <button type="button" class="sw-btn sw-btn-primary" onclick={launchPhrase} disabled={atLimit} title="{t('sessions.phLaunch')} · Ctrl+Shift+T">▶ {t('sessions.phLaunch')}</button>
+        <button type="button" class="sw-btn sw-btn-ghost fav-btn" onclick={pinCurrent} title={t('sessions.pin')}>☆ {t('sessions.pin')}</button>
+      </div>
     </div>
 
     {#if lEnv === 'claude'}
@@ -2219,15 +2267,15 @@
               <span class="hook-warn" title={statusHookState.partial.map((p) => `${p.profile}: ${p.missing.join(', ')}`).join(' · ')}>{t('sessions.statusHookDrift', { n: statusHookHealth.drift })}</span>
             {/if}
           {/if}
-          <span class="text-sw-text-muted">·</span>
-          <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusSoundHint')}>
-            <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusSound')} />
-            {t('sessions.statusSound')}
-          </label>
-          <label class="flex cursor-pointer items-center gap-1 text-sw-xs text-sw-text-secondary" title={t('sessions.statusToastHint')}>
-            <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusToast')} />
-            {t('sessions.statusToast')}
-          </label>
+        </div>
+        <!-- Each toggle now gets its own labelled row (was crammed onto the status-hook line). -->
+        <div class="set-row">
+          <span class="set-k" title={t('sessions.statusSoundHint')}>{t('sessions.statusSound')}</span>
+          <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusSound')} />
+        </div>
+        <div class="set-row">
+          <span class="set-k" title={t('sessions.statusToastHint')}>{t('sessions.statusToast')}</span>
+          <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusToast')} />
         </div>
         <div class="set-row">
           <span class="set-k" title={t('sessions.limitModeHint')}>{t('sessions.limitMode')}</span>
@@ -2690,43 +2738,77 @@
     display: inline-flex;
     opacity: 0.9;
   }
+  /* Redesigned launch form: a column of a labelled-field grid + args row + actions row (was a
+     single wrapping "sentence" that orphaned connective words like "на" on wrap). */
   .phrase {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 7px;
-    padding: 10px 12px;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
     background: var(--sw-bg-secondary);
     border: 1px solid var(--sw-border);
     border-radius: var(--sw-radius-md);
   }
-  .phrase .pw {
+  .launchgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px 14px;
+  }
+  .fld {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+  .fld-lbl {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     color: var(--sw-text-muted);
-    font-size: var(--sw-text-xs);
   }
-  .phrase .psel {
-    min-width: 140px;
+  /* Folder needs room for a path — let it span two grid tracks when the row is wide enough. */
+  .fld-folder {
+    grid-column: span 2;
   }
-  .phrase .pfolder {
-    min-width: 200px;
-    flex: 1;
-  }
-  .phrase .pargs {
-    min-width: 160px;
-    flex: 1;
+  /* Controls fill their field cell (no more inline min-widths fighting the grid). */
+  .phrase .psel,
+  .phrase .psel-wide {
+    min-width: 0;
+    width: 100%;
   }
   .phrase .pmodel {
-    min-width: 150px;
-    max-width: 220px;
+    min-width: 0;
+    width: 100%;
+    max-width: none;
   }
-  .phrase .psel-wide {
+  .phrase .pfolder {
+    min-width: 0;
+    flex: 1;
+  }
+  .argsrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+  }
+  .argsrow .pargs {
     min-width: 200px;
+    flex: 1;
+  }
+  .launchactions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .fav-btn {
+    color: var(--sw-warn);
   }
   .phrase .ph-note {
     font-size: var(--sw-text-xs);
     color: var(--sw-text-muted);
     opacity: 0.85;
-    align-self: center;
+    margin-top: 3px;
   }
   .stackbar {
     display: flex;
@@ -2762,13 +2844,6 @@
     font-size: var(--sw-text-xs);
     color: var(--sw-text-muted);
     opacity: 0.85;
-  }
-  .phrase .star {
-    margin-left: auto;
-    color: var(--sw-warn);
-    font-size: 15px;
-    line-height: 1;
-    padding: 6px 9px;
   }
   .favs {
     display: flex;

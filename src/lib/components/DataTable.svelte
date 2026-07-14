@@ -25,6 +25,7 @@
     rows,
     rowKey,
     sortAccessor,
+    loading = false,
     search = false,
     searchValue,
     searchPlaceholder = '',
@@ -45,6 +46,8 @@
   }: {
     columns: DTColumn[];
     rows: Row[];
+    /** Show canonical skeleton rows instead of data (initial load). Distinct from an empty result. */
+    loading?: boolean;
     rowKey: (r: Row) => string;
     // Row left untyped here: callers may derive the sort value via a dynamic `r[key]` lookup
     // (e.g. EnvironmentsTab's skill matrix), which a concrete Row type would reject at compile time.
@@ -288,6 +291,18 @@
         </tr>
       </thead>
       <tbody>
+        {#if loading}
+          {#each Array(6) as _, i (i)}
+            <tr class="dt-row dt-skrow">
+              {#if selectable}<td class="dt-sel"></td>{/if}
+              {#if expand}<td class="dt-exp"></td>{/if}
+              {#each columns as c (c.key)}
+                <td class="align-{c.align ?? 'left'}"><span class="dt-sk" style="width:{c.align === 'right' ? '58px' : c.grow ? '78%' : '54%'}"></span></td>
+              {/each}
+              <td class="dt-spacer"></td>
+            </tr>
+          {/each}
+        {:else}
         {#each sorted as row (rowKey(row))}
           {@const k = rowKey(row)}
           {@const exp = rowExpandable(row)}
@@ -323,6 +338,7 @@
         {#if !sorted.length}
           <tr><td colspan={colSpan} class="dt-empty">{#if empty}{@render empty()}{:else}{t('common.noMatches')}{/if}</td></tr>
         {/if}
+        {/if}
       </tbody>
     </table>
   </div>
@@ -336,19 +352,26 @@
     overflow: hidden;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
   }
+  /* Canon: the toolbar is its OWN tinted band, clearly separated from the (quieter) column-header
+     row — the old flat bar read as one block with the headers ("поиск смешан со столбцами"). */
   .dt-bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--sw-space-2);
-    padding: var(--sw-space-3);
+    padding: var(--sw-space-2) var(--sw-space-3);
+    background: var(--sw-bg-subtle);
     border-bottom: 1px solid var(--sw-border);
   }
   .dt-search {
     min-width: 200px;
-    max-width: 320px;
-    flex: 1;
+    max-width: 300px;
+    flex: 0 1 300px;
     font-size: var(--sw-text-xs);
+  }
+  /* Optional slack element parents can drop after the search to push trailing controls right. */
+  .dt-bar :global(.dt-bar-spacer) {
+    flex: 1 1 auto;
   }
   .dt-bulk {
     display: flex;
@@ -582,6 +605,28 @@
     text-align: center;
     color: var(--sw-text-muted);
     padding: 22px;
+  }
+  /* Canonical in-table skeleton (initial load) — a shimmering bar per cell, sized to its column.
+     Replaces the ad-hoc per-tab skeletons so every table loads the same way. */
+  .dt-sk {
+    display: inline-block;
+    height: 12px;
+    max-width: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--sw-bg-subtle) 25%, var(--sw-bg-hover) 37%, var(--sw-bg-subtle) 63%);
+    background-size: 400% 100%;
+    animation: dt-shim 1.3s ease infinite;
+  }
+  @keyframes dt-shim {
+    0% {
+      background-position: 100% 0;
+    }
+    100% {
+      background-position: 0 0;
+    }
+  }
+  .dt-skrow:hover td {
+    background: none;
   }
   .dt-th.sortable .dt-th-btn:focus-visible,
   .dt-expbtn:focus-visible {

@@ -523,7 +523,7 @@
           <div class="sw-card flex flex-col gap-sw-2" class:opacity-60={s ? !s.enabled : false}>
             <div class="flex items-start justify-between gap-sw-2">
               <div class="min-w-0">
-                <h3 class="truncate font-medium" title={svc.name}>{svc.name}</h3>
+                <h3 class="line-clamp-2 font-medium leading-tight" title={svc.name}>{svc.name}</h3>
                 <p class="truncate font-mono text-[11px] text-sw-text-muted">{svc.baseUrl} · :{svc.port} · {svc.protocol}</p>
                 {#if svc.running && s}
                   {@const pr = procByPort.get(svc.port)}
@@ -696,7 +696,7 @@
         <div class="sw-card flex flex-col gap-sw-3">
           <div class="flex items-start justify-between gap-sw-2">
             <div class="min-w-0">
-              <h3 class="truncate font-medium" title={p.name}>{p.name}</h3>
+              <h3 class="line-clamp-2 font-medium leading-tight" title={p.name}>{p.name}</h3>
               <p class="truncate font-mono text-[11px] text-sw-text-secondary" title={p.baseUrl}>{p.baseUrl}</p>
             </div>
             <div class="flex shrink-0 flex-col items-end gap-1">

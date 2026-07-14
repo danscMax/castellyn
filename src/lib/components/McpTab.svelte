@@ -4,7 +4,7 @@
   import EmptyState from './EmptyState.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
   import ModalShell from './ModalShell.svelte';
-  import { Server } from '@lucide/svelte';
+  import { Server, Pencil, Trash2 } from '@lucide/svelte';
   import SectionHeader from './SectionHeader.svelte';
 
   let {
@@ -137,7 +137,7 @@
     { key: 'command', label: t('mcp.colCommand'), width: '200px' },
     { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
     { key: 'profiles', label: t('mcp.colProfiles'), width: '230px', interactive: true },
-    { key: 'actions', label: t('mcp.colActions'), width: '140px', align: 'right', interactive: true }
+    { key: 'actions', label: t('mcp.colActions'), width: '110px', align: 'right', interactive: true }
   ]);
   type Srv = (typeof sortedSource)[number];
   function sortVal(s: Srv, key: string): string | number {
@@ -170,10 +170,11 @@
     </div>
   </header>
 
-  {#if source.length}
+  {#if source.length || data === null}
     <DataTable
       columns={COLS}
       rows={sortedSource}
+      loading={data === null}
       rowKey={(s) => s.name}
       sortAccessor={sortVal}
       highlightAttr={(s) => `mcp:${s.name}`}
@@ -225,22 +226,19 @@
             </div>
           {/if}
         {:else if col.key === 'actions'}
-          <div class="flex justify-end gap-sw-1">
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => openEdit(srv)}
-              title={t('mcp.editServerTitle')}>{t('common.edit')}</button>
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onRemoveServer(srv.name)}
-              title={t('mcp.removeServerTitle')}>{t('common.delete')}</button>
+          <!-- Canon action cluster: compact icon buttons (were "Изменить"/"Удалить" text buttons that
+               clipped in the 140px column). Labels move to tooltips; the cluster is one fixed width. -->
+          <div class="flex justify-end">
+            <span class="acts">
+              <button class="iact" disabled={busy} onclick={() => openEdit(srv)}
+                title={t('mcp.editServerTitle')} aria-label={t('common.edit')}><Pencil size={15} /></button>
+              <button class="iact danger" disabled={busy} onclick={() => onRemoveServer(srv.name)}
+                title={t('mcp.removeServerTitle')} aria-label={t('common.delete')}><Trash2 size={15} /></button>
+            </span>
           </div>
         {/if}
       {/snippet}
     </DataTable>
-  {:else if data === null}
-    <!-- First open: skeleton rows until read_mcp resolves, instead of a misleading "empty" pane. -->
-    <div class="flex flex-col gap-sw-2">
-      {#each Array(4) as _, i (i)}
-        <div class="skeleton" style="height:2.4rem;width:100%"></div>
-      {/each}
-    </div>
   {:else}
     <EmptyState icon={Server} title={t('mcp.emptyTitle')} description={t('mcp.emptyHint')} />
   {/if}

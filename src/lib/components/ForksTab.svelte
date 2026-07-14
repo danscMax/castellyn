@@ -500,6 +500,15 @@
 </div>
 
 <style>
+  /* Fork cards: (1) equal-height per row — the shared .card-grid sets align-items:start, so a card
+     with more badges/actions stood taller than its row-mates (uneven grid); (2) wider min column —
+     at 280px a long health badge (e.g. "разошлась с оригиналом") squeezed the repo name to "Free…".
+     Scoped to the forks tab so other card-grids (Home/Analytics/Providers) are untouched. */
+  .card-grid {
+    align-items: stretch;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+
   /* Live refresh status — the whole chip is a click target that stops the refresh (the cancel ✕
      used to be opacity:0 until hover, so it read as "no cancel exists"). Now always visible. */
   .refresh-chip {

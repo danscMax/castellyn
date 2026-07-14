@@ -26,6 +26,13 @@ export default {
   shareConfirmBtn: 'Share',
   shareDone: 'Done: {created} added, {skipped} already present, {failed} failed',
   shareError: 'Failed to share skills',
+  shareCmdBtn: 'Share commands to Codex',
+  shareCmdTitle: 'Wrap your slash-commands (max + personal ~/.claude/commands) as SKILL.md so Codex and OpenCode can invoke them ($max-rootcause). Writes to ~/.agents/skills; real skills are left untouched',
+  shareCmdConfirmTitle: 'Share commands?',
+  shareCmdConfirmMsg:
+    'For each of your slash-commands (own-marketplace plugins + ~/.claude/commands) a SKILL.md is generated in ~/.agents/skills — the folder Codex and OpenCode read. Only your commands; real skills and junctions are never overwritten, Claude Code is unaffected. Multi-agent commands (dev/audit/review) degrade to a single-threaded run in Codex.',
+  shareCmdConfirmBtn: 'Share commands',
+  shareCmdDone: 'Done: {created} commands wrapped, {skipped} skipped, {failed} failed',
   rtkEnable: 'Enable',
   rtkDisable: 'Disable',
   rtkEnableTitle: 'Wire RTK into OpenCode (Windows-safe plugin) — auto-rewrites commands to save tokens',

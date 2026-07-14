@@ -2218,7 +2218,10 @@ const CONFIG_SOURCE_REL: &str = "{{PROFILES}}\\config";
 fn read_drift_diff(name: String) -> Result<Option<DriftDiff>, String> {
     let home = std::env::var("USERPROFILE").map_err(|_| "no USERPROFILE".to_string())?;
     let tip_path = format!("{}\\.claude\\{}", home, name);
-    let source_path = format!("{}\\{}\\{}", scripts_root(), CONFIG_SOURCE_REL, name);
+    // abs() expands the {{PROFILES}} placeholder in CONFIG_SOURCE_REL (which is an ABSOLUTE path);
+    // a raw format! left the literal token in the path AND wrongly prefixed scripts_root(), so the
+    // source file was never found -> Ok(None) -> the UI rendered an empty "—" for every drifted file.
+    let source_path = abs(&format!("{CONFIG_SOURCE_REL}\\{name}"));
 
     let tip_content = match std::fs::read_to_string(&tip_path) {
         Ok(c) => c,
@@ -3057,11 +3060,24 @@ fn cmd_on_path(name: &str) -> bool {
 /// escaping). Skips extension-less and .ps1 shims (npm drops all three for the same tool). None if
 /// not found. Used to spawn npm-installed CLIs (`claude`, `ccr`, `npm`) directly.
 fn exe_on_path(name: &str) -> Option<std::path::PathBuf> {
-    let path = std::env::var("PATH").ok()?;
     let exts = [".exe", ".cmd", ".bat"];
-    for dir in std::env::split_paths(&path) {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for ext in exts {
+                let cand = dir.join(format!("{name}{ext}"));
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    // Fallback: the npm global bin (%APPDATA%\npm) holds the claude/ccr shims but isn't always on a
+    // GUI-launched app's runtime PATH (some setups add it only to an interactive shell). Without this
+    // a shortcut-launched Castellyn resolved nothing → "0 plugins / claude CLI unavailable".
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let npm = std::path::Path::new(&appdata).join("npm");
         for ext in exts {
-            let cand = dir.join(format!("{name}{ext}"));
+            let cand = npm.join(format!("{name}{ext}"));
             if cand.is_file() {
                 return Some(cand);
             }
@@ -8045,14 +8061,18 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
             }
         }
     }
-    let fut = tokio::process::Command::new("pwsh")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "claude plugin list --json",
-        ])
+    // Resolve claude to an absolute path and spawn it DIRECTLY (like manage_plugin_native) instead of
+    // `pwsh -NoProfile -Command "claude …"`: the pwsh indirection relied on claude being on the
+    // spawned shell's PATH, which a GUI-launched app can lack → the whole tab showed "0 plugins".
+    let Some(claude) = exe_on_path("claude") else {
+        return Err(trv(
+            "err.claude_launch",
+            cur_lang(),
+            &[("e", &tr("log.claude_not_found", cur_lang()).to_string())],
+        ));
+    };
+    let fut = tokio::process::Command::new(&claude)
+        .args(["plugin", "list", "--json"])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
     let out = match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
@@ -8948,6 +8968,157 @@ fn share_skills_blocking() -> Result<ShareResult, String> {
         }
     }
     Ok(res)
+}
+
+/// Marks a SKILL.md we GENERATED from a slash-command (first body line). Lets a re-share refresh our
+/// own wrappers in place and a future clean find them, without ever touching a real skill or junction.
+const CMD_WRAPPER_SENTINEL: &str = "<!-- castellyn:command-skill -->";
+
+/// Body of a command/skill markdown = everything after the first `---…---` frontmatter block (the
+/// whole file if there is none). Mirrors `extract_frontmatter`'s fence logic.
+fn md_body(content: &str) -> &str {
+    let t = content.trim_start_matches('\u{feff}').trim_start();
+    if let Some(rest) = t.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            return rest[end + 4..].trim_start_matches(['\r', '\n']);
+        }
+    }
+    content
+}
+
+/// (skill_name, description, body) for every "own" slash-command: the user's own-marketplace plugin
+/// commands (e.g. `/max:rootcause` → `max-rootcause`) plus personal `~/.claude/commands`. Commands
+/// have no SKILL.md of their own, so `share_commands` GENERATES a wrapper (unlike share_skills, which
+/// junctions existing skill dirs). Third-party plugin commands are excluded — only YOURS.
+fn command_sources(home: &str) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    fn push_dir(dir: &std::path::Path, prefix: Option<&str>, out: &mut Vec<(String, String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Ok(content) = std::fs::read_to_string(&p) else { continue };
+            let desc = fm_value(&extract_frontmatter(&content), "description")
+                .unwrap_or_else(|| stem.to_string());
+            let name = match prefix {
+                Some(pfx) => format!("{pfx}-{stem}"),
+                None => stem.to_string(),
+            };
+            out.push((name, desc, md_body(&content).to_string()));
+        }
+    }
+    push_dir(&std::path::Path::new(home).join(".claude").join("commands"), None, &mut out);
+    if let Some((_dir, installed, markets)) = load_installed_plugins() {
+        let own = own_marketplaces();
+        if let Some(po) = installed.get("plugins").and_then(|v| v.as_object()) {
+            for (id, arr) in po {
+                let mp = id.rsplit('@').next().unwrap_or("");
+                if !own.contains(mp) {
+                    continue; // only YOUR commands, not every third-party plugin's
+                }
+                let plugin = id.split('@').next().unwrap_or(id);
+                if let Some(dir) = plugin_content_dir(id, first_install_path(arr), &markets) {
+                    push_dir(&std::path::Path::new(&dir).join("commands"), Some(plugin), &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Generate a `SKILL.md` wrapper in ~/.agents/skills for every "own" slash-command, so Codex/OpenCode
+/// can invoke them (`$max-rootcause`) — a command is a Claude-only concept, but a skill is the shared
+/// cross-harness format. Idempotent: refreshes our own wrappers in place, never clobbers a real skill
+/// or a share_skills junction of the same name. Claude is untouched (it reads ~/.claude, not ~/.agents).
+#[tauri::command]
+async fn share_commands() -> Result<ShareResult, String> {
+    tokio::task::spawn_blocking(share_commands_blocking)
+        .await
+        .map_err(|e| format!("share_commands task panicked: {e}"))?
+}
+
+fn share_commands_blocking() -> Result<ShareResult, String> {
+    let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
+    let target_dir = format!("{home}\\.agents\\skills");
+    std::fs::create_dir_all(&target_dir).map_err(|e| format!("create {target_dir}: {e}"))?;
+
+    let mut res = ShareResult {
+        created: 0,
+        skipped: 0,
+        failed: 0,
+        target: target_dir.clone(),
+        details: Vec::new(),
+    };
+    for (name, desc, body) in command_sources(&home) {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            res.failed += 1;
+            res.details.push(format!("{name}: unsafe name, skipped"));
+            continue;
+        }
+        let skill_dir = std::path::Path::new(&target_dir).join(&name);
+        let skill_md = skill_dir.join("SKILL.md");
+        // Never clobber a real skill or a share_skills junction: only (re)write OUR OWN wrappers.
+        if std::fs::symlink_metadata(&skill_dir).is_ok() {
+            let is_ours = std::fs::read_to_string(&skill_md)
+                .map(|c| c.contains(CMD_WRAPPER_SENTINEL))
+                .unwrap_or(false);
+            if !is_ours {
+                res.skipped += 1; // a genuine skill / junction of the same name wins
+                continue;
+            }
+        }
+        // description is a single-line double-quoted YAML scalar — escape backslash and quote.
+        let desc_esc = desc.replace('\\', "\\\\").replace('"', "\\\"");
+        let contents =
+            format!("---\nname: {name}\ndescription: \"{desc_esc}\"\n---\n{CMD_WRAPPER_SENTINEL}\n{body}\n");
+        if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+            res.failed += 1;
+            res.details.push(format!("{name}: {e}"));
+            continue;
+        }
+        match std::fs::write(&skill_md, contents) {
+            Ok(_) => res.created += 1,
+            Err(e) => {
+                res.failed += 1;
+                res.details.push(format!("{name}: {e}"));
+            }
+        }
+    }
+    Ok(res)
+}
+
+#[cfg(test)]
+mod command_share_tests {
+    use super::{extract_frontmatter, fm_value, md_body};
+
+    #[test]
+    fn md_body_strips_frontmatter() {
+        let c = "---\ndescription: \"x\"\nargument-hint: \"[y]\"\n---\n\n# Body\nline";
+        assert_eq!(md_body(c), "# Body\nline");
+    }
+
+    #[test]
+    fn md_body_passthrough_without_frontmatter() {
+        assert_eq!(md_body("no fm here"), "no fm here");
+    }
+
+    #[test]
+    fn md_body_tolerates_bom_and_crlf() {
+        assert_eq!(md_body("\u{feff}---\r\ndescription: \"x\"\r\n---\r\nBody"), "Body");
+    }
+
+    #[test]
+    fn frontmatter_description_is_parsed_for_the_wrapper() {
+        let fm = extract_frontmatter("---\ndescription: \"Diagnose the root cause\"\n---\nbody");
+        assert_eq!(fm_value(&fm, "description").as_deref(), Some("Diagnose the root cause"));
+    }
 }
 
 // Windows-safe OpenCode RTK plugin. Thin delegating shell — all rewrite logic lives in
@@ -10943,6 +11114,75 @@ fn delete_agent(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     agent_guard(p)?;
     std::fs::remove_file(p).map_err(|e| e.to_string())
+}
+
+/// One check line of a subagent smoke test.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentTestLine {
+    ok: bool,
+    text: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentTestResult {
+    ok: bool,
+    lines: Vec<AgentTestLine>,
+}
+
+/// Smoke-test a subagent WITHOUT invoking it in a real session: validate its frontmatter + body, and
+/// for a wrapper agent (its prompt shells out to codex/opencode) probe that the target CLI actually
+/// resolves and answers `--version`. Answers "is this agent well-formed and are its deps present?".
+#[tauri::command]
+async fn test_subagent(path: String) -> Result<AgentTestResult, String> {
+    tokio::task::spawn_blocking(move || test_subagent_blocking(&path))
+        .await
+        .map_err(|e| format!("test_subagent panicked: {e}"))?
+}
+
+fn test_subagent_blocking(path: &str) -> Result<AgentTestResult, String> {
+    let p = std::path::Path::new(path);
+    agent_guard(p)?;
+    let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let content = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    let fm = extract_frontmatter(content);
+    let body = frontmatter_body(content);
+    let mut lines: Vec<AgentTestLine> = Vec::new();
+    let push = |lines: &mut Vec<AgentTestLine>, ok: bool, text: String| lines.push(AgentTestLine { ok, text });
+
+    let has_name = fm_value(&fm, "name").is_some_and(|s| !s.trim().is_empty());
+    let has_desc = fm_value(&fm, "description").is_some_and(|s| !s.trim().is_empty());
+    push(&mut lines, has_name, if has_name { "name задан".into() } else { "нет name во frontmatter".into() });
+    push(&mut lines, has_desc, if has_desc { "description задан".into() } else { "пустое description — агент не будет авто-выбираться по задаче".into() });
+    let has_body = !body.trim().is_empty();
+    push(&mut lines, has_body, if has_body { "системный промпт задан".into() } else { "пустой системный промпт".into() });
+
+    // Wrapper agents shell out to an external CLI — that CLI must resolve and run.
+    let bl = body.to_lowercase();
+    for (needle, cli) in [("codex", "codex"), ("opencode", "opencode")] {
+        if bl.contains(needle) {
+            match exe_on_path(cli) {
+                Some(exe) => {
+                    let out = std::process::Command::new(&exe)
+                        .arg("--version")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                    match out {
+                        Ok(o) if o.status.success() => {
+                            let v = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
+                            push(&mut lines, true, format!("CLI `{cli}` найден и отвечает: {v}"));
+                        }
+                        _ => push(&mut lines, false, format!("CLI `{cli}` найден, но не отвечает на --version")),
+                    }
+                }
+                None => push(&mut lines, false, format!("CLI `{cli}` не найден на PATH — обёртка не сработает")),
+            }
+        }
+    }
+
+    let ok = lines.iter().all(|l| l.ok);
+    Ok(AgentTestResult { ok, lines })
 }
 
 /// Strip Syncthing's `.sync-conflict-<stamp>` infix to recover the original file's path.
@@ -15653,6 +15893,7 @@ read_opencode_models,
             read_environments,
             read_skill_matrix,
             share_skills,
+            share_commands,
             run_opencode_rtk,
             run_opencode_mcp,
             run_opencode_providers,
@@ -15680,6 +15921,7 @@ read_opencode_models,
             read_agent,
             save_agent,
             delete_agent,
+            test_subagent,
             resolve_sync_conflict,
             read_schedules,
             read_schedules_cached,

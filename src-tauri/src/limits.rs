@@ -16,7 +16,7 @@
 //! are stale instead of quietly showing the last ones forever.
 
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -101,40 +101,60 @@ struct LimitsAlert {
     resets_at: Option<String>,
 }
 
-/// Which (profile, window, level, window-id) alerts have already fired. The window-id is the
-/// `resets_at` string, so a NEW window re-arms both thresholds.
-static FIRED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+/// Highest threshold level already alerted per (profile, window) for the CURRENT above-threshold
+/// episode (0 = re-armed). Edge-triggered: once util rises to a level we stay quiet until it drops
+/// back below WARN, then re-arm. Keyed on (profile, window) ONLY — NOT `resets_at`, which SHIFTS as a
+/// rolling window ages, so a resets_at-keyed set re-fired on every poll (the "limit" toast spam).
+static FIRED: LazyLock<Mutex<HashMap<String, u8>>> = LazyLock::new(Default::default);
 
-/// Threshold decision + antispam, pure so it is unit-testable. Returns the level to fire (99 or 85)
-/// or None to stay quiet. Fires each threshold at most once per window; a changed `reset` (new
-/// window) drops the prior window's fired levels for this (profile, window) so it re-arms.
-fn take_alert(
-    fired: &mut HashSet<String>,
-    profile: &str,
-    window: &str,
-    util: f64,
-    reset: Option<&str>,
-) -> Option<u8> {
-    let level: u8 = if util >= CRIT_PCT {
-        99
-    } else if util >= WARN_PCT {
-        85
-    } else {
-        return None;
-    };
-    let win = reset.unwrap_or("-");
-    let prefix = format!("{profile}\x1f{window}\x1f");
-    let key = format!("{prefix}{level}\x1f{win}");
-    if fired.contains(&key) {
+/// Edge-triggered threshold decision + antispam, pure so it is unit-testable. Returns the level to
+/// fire (99 or 85) or None to stay quiet. Fires each threshold at most ONCE per above-threshold
+/// episode: once util rises to a level it stays silent — even as time passes and `resets_at` drifts —
+/// until util drops back below WARN (episode ended), which re-arms both thresholds. Keyed on
+/// (profile, window) only, so a rolling window's shifting `resets_at` can no longer re-nag.
+fn take_alert(fired: &mut HashMap<String, u8>, profile: &str, window: &str, util: f64) -> Option<u8> {
+    let key = format!("{profile}\x1f{window}");
+    if util < WARN_PCT {
+        fired.remove(&key); // below the warn line → episode over, re-arm
         return None;
     }
-    // A new window for this (profile, window): drop the prior window's fired levels so it re-arms.
-    let suffix = format!("\x1f{win}");
-    // Keep keys that aren't a prior window of this (profile, window): either a different group, or
-    // already the current window. (De Morgan of `!(starts_with && !ends_with)`.)
-    fired.retain(|k| !k.starts_with(&prefix) || k.ends_with(&suffix));
-    fired.insert(key);
+    let level: u8 = if util >= CRIT_PCT { 99 } else { 85 };
+    if fired.get(&key).copied().unwrap_or(0) >= level {
+        return None; // this level (or higher) already alerted this episode
+    }
+    fired.insert(key, level);
     Some(level)
+}
+
+/// Where the notified-state survives a restart (sibling of config.json). Without persistence the
+/// whole antispam was process-memory only, so every relaunch re-nagged about each window already
+/// ≥99% — a profile pegged at 100% produced a fresh OS toast + in-app toast burst on every start.
+fn fired_state_path() -> Option<std::path::PathBuf> {
+    let cfg = crate::config_path()?;
+    std::path::Path::new(&cfg)
+        .parent()
+        .map(|p| p.join("limits-fired.json"))
+}
+
+/// Load the persisted fired-map (best-effort; missing/corrupt file = "nothing fired yet").
+fn load_fired() -> HashMap<String, u8> {
+    fired_state_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str::<HashMap<String, u8>>(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the fired-map (best-effort — a write failure must never break the poll). Keyed by
+/// (profile, window) → highest fired level, so a relaunch while still pegged doesn't re-nag, but a
+/// window that has dropped below WARN (util recovered) re-arms after load.
+fn save_fired(fired: &HashMap<String, u8>) {
+    let Some(p) = fired_state_path() else { return };
+    if let Ok(json) = serde_json::to_string(fired) {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&p, json);
+    }
 }
 
 /// Pull `claudeAiOauth.accessToken` from a profile's `.credentials.json`. None = no OAuth (skip the
@@ -328,23 +348,32 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                 },
             );
             let mut fired = FIRED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut changed = false;
             if let Some(u) = h5 {
-                if let Some(level) = take_alert(&mut fired, profile, "5h", u, h5_reset.as_deref()) {
+                if let Some(level) = take_alert(&mut fired, profile, "5h", u) {
                     fire_alert(app, profile, "5h", level, u, h5_reset.as_deref());
+                    changed = true;
                 }
             }
             if let Some(u) = d7 {
-                if let Some(level) = take_alert(&mut fired, profile, "7d", u, d7_reset.as_deref()) {
+                if let Some(level) = take_alert(&mut fired, profile, "7d", u) {
                     fire_alert(app, profile, "7d", level, u, d7_reset.as_deref());
+                    changed = true;
                 }
             }
             // A scoped (per-model) cap alerts too — it gates real work even when the headline 5h/7d
             // are calm. The window id is the model label, so each model re-arms independently.
             if let Some(u) = scoped {
                 let win = scoped_label.as_deref().unwrap_or("model");
-                if let Some(level) = take_alert(&mut fired, profile, win, u, scoped_reset.as_deref()) {
+                if let Some(level) = take_alert(&mut fired, profile, win, u) {
                     fire_alert(app, profile, win, level, u, scoped_reset.as_deref());
+                    changed = true;
                 }
+            }
+            // Persist across restarts so a relaunch doesn't re-nag about a window already alerted
+            // this reset-cycle (the whole antispam used to live only in process memory).
+            if changed {
+                save_fired(&fired);
             }
         }
         Err(401) => {
@@ -405,8 +434,15 @@ fn profile_key(dir: &str) -> &str {
 /// Start the usage-limit poll thread. Called once from `setup()`. Respects the `limitsMonitor`
 /// config toggle (default on); a first poll runs after one interval so startup isn't blocked.
 pub fn start(app: AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(POLL_SECS));
+    std::thread::spawn(move || {
+        // Restore the notified-state so a restart doesn't re-nag about windows already alerted this
+        // reset-cycle. The key carries resets_at, so a genuinely new window still re-arms after load.
+        {
+            let mut fired = FIRED.lock().unwrap_or_else(|e| e.into_inner());
+            *fired = load_fired();
+        }
+        loop {
+            std::thread::sleep(Duration::from_secs(POLL_SECS));
         crate::run_guarded("limits", || {
             if !crate::read_config_file().limits_monitor.unwrap_or(true) {
                 return;
@@ -433,6 +469,7 @@ pub fn start(app: AppHandle) {
                 });
             }
         });
+        }
     });
 }
 
@@ -450,22 +487,25 @@ mod tests {
     }
 
     #[test]
-    fn thresholds_fire_once_per_window_and_rearm() {
-        let mut fired = HashSet::new();
+    fn thresholds_fire_once_per_episode_and_rearm() {
+        let mut fired = HashMap::new();
         // Below warn → nothing.
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 80.0, Some("R1")), None);
-        // Cross 85 → fire once, re-fire suppressed.
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 86.0, Some("R1")), Some(85));
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 90.0, Some("R1")), None);
-        // Cross 99 in the SAME window → fires (distinct threshold), then suppressed.
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.5, Some("R1")), Some(99));
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 100.0, Some("R1")), None);
-        // A different window (new resets_at) re-arms — jumping straight to 99 fires 99.
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.9, Some("R2")), Some(99));
-        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.9, Some("R2")), None);
-        // Independent (profile, window) tracks separately.
-        assert_eq!(take_alert(&mut fired, "cc1", "7d", 88.0, Some("W1")), Some(85));
-        assert_eq!(take_alert(&mut fired, "cc2", "5h", 88.0, Some("R2")), Some(85));
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 80.0), None);
+        // Cross 85 → fire once; staying in the band is silent.
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 86.0), Some(85));
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 90.0), None);
+        // Rise to 99 → fires (distinct threshold). Staying pegged is SILENT — even across polls where
+        // a rolling window's resets_at drifts. This is the anti-spam fix (was: re-fired every poll).
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.5), Some(99));
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 100.0), None);
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 100.0), None);
+        // Drop below WARN (util recovered / window reset) → re-arm; the next rise re-fires.
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 30.0), None);
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.9), Some(99));
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.9), None);
+        // Independent (profile, window) track separately.
+        assert_eq!(take_alert(&mut fired, "cc1", "7d", 88.0), Some(85));
+        assert_eq!(take_alert(&mut fired, "cc2", "5h", 88.0), Some(85));
     }
 
     #[test]

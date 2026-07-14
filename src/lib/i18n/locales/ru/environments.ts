@@ -26,6 +26,13 @@ export default {
   shareConfirmBtn: 'Расшарить',
   shareDone: 'Готово: добавлено {created}, пропущено {skipped}, ошибок {failed}',
   shareError: 'Не удалось расшарить скиллы',
+  shareCmdBtn: 'Расшарить команды в Codex',
+  shareCmdTitle: 'Обернуть твои слэш-команды (max + личные ~/.claude/commands) в SKILL.md, чтобы Codex и OpenCode могли их вызывать ($max-rootcause). Пишет в ~/.agents/skills, настоящие скиллы не трогает',
+  shareCmdConfirmTitle: 'Расшарить команды?',
+  shareCmdConfirmMsg:
+    'Для каждой твоей слэш-команды (own-marketplace плагины + ~/.claude/commands) сгенерируется SKILL.md в ~/.agents/skills — эту папку видят Codex и OpenCode. Только твои команды; настоящие скиллы и junction не перезаписываются, Claude Code не затрагивается. Мульти-агентные команды (dev/audit/review) в Codex деградируют до одиночного прогона.',
+  shareCmdConfirmBtn: 'Расшарить команды',
+  shareCmdDone: 'Готово: команд обёрнуто {created}, пропущено {skipped}, ошибок {failed}',
   rtkEnable: 'Включить',
   rtkDisable: 'Выключить',
   rtkEnableTitle: 'Подключить RTK к OpenCode (Windows-safe плагин) — авто-переписывание команд для экономии токенов',

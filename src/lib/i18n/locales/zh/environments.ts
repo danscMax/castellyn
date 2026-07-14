@@ -26,6 +26,13 @@ export default {
   shareConfirmBtn: '共享',
   shareDone: '完成：新增 {created}，已存在 {skipped}，失败 {failed}',
   shareError: '共享技能失败',
+  shareCmdBtn: '将命令共享到 Codex',
+  shareCmdTitle: '将你的斜杠命令（max + 个人 ~/.claude/commands）包装为 SKILL.md，使 Codex 和 OpenCode 能够调用（$max-rootcause）。写入 ~/.agents/skills；不改动真实技能',
+  shareCmdConfirmTitle: '共享命令？',
+  shareCmdConfirmMsg:
+    '将为你的每个斜杠命令（自有市场插件 + ~/.claude/commands）在 ~/.agents/skills 中生成 SKILL.md——Codex 和 OpenCode 会读取该文件夹。仅限你的命令；不会覆盖真实技能或链接，不影响 Claude Code。多智能体命令（dev/audit/review）在 Codex 中会退化为单线程运行。',
+  shareCmdConfirmBtn: '共享命令',
+  shareCmdDone: '完成：已包装 {created} 个命令，跳过 {skipped}，失败 {failed}',
   rtkEnable: '启用',
   rtkDisable: '禁用',
   rtkEnableTitle: '将 RTK 接入 OpenCode（Windows 安全插件）——自动重写命令以节省令牌',

@@ -13,6 +13,7 @@
     matrix,
     onRefresh,
     onShare,
+    onShareCommands,
     onRtk,
     onOpenConfig,
     onOpenProviders,
@@ -29,6 +30,7 @@
     matrix: SkillRow[] | null;
     onRefresh: () => void;
     onShare: () => void;
+    onShareCommands: () => void;
     onRtk: (id: string, enable: boolean) => void;
     onOpenConfig: (path: string) => void;
     onOpenProviders: () => void;
@@ -105,6 +107,14 @@
       {:else if data !== null}
         <span class="badge badge-ok" title={t('environments.skillsSyncedTip')}>{t('environments.skillsSynced')}</span>
       {/if}
+      {#if data !== null}
+        <!-- Commands aren't a cross-harness concept: wrap your own /commands as SKILL.md so Codex/
+             OpenCode can invoke them (`$max-rootcause`). Always available — it (re)generates wrappers. -->
+        <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onShareCommands}
+          title={t('environments.shareCmdTitle')}>
+          {t('environments.shareCmdBtn')}
+        </button>
+      {/if}
     </div>
   </header>
 
@@ -116,14 +126,10 @@
     </div>
   {:else if view === 'table'}
     <!-- Per-skill diff across harnesses (#20) -->
-    {#if matrix === null}
-      <div class="flex flex-col gap-sw-2">
-        {#each Array(6) as _, i (i)}<div class="skeleton" style="height:2.2rem;width:100%"></div>{/each}
-      </div>
-    {:else}
       <DataTable
         columns={COLS}
-        rows={matrix}
+        rows={matrix ?? []}
+        loading={matrix === null}
         rowKey={(r) => r.name}
         sortAccessor={(r, k) => (k === 'name' ? r.name.toLowerCase() : r[k] ? 0 : 1)}
         rowAccent={(r) => r.shareable}
@@ -142,7 +148,6 @@
           {/if}
         {/snippet}
       </DataTable>
-    {/if}
   {:else if envs.length}
     <div class="grid gap-sw-3 md:grid-cols-2">
       {#each envs as e (e.id)}
