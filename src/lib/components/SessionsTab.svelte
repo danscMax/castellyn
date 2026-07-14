@@ -1704,6 +1704,17 @@
   // no drift). Pure & reactive; launches nothing. Applying it just fills the launcher fields, which
   // stay fully editable before spawn. Rendered only for the claude harness.
   const advice = $derived(launchAdvisor(profileInfos, limitsByProfile, lTaskClass, reservedClaude));
+  // Usage-at-a-glance in the profile dropdown: every option carries its remaining 5h/7d windows,
+  // so picking a free profile needs neither the advisor nor a trip to the rail.
+  const profileOptions = $derived(
+    profiles.map((p) => {
+      const lim = limitsByProfile[p];
+      const parts: string[] = [];
+      if (lim?.h5 != null) parts.push(`5${t('sessions.unitHour')} ${Math.round(lim.h5)}%`);
+      if (lim?.d7 != null) parts.push(`7${t('sessions.unitDay')} ${Math.round(lim.d7)}%`);
+      return { value: p, label: p, hint: parts.length ? parts.join(' · ') : undefined };
+    })
+  );
   // Mockup #3 (owner-picked): live preview card — the EXACT command that will run and the
   // chosen profile's remaining 5h/7d windows, so launching is never a guess.
   const previewCmd = $derived(lEnv === 'shell' ? 'pwsh' : `${lEnv} ${composeArgs(lEnv, lArgs)}`.trim());
@@ -2385,7 +2396,7 @@
         {#if lEnv === 'claude'}
           <div class="fld">
             <span class="fld-lbl">{t('sessions.phProfile')}</span>
-            <div class="psel"><Select bind:value={lProfile} options={profiles} placeholder={t('sessions.dlgProfile')} /></div>
+            <div class="psel"><Select bind:value={lProfile} options={profileOptions} placeholder={t('sessions.dlgProfile')} /></div>
           </div>
           <div class="fld">
             <span class="fld-lbl">{t('sessions.phEffort')}</span>
@@ -2487,6 +2498,7 @@
         <span class="env-ic env-tint-{lEnv}">{@html envIcon(lEnv)}</span>
         <b>{ENVS.find((e) => e.id === lEnv)?.label ?? lEnv}{#if lEnv === 'claude' && lProfile}&nbsp;· {lProfile}{/if}</b>
       </div>
+      <div class="lp-folder" title={lLoc ? lRemoteDir : lFolder}>📁 {lLoc ? (lRemoteDir || '~') : (lFolder || t('sessions.cwdShort'))}</div>
       <div class="lp-cmd font-mono" title={previewCmd}>{previewCmd}</div>
       {#if previewLimits}
         <div class="lp-meters">
@@ -2563,17 +2575,21 @@
 
     <!-- Quick repeat (mockup A): top favorites + recents as one-click chips INSIDE the form, so
          "repeat what I ran yesterday" doesn't require closing the form and reopening the ▾ menu. -->
-    {#if favorites.length || menuRecents.length}
+    {#if favorites.length || menuRecents.length || wsNames.length}
       <div class="form-recents">
         <span class="fld-lbl">{t('sessions.quickRepeat')}</span>
         <div class="fr-chips">
+          {#each wsNames as name (name)}
+            <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
+              onclick={() => { launchWorkspace(name); newOpen = false; }}>▶ {name} ({workspaces[name].length})</button>
+          {/each}
           {#each favorites.slice(0, 3) as f (f.id)}
             <button type="button" class="argchip fr-fav" disabled={atLimit} title={t('sessions.favLaunchTip')}
-              onclick={() => { launchFav(f); newOpen = false; }}>★ {f.label}</button>
+              onclick={() => { launchFav(f); newOpen = false; }}>★ <span class="env-ic env-tint-{f.env}">{@html envIcon(f.env)}</span> {stripEnvPrefix(f)}</button>
           {/each}
           {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
             <button type="button" class="argchip" disabled={atLimit}
-              onclick={() => { launchRecent(r); newOpen = false; }}>{r.label}</button>
+              onclick={() => { launchRecent(r); newOpen = false; }}><span class="env-ic env-tint-{r.env}">{@html envIcon(r.env)}</span> {stripEnvPrefix(r)}</button>
           {/each}
         </div>
       </div>
@@ -2991,10 +3007,10 @@
                   onclick={() => launchWorkspace(name)}>▶ {name} ({workspaces[name].length})</button>
               {/each}
               {#each favorites.slice(0, 3) as f (f.id)}
-                <button type="button" class="argchip fr-fav" disabled={atLimit} onclick={() => launchFav(f)}>★ {f.label}</button>
+                <button type="button" class="argchip fr-fav" disabled={atLimit} onclick={() => launchFav(f)}>★ <span class="env-ic env-tint-{f.env}">{@html envIcon(f.env)}</span> {stripEnvPrefix(f)}</button>
               {/each}
               {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
-                <button type="button" class="argchip" disabled={atLimit} onclick={() => launchRecent(r)}>{r.label}</button>
+                <button type="button" class="argchip" disabled={atLimit} onclick={() => launchRecent(r)}><span class="env-ic env-tint-{r.env}">{@html envIcon(r.env)}</span> {stripEnvPrefix(r)}</button>
               {/each}
             </div>
           {/if}
@@ -3214,6 +3230,17 @@
   }
   /* The launcher rendered as an anchored popover: an elevated card (use:anchored sets position:fixed
      + top/left inline), overriding the inline .launcher border-bottom/margins. */
+  /* 2026 motion: a believable 140ms entrance instead of an instant pop (launcher + ▾ menu). */
+  @keyframes cmh-pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.985);
+    }
+  }
+  .launcher-pop,
+  .plusmenu {
+    animation: cmh-pop-in 0.14s ease-out;
+  }
   .launcher-pop {
     width: min(820px, 94vw);
     margin-bottom: 0;
@@ -3379,6 +3406,13 @@
     min-width: 0;
   }
   .lp-who b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lp-folder {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3799,6 +3833,9 @@
     color: var(--sw-danger);
   }
   .argchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     padding: var(--sw-space-1) var(--sw-space-2);
     border: 1px solid var(--sw-border);
     border-radius: 9999px;
