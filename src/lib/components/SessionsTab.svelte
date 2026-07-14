@@ -33,6 +33,7 @@
     agentStatusHookSet,
     readConfig,
     saveConfig,
+    pollLimitsNow,
     type AgentStatusHookState,
     type AgentStatusEvent,
     type LimitsStatusEvent,
@@ -331,6 +332,13 @@
         if (state === 'limited') {
           const pk = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
           if (pk) sawRateLimit.add(pk);
+          // #4: refresh this profile's endpoint reset time NOW (throttled), so the badge and phase-2
+          // continue don't wait up to POLL_SECS for accurate numbers.
+          const prof = pk ? panes.find((p) => p.key === pk)?.profile : undefined;
+          if (prof && Date.now() - (lastOnDemandPollAt[prof] ?? 0) > ON_DEMAND_POLL_MS) {
+            lastOnDemandPollAt[prof] = Date.now();
+            void pollLimitsNow(prof);
+          }
         }
 
         const prev = agentStates[id];
@@ -376,11 +384,28 @@
   const contJitterMs: Record<string, number> = {};
   // z5_12: last real user keystroke per pane key — auto-continue defers while the user is typing.
   const lastUserInputAt: Record<string, number> = {};
+  // #4: last on-demand limits poll per profile — throttle so a limited pane's frequent 'limited'
+  // events can't storm the usage endpoint (which would itself then get rate-limited).
+  const lastOnDemandPollAt: Record<string, number> = {};
+  const ON_DEMAND_POLL_MS = 90_000;
   onMount(() => {
     // L118: track() instead of a local `un` var — see the agent-status listener above.
     track(
       listen<LimitsStatusEvent>('limits-status', (e) => {
         limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
+        // #1: endpoint-driven backstop for a MISSED PTY banner. When Anthropic answers 429 for a
+        // profile (rateLimited), latch the sticky flag for its ACTIVE panes so the dot/badge/auto-
+        // continue engage even if the terminal banner was pushed past the scan window. Conservative:
+        // only working/blocked panes (never idle/done), and a 429 carries no reset time, so phase-2
+        // "continue" cannot fire spuriously — decideMenuContinue waits while resetMs is null. (Live-
+        // smoke pending: needs a genuinely rate-limited profile to confirm it helps without over-firing.)
+        if (e.payload.rateLimited) {
+          for (const p of panes) {
+            if (p.profile !== e.payload.profile) continue;
+            const s = agentStates[sessionIds[p.key]];
+            if (s === 'working' || s === 'blocked') sawRateLimit.add(p.key);
+          }
+        }
       })
     );
     // P3: self-scheduling tick — 12s while visible, 60s when the window is hidden. Auto-continue is

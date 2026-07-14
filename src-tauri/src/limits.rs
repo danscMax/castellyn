@@ -473,6 +473,33 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// #4: force a fresh usage poll for ONE profile right now, bypassing the 5-min cache, so a pane that
+/// just hit its limit gets an accurate reset time within seconds instead of up to POLL_SECS later.
+/// Maps the bare key the frontend holds (`cc1`) back to its profile directory (`.claude-cc1`) to build
+/// the cred path, drops that profile's cache entry so `usage_cached` re-fetches, then polls. The caller
+/// (frontend) throttles per profile so this can't storm the endpoint; respects the limitsMonitor toggle.
+pub fn poll_profile_now(app: &AppHandle, bare_key: &str) {
+    if !crate::read_config_file().limits_monitor.unwrap_or(true) {
+        return;
+    }
+    let Ok(home) = std::env::var("USERPROFILE") else {
+        return;
+    };
+    let Some((dir, _)) = crate::plugin_sync_profiles(&home)
+        .into_iter()
+        .find(|(name, _)| profile_key(name) == bare_key)
+    else {
+        return; // unknown profile — nothing to poll
+    };
+    let cred = format!("{home}\\{dir}\\.credentials.json");
+    // Drop the cached verdict so usage_cached re-fetches instead of serving this round's stale numbers.
+    USAGE_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&cred);
+    poll_profile(app, bare_key, &cred);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

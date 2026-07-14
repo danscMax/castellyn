@@ -7238,6 +7238,16 @@ fn fetch_profile_usage(profile: &str) -> Result<ProfileUsage, u16> {
     })
 }
 
+/// #4: force a fresh usage poll for one profile right now (bypassing the 5-min cache), so a pane that
+/// just hit its limit gets an accurate reset time within seconds instead of up to POLL_SECS later. The
+/// frontend throttles per profile (once per ~90s) so this can't storm the endpoint. Fire-and-forget —
+/// it re-emits `limits-status` when the fresh numbers land. `profile` is only matched against the real
+/// profile list, never used to build a path, so an unknown value is a safe no-op.
+#[tauri::command]
+async fn poll_limits_now(app: AppHandle, profile: String) {
+    let _ = tokio::task::spawn_blocking(move || crate::limits::poll_profile_now(&app, &profile)).await;
+}
+
 /// Claude Code usage limits for a profile (5h + 7d). Cached ~60s per profile; null on any error.
 #[tauri::command]
 async fn read_profile_usage(
@@ -15892,6 +15902,7 @@ pub fn run() {
             check_provider_balance,
             read_profile_file,
             read_profile_usage,
+            poll_limits_now,
             read_sessions_prefs,
             write_sessions_prefs,
             add_provider_key,

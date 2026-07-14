@@ -693,6 +693,9 @@ export type ProfileUsage = {
 // Claude Code usage limits (5h + 7d remaining) for a profile; null = not logged in / unavailable.
 export const readProfileUsage = (profile: string) =>
   invoke<ProfileUsage | null>('read_profile_usage', { profile });
+// #4: force a fresh limits poll for one profile (bypass the 5-min cache) so a just-limited pane gets an
+// accurate reset time within seconds. Fire-and-forget — re-emits `limits-status`. Throttle per profile.
+export const pollLimitsNow = (profile: string) => invoke<void>('poll_limits_now', { profile });
 // Durable Sessions-personalization sidecar (item 18): ~/.claude/castellyn/sessions.json.
 // Returns null when the file doesn't exist yet (fresh machine → migrate from localStorage).
 export const readSessionsPrefs = () => invoke<string | null>('read_sessions_prefs');
