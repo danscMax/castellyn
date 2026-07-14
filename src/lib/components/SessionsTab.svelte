@@ -429,6 +429,20 @@
     }
     return m;
   });
+  // #2/#14: the DISPLAYED per-pane state — sticky through the flickering live `limited` flag. The
+  // backend clears `limited` on ANY output flood (a keypress/banner repaint) mid-episode, which made
+  // the status dot and the sidebar count flicker. While a rate limit is latched (sawRateLimit — held
+  // for the whole episode, driven by the endpoint reset) the pane reads 'limited' steadily; otherwise
+  // the live agent-status. A $derived map (not a template-called fn) so it reliably tracks the $state
+  // Set — the same reactivity lesson as autoResumeById above.
+  const displayStateById = $derived.by(() => {
+    const m: Record<string, AgentPaneState | null> = {};
+    for (const p of panes) {
+      const id = sessionIds[p.key];
+      m[p.key] = sawRateLimit.has(p.key) ? 'limited' : ((id && agentStates[id]) || null);
+    }
+    return m;
+  });
   function maybeAutoContinue() {
     if (!autoContinueOn) return; // master escape hatch for ALL unattended limit handling (21c + 21e)
     // L11: profiles switched-to during THIS pass — so a second pane that flips limited in the same
@@ -500,13 +514,18 @@
         // (summary="1" / full="2"). Mirrors a manual keypress.
         menuDismissed.add(p.key);
         menuDismissedAt[p.key] = Date.now();
-        sessionWrite(id, (isResumeMenu && resumeChoice === 'full' ? '2' : '1') + '\r');
+        const opt = isResumeMenu && resumeChoice === 'full' ? '2' : '1';
+        sessionWrite(id, opt + '\r');
+        // #15: permanent debug channel — "what did the automation decide, and when" (devtools console).
+        console.debug(`[auto-continue] press ${opt} (${isResumeMenu ? 'resume' : 'limit'} menu)`, p.key);
         // #11: surface phase 1 too (not just the later "continue") so every autonomous step is visible.
         // Once per episode — menuDismissed now guards press1, so this can't re-fire on the next tick.
         pushToast({ kind: 'info', title: t('sessions.autoContinuePress1', { name: p.name ?? p.profile }) });
       } else if (action === 'continue') {
         autoContinued.add(p.key);
         sessionWrite(id, continuationText() + '\r');
+        console.debug('[auto-continue] sent continuation', p.key); // #15
+
         pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
       }
       // 'wait' → active but nothing to do this tick.
@@ -540,8 +559,8 @@
   // Roll the counts up for the header chips + the sidebar badge (+page reads the store).
   const statusCounts = $derived.by(() => {
     const c = { blocked: 0, working: 0, done: 0, limited: 0 };
-    for (const id of Object.values(sessionIds)) {
-      const s = agentStates[id];
+    for (const p of panes) {
+      const s = displayStateById[p.key]; // #2/#14: sticky 'limited' → the count no longer flickers
       if (s === 'blocked') c.blocked++;
       else if (s === 'working') c.working++;
       else if (s === 'done') c.done++;
@@ -2481,7 +2500,7 @@
               title={t('sessions.railHide')} aria-label={t('sessions.railHide')}>‹</button>
           </div>
           {#each spacePanes as pane (pane.key)}
-            {@const st = agentStates[sessionIds[pane.key]] ?? null}
+            {@const st = displayStateById[pane.key]}
             <button type="button" class="rail-item" class:active={activeKey === pane.key}
               onclick={() => railFocus(pane.key)}
               oncontextmenu={(e) => openRailMenu(e, pane.key)}
@@ -2552,7 +2571,7 @@
             attachId={pane.attachId}
             ownsSession={pane.ownsSession ?? false}
             paneKey={pane.key}
-            agentState={agentStates[sessionIds[pane.key]] ?? null}
+            agentState={displayStateById[pane.key]}
             autoResumeLabel={autoResumeById[pane.key] ?? null}
             visible={visible && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
@@ -2627,7 +2646,7 @@
         attachId={pane.attachId}
         ownsSession={pane.ownsSession ?? false}
         paneKey={pane.key}
-        agentState={agentStates[sessionIds[pane.key]] ?? null}
+        agentState={displayStateById[pane.key]}
         autoResumeLabel={autoResumeById[pane.key] ?? null}
         visible={false}
         maximized={false}
