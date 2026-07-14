@@ -2011,12 +2011,14 @@
   <header class="mb-sw-3 flex items-center justify-between gap-sw-4">
     <div class="flex items-baseline gap-sw-3 min-w-0">
       <h1 class="text-lg font-semibold">{t('sessions.title')}</h1>
-      {#if statusCounts.blocked || statusCounts.working || statusCounts.done}
-        <!-- herdr-style rollup: which sessions need a decision / are running / are ready to review -->
+      {#if statusCounts.blocked || statusCounts.working || statusCounts.done || statusCounts.limited}
+        <!-- herdr-style rollup: which sessions need a decision / are running / are ready to review /
+             are rate-limited and awaiting auto-resume (#10/#13). -->
         <span class="status-sum" role="status">
           {#if statusCounts.blocked}<span class="ss ss-blocked status-bad">● {t('sessions.sumBlocked', { n: statusCounts.blocked })}</span>{/if}
           {#if statusCounts.working}<span class="ss ss-working status-warn">● {t('sessions.sumWorking', { n: statusCounts.working })}</span>{/if}
           {#if statusCounts.done}<span class="ss ss-done">● {t('sessions.sumDone', { n: statusCounts.done })}</span>{/if}
+          {#if statusCounts.limited}<span class="ss ss-limited">↻ {t('sessions.sumAwaiting', { n: statusCounts.limited })}</span>{/if}
         </span>
       {:else}
         <p class="truncate text-sw-xs text-sw-text-muted">{t('sessions.subtitle')}</p>
@@ -2707,6 +2709,11 @@
   }
   .ss-done {
     color: var(--sw-status-done);
+  }
+  .ss-limited {
+    /* #10/#13: calm brand-accent (not an alarm colour) — the limit is handled, auto-resume is armed. */
+    color: var(--sw-accent);
+    font-weight: 600;
   }
   /* Nudge strip: enable the Agent-statuses hook — shown only when it's off and a live local claude
      pane exists (which otherwise shows a neutral 'unknown' dot instead of working/idle). */

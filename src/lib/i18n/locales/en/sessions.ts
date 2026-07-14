@@ -30,6 +30,7 @@ export default {
   sumLimited: '{n} limited',
   sumWorking: '{n} working',
   sumDone: '{n} done',
+  sumAwaiting: '{n} awaiting resume',
   statusHook: 'Agent statuses',
   statusHookHint: 'A hook in the Claude Code profiles reports the state (working / needs a decision / finished) — a coloured pane dot and a sidebar badge. Sessions outside Castellyn are unaffected.',
   statusHookCoverage: 'hook in {wired}/{total} profiles',

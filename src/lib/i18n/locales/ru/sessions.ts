@@ -30,6 +30,7 @@ export default {
   sumLimited: '{n} на лимите',
   sumWorking: '{n} работает',
   sumDone: '{n} готово',
+  sumAwaiting: '{n} ждут возобновления',
   statusHook: 'Статусы агентов',
   statusHookHint: 'Хук в профилях Claude Code сообщает состояние (работает / ждёт решения / закончил) — цветная точка на панели и бейдж в сайдбаре. Сессий вне Castellyn не касается.',
   statusHookCoverage: 'хук в {wired}/{total} профилях',

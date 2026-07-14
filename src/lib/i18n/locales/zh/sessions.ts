@@ -30,6 +30,7 @@ export default {
   sumLimited: '{n} 个受限',
   sumWorking: '{n} 个工作中',
   sumDone: '{n} 个完成',
+  sumAwaiting: '{n} 个等待恢复',
   statusHook: '代理状态',
   statusHookHint: 'Claude Code 配置中的钩子上报状态（工作中 / 需要决定 / 已完成）— 面板彩色圆点和侧边栏徽章。Castellyn 之外的会话不受影响。',
   statusHookCoverage: '钩子覆盖 {wired}/{total} 个配置',
