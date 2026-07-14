@@ -4177,7 +4177,12 @@ fn http_health_ok(port: u16, path: &str) -> bool {
             Ok(s) => s,
             Err(_) => return false,
         };
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(700)));
+    // Read headroom: a healthy endpoint can legitimately be slow — OmniRoute's /v1/models measures
+    // ~650-690ms cold (it enumerates every backend model). A 700ms read timeout straddled that, so a
+    // WORKING service intermittently timed out and read as `down`, flapping the stack-health monitor
+    // into notification spam. 2.5s gives real headroom; a genuinely hung service is still caught well
+    // within the 30s poll. (The stack-health alarm also has a 2-tick hysteresis as a second guard.)
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(2500)));
     let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(400)));
     let p = if path.starts_with('/') {
         path.to_string()

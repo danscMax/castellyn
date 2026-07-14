@@ -49,6 +49,38 @@ pub(crate) fn newly_down(prev_down: &mut HashSet<String>, curr: &[(String, bool)
     fired
 }
 
+/// Ids that have been down for TWO consecutive ticks and are not yet alarmed for this down-episode —
+/// the hysteresis that stops a service whose health probe FLAPS (one slow/timed-out poll while the
+/// service is actually fine) from firing a false "down" notification. A real outage persists across
+/// polls and still alarms, one tick (~POLL_SECS) later. `prev_down` = last tick's down-set; `alarmed`
+/// remembers which are already alarmed so a still-down service doesn't re-fire and a recovered one
+/// re-arms. Replaces `newly_down` for the notification path (which fired on the FIRST down poll, so a
+/// single flaky probe was enough). Pure + testable.
+pub(crate) fn confirmed_down(
+    prev_down: &mut HashSet<String>,
+    alarmed: &mut HashSet<String>,
+    curr: &[(String, bool)],
+) -> Vec<String> {
+    let now_down: HashSet<String> = curr
+        .iter()
+        .filter(|(_, down)| *down)
+        .map(|(id, _)| id.clone())
+        .collect();
+    // Confirmed = down now AND down last tick AND not already alarmed, in stable input order.
+    let fired: Vec<String> = curr
+        .iter()
+        .filter(|(id, down)| *down && prev_down.contains(id) && !alarmed.contains(id))
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &fired {
+        alarmed.insert(id.clone());
+    }
+    // A service no longer down re-arms, so a later genuine outage alarms again.
+    alarmed.retain(|id| now_down.contains(id));
+    *prev_down = now_down;
+    fired
+}
+
 /// Of the ids that went down this tick, only those we ever observed LISTENING this session deserve an
 /// alarm. A service the user never started is not an outage — it is simply off, and firing "service
 /// down" for it on the first poll (where `prev_down` is empty, so everything looks newly-down) is the
@@ -79,6 +111,9 @@ pub fn start(app: AppHandle) {
         // Services observed listening at some point THIS session. A service we never saw up was never
         // started, so its being down is not an outage — see `alarmable`.
         let mut seen_up: HashSet<String> = HashSet::new();
+        // Services already alarmed for their current down-episode — the hysteresis state, so a
+        // confirmed-down alarm fires once and re-arms only after the service recovers.
+        let mut alarmed: HashSet<String> = HashSet::new();
         // P8: last-emitted snapshot + ticks since the last emit, so we push only on a real change
         // (plus a keep-alive) instead of a full payload every 30s.
         let mut prev_emit: Option<String> = None;
@@ -110,7 +145,9 @@ pub fn start(app: AppHandle) {
                 .map(|h| (h.id.clone(), !h.port_open || h.healthy == Some(false)))
                 .collect();
             note_seen_up(&mut seen_up, &curr);
-            let fired = alarmable(&newly_down(&mut prev_down, &curr), &seen_up);
+            // Hysteresis: alarm only when a service has been down for TWO consecutive polls — a single
+            // flaky/slow health probe (the OmniRoute false-down that spammed) never reaches it.
+            let fired = alarmable(&confirmed_down(&mut prev_down, &mut alarmed, &curr), &seen_up);
             // The tray's "needs attention" count must mean a real outage too: a stack the user never
             // started would otherwise report every one of its services as a problem.
             STACK_DOWN_COUNT.store(
@@ -168,6 +205,36 @@ mod tests {
         assert_eq!(newly_down(&mut prev, &up(&[("gateway", true), ("qwen", false)])), vec!["gateway"]);
         // A second service drops in the same tick → only the newly-down one.
         assert_eq!(newly_down(&mut prev, &up(&[("gateway", true), ("qwen", true)])), vec!["qwen"]);
+    }
+
+    #[test]
+    fn confirmed_down_needs_two_consecutive_ticks_and_ignores_a_flap() {
+        let up = |ids: &[(&str, bool)]| ids.iter().map(|(i, d)| (i.to_string(), *d)).collect::<Vec<_>>();
+        let mut prev: HashSet<String> = HashSet::new();
+        let mut alarmed: HashSet<String> = HashSet::new();
+        // One down poll: pending, NOT alarmed (it might be a single flaky/slow probe).
+        assert_eq!(confirmed_down(&mut prev, &mut alarmed, &up(&[("gw", true)])), Vec::<String>::new());
+        // Two consecutive down → confirmed → alarms once.
+        assert_eq!(confirmed_down(&mut prev, &mut alarmed, &up(&[("gw", true)])), vec!["gw"]);
+        // Still down → does NOT re-fire.
+        assert_eq!(confirmed_down(&mut prev, &mut alarmed, &up(&[("gw", true)])), Vec::<String>::new());
+        // Recovers → re-arms silently.
+        assert_eq!(confirmed_down(&mut prev, &mut alarmed, &up(&[("gw", false)])), Vec::<String>::new());
+        // Down once → pending; down again → alarms (re-armed).
+        assert_eq!(confirmed_down(&mut prev, &mut alarmed, &up(&[("gw", true)])), Vec::<String>::new());
+        assert_eq!(confirmed_down(&mut prev, &mut alarmed, &up(&[("gw", true)])), vec!["gw"]);
+
+        // THE BUG: a probe that FLAPS down/up/down/up (OmniRoute's slow /v1/models timing out on some
+        // polls) never reaches two consecutive downs → never alarms. This is the spam fix.
+        let mut p2: HashSet<String> = HashSet::new();
+        let mut a2: HashSet<String> = HashSet::new();
+        for down in [true, false, true, false, true, false] {
+            assert_eq!(
+                confirmed_down(&mut p2, &mut a2, &up(&[("gw", down)])),
+                Vec::<String>::new(),
+                "a flapping probe must never alarm"
+            );
+        }
     }
 
     #[test]
