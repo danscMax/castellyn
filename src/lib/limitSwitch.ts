@@ -109,3 +109,21 @@ export function pickResumeCandidate(
   const { eligible } = evaluateProfiles(profiles, limits, excludeAll, now);
   return eligible.length ? eligible[0].name : null;
 }
+
+/**
+ * #1 (display backstop): is this profile GENUINELY exhausted right now — some window pegged at ≥99%
+ * with no pay-as-you-go credits left to keep it running? Distinct from the softer `UTIL_THRESHOLD`
+ * ("too hot to hand NEW work to"): this is "cannot run at all". Used ONLY to tint a live pane's dot
+ * when the PTY limit banner was missed — never to drive auto-continue input (a per-profile signal
+ * can't prove a specific pane is blocked, so it must not inject keystrokes). A transient usage-endpoint
+ * 429 has no percentages, so it reads as not-exhausted here (avoids a flickering false tint); the plan
+ * caps (h5/d7/scoped) are the stable signal. Pure → unit-tested.
+ */
+export function isProfileExhausted(l: (LimitsStatusEvent & { receivedAt?: number }) | undefined): boolean {
+  if (!l) return false;
+  // Pay-as-you-go credits keep it working past the plan cap — but only while some remain (extraPct < 100).
+  const extraCovers = !!l.extraEnabled && (l.extraPct ?? 0) < 100;
+  if (extraCovers) return false;
+  const util = Math.max(l.h5 ?? 0, l.d7 ?? 0, l.scoped ?? 0);
+  return util >= 99;
+}

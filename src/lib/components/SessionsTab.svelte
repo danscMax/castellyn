@@ -39,7 +39,7 @@
     type LimitsStatusEvent,
     type ProfileInfo
   } from '$lib/ipc';
-  import { pickResumeCandidate } from '$lib/limitSwitch';
+  import { pickResumeCandidate, isProfileExhausted } from '$lib/limitSwitch';
   import { decideMenuContinue, pickBindingResetMs } from '$lib/menuContinue';
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
@@ -393,19 +393,11 @@
     track(
       listen<LimitsStatusEvent>('limits-status', (e) => {
         limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
-        // #1: endpoint-driven backstop for a MISSED PTY banner. When Anthropic answers 429 for a
-        // profile (rateLimited), latch the sticky flag for its ACTIVE panes so the dot/badge/auto-
-        // continue engage even if the terminal banner was pushed past the scan window. Conservative:
-        // only working/blocked panes (never idle/done), and a 429 carries no reset time, so phase-2
-        // "continue" cannot fire spuriously — decideMenuContinue waits while resetMs is null. (Live-
-        // smoke pending: needs a genuinely rate-limited profile to confirm it helps without over-firing.)
-        if (e.payload.rateLimited) {
-          for (const p of panes) {
-            if (p.profile !== e.payload.profile) continue;
-            const s = agentStates[sessionIds[p.key]];
-            if (s === 'working' || s === 'blocked') sawRateLimit.add(p.key);
-          }
-        }
+        // #1 endpoint backstop is DISPLAY-ONLY, computed in displayStateById from limitsByProfile — it
+        // deliberately does NOT latch sawRateLimit. Latching here would drive phase-2 "continue": a
+        // transient usage-endpoint 429 (or a maxed profile) on a merely-working pane would, once the
+        // profile's 5h reset later passed, inject a spurious "продолжай" into a session that was never
+        // actually blocked. So the endpoint only tints the dot/count; the real PTY/reset path drives input.
       })
     );
     // P3: self-scheduling tick — 12s while visible, 60s when the window is hidden. Auto-continue is
@@ -464,7 +456,15 @@
     const m: Record<string, AgentPaneState | null> = {};
     for (const p of panes) {
       const id = sessionIds[p.key];
-      m[p.key] = sawRateLimit.has(p.key) ? 'limited' : ((id && agentStates[id]) || null);
+      const live: AgentPaneState | null = (id && agentStates[id]) || null;
+      // #1 (display-only): a working/blocked pane on a genuinely exhausted profile reads 'limited' even
+      // if the PTY banner was missed — visibility for the #1 fragility. NOT sawRateLimit, so it never
+      // drives phase-2 "continue"; self-clears when the pane goes idle or the profile un-maxes on reset.
+      // isProfileExhausted is the shared cap-aware check (accounts for pay-as-you-go extra credits).
+      const active = live === 'working' || live === 'blocked';
+      m[p.key] = sawRateLimit.has(p.key) || (active && isProfileExhausted(limitsByProfile[p.profile]))
+        ? 'limited'
+        : live;
     }
     return m;
   });

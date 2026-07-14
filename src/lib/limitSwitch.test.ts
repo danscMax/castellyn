@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickResumeCandidate, LIMITS_STALE_MS } from './limitSwitch';
+import { pickResumeCandidate, isProfileExhausted, LIMITS_STALE_MS } from './limitSwitch';
 import type { ProfileInfo, LimitsStatusEvent } from './ipc';
 
 const prof = (name: string, over: Partial<ProfileInfo> = {}): ProfileInfo => ({
@@ -125,5 +125,25 @@ describe('pickResumeCandidate (#21e)', () => {
   it('treats a reading with no receivedAt as fresh, so an upgrade does not disable auto-switch', () => {
     const profiles = [prof('cur'), prof('a')];
     expect(pickResumeCandidate('cur', profiles, { a: lim('a', 5) })).toBe('a');
+  });
+});
+
+describe('isProfileExhausted (#1 display backstop)', () => {
+  it('true when a plan window is pegged ≥99% with no extra credits', () => {
+    expect(isProfileExhausted(lim('a', 100))).toBe(true);
+    expect(isProfileExhausted(lim('a', 99))).toBe(true);
+    expect(isProfileExhausted(lim('a', 10, 99))).toBe(true); // model-scoped week drives it
+  });
+  it('false when utilisation is below the cap, or profile unknown', () => {
+    expect(isProfileExhausted(lim('a', 85))).toBe(false);
+    expect(isProfileExhausted(undefined)).toBe(false);
+  });
+  it('respects pay-as-you-go extra credits — not exhausted while credits remain', () => {
+    expect(isProfileExhausted({ ...lim('a', 100), extraEnabled: true, extraPct: 40 })).toBe(false);
+    // Extra cap itself spent → exhausted again.
+    expect(isProfileExhausted({ ...lim('a', 100), extraEnabled: true, extraPct: 100 })).toBe(true);
+  });
+  it('a transient 429 (null percentages) reads as not-exhausted — no flickering false tint', () => {
+    expect(isProfileExhausted({ ...lim('a', null), rateLimited: true })).toBe(false);
   });
 });
