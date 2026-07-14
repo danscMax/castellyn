@@ -799,7 +799,7 @@ mod tests {
         // …but one shoved > TAIL bytes before the end is intentionally missed (the #1 fragility this
         // guards): the endpoint monitor (limits.rs) is the backstop, not this scan.
         let mut far = b"You've hit your session limit".to_vec();
-        far.extend(std::iter::repeat(b'x').take(600));
+        far.extend(std::iter::repeat_n(b'x', 600));
         assert_eq!(limit_signal_in_tail(&far), None);
     }
 
