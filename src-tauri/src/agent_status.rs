@@ -276,21 +276,42 @@ fn is_resume_menu(s: &str) -> bool {
     l.contains("resume from summary") && l.contains("resume full session")
 }
 
-/// Scan a fresh PTY chunk's tail for a usage-limit banner/menu and flag the session if found. The
-/// reader passes the raw bytes; we inspect a bounded tail (banners are short lines) to keep it cheap
-/// under a firehose. The MENU is checked first — its wording is the more specific signal, and a menu
-/// implies a limit. ponytail: bounded-tail scan, not a full-buffer regex — a banner split across two
-/// chunk boundaries beyond the tail window would be missed; the endpoint monitor still catches it.
-pub fn scan_limit(id: &str, chunk: &[u8]) {
+/// Which usage-limit signal (if any) a fresh PTY chunk's bounded tail carries. The MENU is the more
+/// specific signal so it's checked first (and a menu implies a limit); the passive banner next; the
+/// resume menu last. Split out from `scan_limit` as a pure fn so the TAIL-window boundary is
+/// unit-testable. ponytail: bounded-tail scan, not a full-buffer regex — a banner shoved > TAIL bytes
+/// back by a prompt repaint is intentionally missed here; the endpoint monitor (limits.rs) backstops.
+#[derive(Debug, PartialEq, Eq)]
+enum LimitSignal {
+    LimitMenu,
+    Limit,
+    ResumeMenu,
+}
+
+fn limit_signal_in_tail(chunk: &[u8]) -> Option<LimitSignal> {
     const TAIL: usize = 512;
     let start = chunk.len().saturating_sub(TAIL);
     let tail = String::from_utf8_lossy(&chunk[start..]);
     if is_limit_menu(&tail) {
-        on_limit_menu(id);
+        Some(LimitSignal::LimitMenu)
     } else if is_limit_line(&tail) {
-        on_limit(id);
+        Some(LimitSignal::Limit)
     } else if is_resume_menu(&tail) {
-        on_resume_menu(id);
+        Some(LimitSignal::ResumeMenu)
+    } else {
+        None
+    }
+}
+
+/// Scan a fresh PTY chunk's tail for a usage-limit banner/menu and flag the session if found. The
+/// reader passes the raw bytes; we inspect a bounded tail (banners are short lines) to keep it cheap
+/// under a firehose.
+pub fn scan_limit(id: &str, chunk: &[u8]) {
+    match limit_signal_in_tail(chunk) {
+        Some(LimitSignal::LimitMenu) => on_limit_menu(id),
+        Some(LimitSignal::Limit) => on_limit(id),
+        Some(LimitSignal::ResumeMenu) => on_resume_menu(id),
+        None => {}
     }
 }
 
@@ -753,6 +774,33 @@ mod tests {
         assert!(!is_resume_menu("resume from summary of the meeting notes"));
         // The limit menu is not the resume menu.
         assert!(!is_resume_menu("> 1. Stop and wait for limit to reset\n  2. Upgrade your plan"));
+    }
+
+    #[test]
+    fn tail_scan_classifies_signals_and_respects_the_window() {
+        // The pure tail-scan classifies the three signals (menu > banner > resume precedence).
+        assert_eq!(
+            limit_signal_in_tail(b"What do you want to do?\n1. Stop and wait for limit to reset"),
+            Some(LimitSignal::LimitMenu)
+        );
+        assert_eq!(
+            limit_signal_in_tail(b"You've hit your session limit, resets 3pm"),
+            Some(LimitSignal::Limit)
+        );
+        assert_eq!(
+            limit_signal_in_tail(b"1. Resume from summary\n2. Resume full session as-is"),
+            Some(LimitSignal::ResumeMenu)
+        );
+        assert_eq!(limit_signal_in_tail(b"just some normal agent output"), None);
+        // A banner within the last TAIL(512) bytes is caught even when the chunk is larger…
+        let mut near = vec![b'x'; 600];
+        near.extend_from_slice(b"You've hit your session limit");
+        assert_eq!(limit_signal_in_tail(&near), Some(LimitSignal::Limit));
+        // …but one shoved > TAIL bytes before the end is intentionally missed (the #1 fragility this
+        // guards): the endpoint monitor (limits.rs) is the backstop, not this scan.
+        let mut far = b"You've hit your session limit".to_vec();
+        far.extend(std::iter::repeat(b'x').take(600));
+        assert_eq!(limit_signal_in_tail(&far), None);
     }
 
     #[test]
