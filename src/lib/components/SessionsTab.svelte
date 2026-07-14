@@ -2386,11 +2386,6 @@
             <div class="psel"><Select bind:value={lClaudeEffort} options={effortOptions} placeholder={t('sessions.effortDefault')} /></div>
           </div>
           <div class="fld">
-            <span class="fld-lbl">{t('sessions.phModel')}</span>
-            <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lClaudeModel}
-              placeholder={t('sessions.phClaudeModelPlaceholder')} spellcheck="false" autocomplete="off" />
-          </div>
-          <div class="fld">
             <!-- Council U-7: heavy session → wait, scratch session → switch — per launch. -->
             <span class="fld-lbl">{t('sessions.limitMode')}</span>
             <div class="psel"><Select bind:value={lLimitMode} options={[
@@ -2398,6 +2393,12 @@
               { value: 'wait', label: t('sessions.limitModeWait') },
               { value: 'switchProfile', label: t('sessions.limitModeSwitch') }
             ]} /></div>
+          </div>
+          <div class="fld">
+            <!-- Council X-17: the rarely-used model override goes LAST in the row. -->
+            <span class="fld-lbl">{t('sessions.phModel')}</span>
+            <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lClaudeModel}
+              placeholder={t('sessions.phClaudeModelPlaceholder')} spellcheck="false" autocomplete="off" />
           </div>
         {:else if lEnv === 'codex'}
           <!-- Codex identity: config.toml profile (when any exist) + a --model override. -->
@@ -2473,10 +2474,11 @@
       {#if lEnv === 'claude'}
         <!-- Task 5 / council F: quota-aware recommendation sits ABOVE the launch button (advice
              before the decision, not after it). Launches nothing; Apply just fills the fields.
-             Same ranker as the resume auto-switch (launchAdvisor → evaluateProfiles). -->
-        <div class="stackbar advisor" role="group" aria-label={t('sessions.advisorLabel')}>
+             Redone per owner screenshot: a flat one-liner (separator, no nested box), compact
+             task select, advice text gets the remaining width instead of wrapping into a column. -->
+        <div class="advisor-row" role="group" aria-label={t('sessions.advisorLabel')}>
           <span class="stk-label">{t('sessions.advisorTask')}</span>
-          <div class="psel"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
+          <div class="psel adv-task"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
           {#if advice.recommendation}
             {@const r = advice.recommendation}
             <span class="adv-rec" title={t('sessions.advisorRecTip')}>
@@ -3324,13 +3326,32 @@
     font-weight: 500;
     margin-right: auto;
   }
-  /* Advisor bar: task label + class picker on the left, recommendation stretches, Apply on the right. */
-  .stackbar.advisor .stk-label {
-    margin-right: 0;
+  /* Advisor: a flat one-line row inside the form (owner rejected the nested box — the advice
+     text was squeezed into a 3-line column). Compact task select, advice takes the rest. */
+  .advisor-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sw-space-2);
+    border-top: 1px solid var(--sw-border);
+    margin-top: 2px;
+    padding-top: var(--sw-space-2);
+    font-size: var(--sw-text-xs);
+    min-width: 0;
   }
-  .stackbar.advisor .adv-rec,
-  .stackbar.advisor .adv-none {
-    margin-right: auto;
+  .advisor-row .stk-label {
+    flex-shrink: 0;
+    font-weight: 500;
+  }
+  .advisor-row .adv-task {
+    flex: 0 0 130px;
+  }
+  .adv-rec,
+  .adv-none {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .adv-rec {
     font-weight: 500;
