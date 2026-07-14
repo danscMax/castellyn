@@ -277,6 +277,23 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     limit_mode: Option<String>,
+    // #8: which option to auto-pick on the large-session RESUME menu ("1. Resume from summary /
+    // 2. Resume full session as-is"). "summary" (default, option 1), "full" (option 2), or "ask"
+    // (never auto-press — leave the resume menu to the user). Frontend-only loop; backend persists.
+    #[serde(
+        rename = "resumeChoice",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    resume_choice: Option<String>,
+    // #9: custom continuation text injected after a limit reset / menu dismissal. None or empty = the
+    // localized default ("continue" / "продолжай"). Frontend-only; backend persists.
+    #[serde(
+        rename = "autoContinueText",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    auto_continue_text: Option<String>,
     // Wave C-5: show the native session-status strip (live session counts + peak Anthropic
     // utilization) in the window title bar. None = default (true). Purely a frontend read — the
     // backend only persists it (write_config preserves it like the other Sessions toggles).

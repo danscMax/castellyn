@@ -455,6 +455,8 @@
       // #21f: an option-1 menu is up — the limit "Stop and wait" menu OR the large-session "Resume
       // from summary" menu. Both block resumption and are auto-driven the same way (pick 1, continue).
       const menuUp = !!limitMenuById[id];
+      // #8: a bare resume menu (menu up, no rate limit) obeys resumeChoice; the limit menu ignores it.
+      const isResumeMenu = menuUp && !rateLimited;
       // #21e: switchProfile — respawn a rate-limited pane under a free OAuth profile immediately (once
       // per episode). Only a real limit, not the resume menu. No candidate → fall through to wait.
       if (rateLimited && limitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
@@ -472,6 +474,8 @@
       if ((rateLimited || menuUp) && contJitterMs[p.key] == null) contJitterMs[p.key] = 30_000 + Math.floor(Math.random() * 60_000);
       // z5_12: defer every keystroke while the user is at the pane so we never fight their typing.
       const busy = (activeKey === p.key && visible) || Date.now() - (lastUserInputAt[p.key] ?? 0) < 8_000;
+      // #8: 'ask' → never auto-drive the resume menu; leave it entirely to the user.
+      if (isResumeMenu && resumeChoice === 'ask') continue;
       // Pure, unit-tested decision (menuContinue.ts) — this component only executes the keystrokes.
       const action = decideMenuContinue({
         sawRateLimit: rateLimited,
@@ -492,16 +496,17 @@
         delete menuDismissedAt[p.key];
         delete contJitterMs[p.key];
       } else if (action === 'press1') {
-        // Pick option 1 (limit "Stop and wait" / resume "Resume from summary"), mirroring manual "1".
+        // Pick the menu option: limit menu → always "1. Stop and wait"; resume menu → the #8 choice
+        // (summary="1" / full="2"). Mirrors a manual keypress.
         menuDismissed.add(p.key);
         menuDismissedAt[p.key] = Date.now();
-        sessionWrite(id, '1\r');
+        sessionWrite(id, (isResumeMenu && resumeChoice === 'full' ? '2' : '1') + '\r');
         // #11: surface phase 1 too (not just the later "continue") so every autonomous step is visible.
         // Once per episode — menuDismissed now guards press1, so this can't re-fire on the next tick.
         pushToast({ kind: 'info', title: t('sessions.autoContinuePress1', { name: p.name ?? p.profile }) });
       } else if (action === 'continue') {
         autoContinued.add(p.key);
-        sessionWrite(id, t('sessions.autoContinueText') + '\r');
+        sessionWrite(id, continuationText() + '\r');
         pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
       }
       // 'wait' → active but nothing to do this tick.
@@ -524,7 +529,7 @@
       .trim()} --resume ${sid}`.trim();
     const newKey = addPane({ tool: 'claude', profile: candidate, cwd: p.cwd, args, name: p.name });
     if (!newKey) return false; // cap/ceiling — keep the old pane, caller falls back to wait
-    pendingContinue[newKey] = t('sessions.autoContinueText');
+    pendingContinue[newKey] = continuationText();
     // Old pane is gone → purge its keys so the episode-tracking Sets/maps don't leak across switches.
     panes = panes.filter((x) => x.key !== p.key);
     delete paneRefs[p.key];
@@ -602,6 +607,14 @@
   // #21e: after-limit behaviour — 'wait' (auto-continue on reset) | 'switchProfile' (respawn under a
   // free OAuth profile immediately). Has a UI control (saved via saveLimitMode).
   let limitMode = $state<'wait' | 'switchProfile'>('wait');
+  // #8: which option to auto-pick on the large-session RESUME menu. 'summary' (default, option 1) |
+  // 'full' (option 2) | 'ask' (never auto-press — leave that menu to the user). The LIMIT menu is
+  // always option 1 ("stop and wait"); this only steers the resume menu.
+  let resumeChoice = $state<'summary' | 'full' | 'ask'>('summary');
+  // #9: custom continuation text; empty = the localized default ('continue'/'продолжай').
+  let autoContinueText = $state('');
+  // #9: the text actually sent — the user's override (trimmed) or the localized default.
+  const continuationText = () => autoContinueText.trim() || t('sessions.autoContinueText');
   onMount(async () => {
     try {
       const c = await readConfig();
@@ -609,6 +622,8 @@
       statusNotify = c.statusNotify ?? true;
       autoContinueOn = c.autoContinueOnReset ?? true;
       limitMode = c.limitMode === 'switchProfile' ? 'switchProfile' : 'wait';
+      resumeChoice = c.resumeChoice === 'full' || c.resumeChoice === 'ask' ? c.resumeChoice : 'summary';
+      autoContinueText = c.autoContinueText ?? '';
     } catch {
       /* defaults stand */
     }
@@ -617,6 +632,17 @@
     try {
       // R7: rev-safe write so a concurrent Settings-tab save of the same fields isn't clobbered.
       await saveConfig((c) => (c.limitMode = limitMode));
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+  }
+  // #8/#9: persist the resume-menu choice + custom continuation text (empty → null = localized default).
+  async function saveAutoContinuePrefs() {
+    try {
+      await saveConfig((c) => {
+        c.resumeChoice = resumeChoice;
+        c.autoContinueText = autoContinueText.trim() || null;
+      });
     } catch (e) {
       pushToast({ kind: 'error', title: String(e) });
     }
@@ -2294,6 +2320,24 @@
                 { value: 'switchProfile', label: t('sessions.limitModeSwitch') }
               ]} />
           </div>
+        </div>
+        <div class="set-row">
+          <span class="set-k" title={t('sessions.resumeChoiceHint')}>{t('sessions.resumeChoice')}</span>
+          <div class="psel">
+            <Select value={resumeChoice}
+              onChange={(v) => { resumeChoice = v === 'full' || v === 'ask' ? v : 'summary'; saveAutoContinuePrefs(); }}
+              options={[
+                { value: 'summary', label: t('sessions.resumeChoiceSummary') },
+                { value: 'full', label: t('sessions.resumeChoiceFull') },
+                { value: 'ask', label: t('sessions.resumeChoiceAsk') }
+              ]} />
+          </div>
+        </div>
+        <div class="set-row">
+          <span class="set-k" title={t('sessions.autoContinueTextHint')}>{t('sessions.autoContinueTextLabel')}</span>
+          <input class="sw-input text-sw-xs" style="width:170px" bind:value={autoContinueText}
+            onblur={saveAutoContinuePrefs} placeholder={continuationText()}
+            spellcheck="false" autocomplete="off" />
         </div>
         <div class="set-srv">
           <span class="set-k">{t('sessions.servers')}</span>

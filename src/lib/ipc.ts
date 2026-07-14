@@ -1104,6 +1104,10 @@ export type HubConfig = {
   // #21e: after-limit behaviour — 'wait' (default, auto-continue on reset) | 'switchProfile'
   // (respawn under a free OAuth profile immediately).
   limitMode?: string | null;
+  // #8: which option to auto-pick on the resume menu — 'summary' (default) | 'full' | 'ask'.
+  resumeChoice?: string | null;
+  // #9: custom continuation text; absent/empty = the localized default ('continue'/'продолжай').
+  autoContinueText?: string | null;
   // Wave C-5: show the native session-status strip in the title bar. Absent = default (on).
   showSessionStatusBar?: boolean | null;
   // R7: optimistic-concurrency version (bumped by every write). Pass the value you read back as
