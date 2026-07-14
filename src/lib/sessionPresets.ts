@@ -11,6 +11,15 @@ export const ARG_PRESETS: Record<string, string[]> = {
 // commands + a couple of nudges. Inserted as-is so the user can review before sending.
 export const MSG_SNIPPETS: string[] = ['/clear', '/compact', '/context', 'continue', 'go on'];
 
+// The custom remainder of an args string once every preset flag is removed. The launch form
+// renders presets as chips and shows ONLY this remainder in its text input, so a flag never
+// appears twice (chip + literal text) — the duplication the 2026-07 redesign removed.
+export function stripFlags(args: string, flags: string[]): string {
+  let out = args;
+  for (const f of flags) out = out.split(f).join(' ');
+  return out.replace(/\s+/g, ' ').trim();
+}
+
 // Toggle a flag in a space-separated args string (add if absent, strip if present).
 export function toggleFlag(args: string, flag: string): string {
   if (args.includes(flag)) {

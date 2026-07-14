@@ -53,7 +53,8 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { markMoved, peekMoved } from '$lib/sessionMove';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { ARG_PRESETS, toggleFlag } from '$lib/sessionPresets';
+  import { currentMonitor } from '@tauri-apps/api/window';
+  import { ARG_PRESETS, stripFlags, toggleFlag } from '$lib/sessionPresets';
   import { pushToast } from '$lib/toast.svelte';
 
   const MAX_PANES = 12; // each pane is a pwsh+tool process — cap to keep the machine responsive
@@ -102,6 +103,8 @@
     ownsSession?: boolean;
     background?: boolean;
     space?: string; // herdr W3: project space this pane belongs to (undefined = default space)
+    // Council U-7: per-session override of the global "at limit" policy (undefined = global).
+    limitMode?: 'wait' | 'switchProfile';
   };
   function renamePane(key: string, name: string) {
     panes = panes.map((p) => (p.key === key ? { ...p, name: name || undefined } : p));
@@ -137,8 +140,10 @@
   let lastFolders = $state<Record<string, string>>({});
   // Default launch args, seeded into the phrase's args field for Claude/opencode.
   let defaultArgs = $state('');
-  // Collapsible launcher settings (default args, projects root) — collapsed by default.
-  let launcherOpen = $state(false);
+  // Session settings modal (global policies + registries) — categorized, opened from ⚙.
+  let settingsOpen = $state(false);
+  type SetCat = 'behavior' | 'limits' | 'args' | 'servers';
+  let setCat = $state<SetCat>('behavior');
   // herdr W1: the launcher (env segment + phrase + settings) lives in an anchored popover behind a
   // "＋ New session" button instead of eating ~4 permanent rows above the grid. newBtnEl anchors it.
   let newOpen = $state(false);
@@ -183,7 +188,6 @@
       if (c >= 1 && c <= 3) columns = c;
       const fz = Number(localStorage.getItem('cmh-sessions-fontsize'));
       if (fz >= 8 && fz <= 28) globalFont = fz;
-      launcherOpen = localStorage.getItem('cmh-sessions-launcher') === '1';
       railOpen = localStorage.getItem(RAILKEY) !== '0';
       const savedSpaces = JSON.parse(localStorage.getItem(SPACES_KEY) ?? 'null');
       if (Array.isArray(savedSpaces) && savedSpaces.length) spaces = savedSpaces;
@@ -214,7 +218,7 @@
           const alive = new Set(await sessionList());
           for (const s of savedLive) {
             if (alive.has(s.id)) {
-              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name, space: s.space });
+              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name, space: s.space, limitMode: s.limitMode });
             }
           }
           // Dead entries = a full app restart (the PTYs died with it). Offer to rebuild
@@ -498,7 +502,9 @@
       const isResumeMenu = menuUp && !rateLimited;
       // #21e: switchProfile — respawn a rate-limited pane under a free OAuth profile immediately (once
       // per episode). Only a real limit, not the resume menu. No candidate → fall through to wait.
-      if (rateLimited && limitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
+      // Council U-7: a pane can override the global policy (heavy session → wait, scratch → switch).
+      const paneLimitMode = p.limitMode ?? limitMode;
+      if (rateLimited && paneLimitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
         switchAttempted.add(p.key);
         const cand = pickResumeCandidate(p.profile, profileInfos, limitsByProfile, claimedThisTick);
         if (cand && switchPaneToProfile(p, id, cand)) {
@@ -737,7 +743,7 @@
   }
   // ── Reload survival (#5): persist spawned-here sessions, re-attach the ones still alive on mount ──
   const LIVE_KEY = 'cmh-sessions-live';
-  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string; space?: string };
+  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string; space?: string; limitMode?: 'wait' | 'switchProfile' };
   // Captured synchronously at init — BEFORE the persist effect first runs and overwrites it with the
   // (empty) fresh panes — so a webview reload still sees the pre-reload session list.
   const savedLive: LivePane[] = (() => {
@@ -757,7 +763,7 @@
         .filter((p) => (!p.attachId || p.ownsSession) && (p.attachId ?? sessionIds[p.key]))
         .map((p) => {
           const id = (p.attachId ?? sessionIds[p.key])!;
-          return { tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id, claudeSid: claudeSids[id], name: p.name, space: p.space };
+          return { tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id, claudeSid: claudeSids[id], name: p.name, space: p.space, limitMode: p.limitMode };
         });
       // #3: keep the pending restore set (last run's dead sessions) in LIVE_KEY until the user
       // accepts or dismisses the bar — else a second webview reload before they act loses the offer.
@@ -788,6 +794,9 @@
   // the canonical confirm dialog (project rule: destructive actions confirm first) showing the
   // exact command + the pane list.
   let confirmSend = $state<{ cmd: string; targets: string[]; keys: string[] } | null>(null);
+  // Council U-6: confirming EVERY send-to-all was a tax on a 50×/day path. The first confirm of a
+  // session arms trust; later sends go straight through. Trust resets with the app (not persisted).
+  let sendAllTrusted = false;
   function sendToAll() {
     const cmd = sendAllText.trim();
     if (!cmd) return;
@@ -796,6 +805,14 @@
     // The pane KEYS are captured here too: what the dialog listed is exactly what gets hit,
     // even if the user switches project tabs while the confirm is open.
     const live = spacePanes.filter((p) => sessionIds[p.key]);
+    if (sendAllTrusted) {
+      for (const p of live) {
+        const id = sessionIds[p.key];
+        if (id) sessionWrite(id, cmd + '\r');
+      }
+      sendAllText = '';
+      return;
+    }
     const targets = live.map((p) => {
       const where = p.sshTarget ? `🖥 ${p.sshTarget}` : p.cwd || '~';
       return p.tool === 'claude' ? `${p.tool}@${p.profile} · ${where}` : `${p.tool} · ${where}`;
@@ -810,6 +827,7 @@
     }
     sendAllText = '';
     confirmSend = null;
+    sendAllTrusted = true;
   }
 
   // F14: generic destructive confirm — one callback-driven dialog so every ✕ gates first
@@ -907,14 +925,21 @@
   }
 
   // #13 — forget the saved monitor arrangement (stops the restore prompt on future launches).
+  // Council U-5: it erases a saved fleet layout, so it confirms first like every other destructive ✕.
   function forgetLayout() {
-    try {
-      localStorage.removeItem(MLKEY);
-    } catch {
-      /* ignore */
-    }
-    savedLayoutExists = false;
-    pushToast({ kind: 'info', title: t('sessions.forgetLayoutDone') });
+    askConfirm({
+      title: t('sessions.forgetLayoutConfirmTitle'),
+      message: t('sessions.forgetLayoutConfirmMsg'),
+      run: () => {
+        try {
+          localStorage.removeItem(MLKEY);
+        } catch {
+          /* ignore */
+        }
+        savedLayoutExists = false;
+        pushToast({ kind: 'info', title: t('sessions.forgetLayoutDone') });
+      }
+    });
   }
 
   // Restore the last "разнести" arrangement: reopen a window per saved monitor and SPAWN fresh sessions
@@ -947,9 +972,20 @@
       return;
     }
     const have = new Set(mons.map((m) => m.index));
+    // The monitor hosting the MAIN window restores IN-GRID — its panes lived here before the
+    // restart, and a detached window opened on top of the main window just duplicates it. Panes
+    // saved for monitors that no longer exist land in-grid too (they were silently dropped).
+    let mainIdx: number | null = null;
+    try {
+      const cur = await currentMonitor();
+      if (cur) mainIdx = mons.find((m) => m.x === cur.position.x && m.y === cur.position.y)?.index ?? null;
+    } catch {
+      /* ignore */
+    }
+    if (mainIdx == null) mainIdx = mons.find((m) => m.primary)?.index ?? null;
     for (const [idxStr, list] of Object.entries(saved)) {
       const idx = Number(idxStr);
-      if (!have.has(idx) || !list?.length) continue;
+      if (!list?.length) continue;
       // Resume each saved claude pane from its captured session id (same charset guard as restoreLast).
       // Old layouts lack claudeSid → the guard fails and the pane just spawns fresh (no crash).
       const spawn = list.map((p) => {
@@ -962,7 +998,13 @@
         }
         return p;
       });
-      await openDetached(`mon-${idx}`, idx, spawn);
+      if (idx === mainIdx || !have.has(idx)) {
+        for (const p of spawn) {
+          addPane({ tool: p.tool, profile: p.profile ?? '', cwd: p.cwd ?? '', args: p.args ?? '', name: p.title });
+        }
+      } else {
+        await openDetached(`mon-${idx}`, idx, spawn);
+      }
     }
   }
 
@@ -979,7 +1021,7 @@
       /* ignore */
     }
   }
-  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string; space?: string }) {
+  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string; space?: string; limitMode?: 'wait' | 'switchProfile' }) {
     // Don't block re-attaching an EXISTING session (e.g. a pane returned from a monitor) on the cap —
     // it's not a new spawn. Only new spawns count against MAX_PANES. Toast, not just null: several
     // callers (space "＋", Ctrl+Shift+D clone) have no disabled affordance of their own.
@@ -988,7 +1030,7 @@
       return null;
     }
     const key = `${v.tool}:${v.profile || 'sh'}#${seq++}`;
-    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space: v.space ?? activeSpace }];
+    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space: v.space ?? activeSpace, limitMode: v.limitMode }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
     rememberRecent(v.cwd);
     // EVERY real spawn becomes a "recent" recipe — clones, tab "＋", stack launches and deep-links
@@ -1006,13 +1048,6 @@
     requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
     return key;
   }
-  $effect(() => {
-    try {
-      localStorage.setItem('cmh-sessions-launcher', launcherOpen ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
-  });
   $effect(() => {
     try {
       localStorage.setItem(DAKEY, defaultArgs);
@@ -1058,7 +1093,17 @@
       });
     }
   }
+  // Council U-1 (Critical): closing EVERY pane killed 6 live agents in one unconfirmed click while
+  // closing a single project asked first — the more destructive action was the less guarded one.
   function closeAll() {
+    const live = panes.filter((p) => sessionIds[p.key]).length;
+    askConfirm({
+      title: t('sessions.closeAllConfirmTitle'),
+      message: t('sessions.closeAllConfirmMsg', { n: panes.length, live }),
+      run: doCloseAll
+    });
+  }
+  function doCloseAll() {
     for (const p of panes) prunePaneKey(p.key);
     panes = [];
     maximized = null;
@@ -1075,8 +1120,67 @@
   // herdr W2 rail helpers: env icon, status-dot class (mirrors TerminalPane), click-to-focus.
   const envIcon = (tool: string) => ENVS.find((e) => e.id === tool)?.icon ?? '';
   function railFocus(key: string) {
+    // Redesign 2026-07: the rail lists EVERY project's agents — jumping to another project's
+    // pane switches the space first (one click instead of tab-hunt + click).
+    const sp = panes.find((p) => p.key === key);
+    if (sp && paneSpace(sp) !== activeSpace) switchSpace(paneSpace(sp));
     if (maximized && maximized !== key) maximized = key; // switch which pane is full-screen
     requestAnimationFrame(() => paneRefs[key]?.focusTerminal());
+  }
+  // Rail is the ONE place per-agent usage lives once it's open — pane headers then show the badge
+  // only on the focused pane (dedup: the same 5h/week pair used to repeat in every header AND rail).
+  const railVisible = $derived(railOpen && activePanes.length >= 2);
+  // Council D: the limit badge lived in the window title bar, far from launch decisions — mirror
+  // the ACTIVE pane's profile usage in the tab header (falls back to the first claude pane).
+  const headerProfile = $derived(
+    (activePanes.find((p) => p.key === activeKey && p.tool === 'claude') ??
+      activePanes.find((p) => p.tool === 'claude'))?.profile || ''
+  );
+  // Header rollup chips are clickable: cycle focus through the panes in that state (any project).
+  function focusNextInState(state: string) {
+    const list = activePanes.filter((p) => displayStateById[p.key] === state);
+    if (!list.length) return;
+    const cur = list.findIndex((p) => p.key === activeKey);
+    railFocus(list[(cur + 1) % list.length].key);
+  }
+  // Short status words for rail rows — a word beats a colored dot for glanceability.
+  const RAIL_WORDS: Record<string, string> = {
+    blocked: 'railBlocked',
+    done: 'railDone',
+    limited: 'railLimited'
+  };
+
+  // ── Attention strip (mockup #10): the oldest blocked pane + how long it's been waiting ──
+  // blockedSince notes when a pane ENTERED 'blocked'; entries drop as soon as it leaves the state.
+  // The effect reads+writes the same record but only writes on a real change, so it settles.
+  let blockedSince = $state<Record<string, number>>({});
+  $effect(() => {
+    const next: Record<string, number> = {};
+    for (const p of panes) {
+      if (displayStateById[p.key] === 'blocked') next[p.key] = blockedSince[p.key] ?? Date.now();
+    }
+    const keys = Object.keys(next);
+    if (keys.length !== Object.keys(blockedSince).length || keys.some((k) => blockedSince[k] !== next[k])) {
+      blockedSince = next;
+    }
+  });
+  // 30s clock so the "waiting for N" label ages without a per-second re-render.
+  let nowTick = $state(Date.now());
+  onMount(() => {
+    const iv = setInterval(() => (nowTick = Date.now()), 30_000);
+    return () => clearInterval(iv);
+  });
+  // The strip shows blocked panes OTHER than the focused one (you're already looking at that one),
+  // oldest first — "who has been waiting for me the longest".
+  const attention = $derived.by(() => {
+    const list = activePanes
+      .filter((p) => displayStateById[p.key] === 'blocked' && p.key !== activeKey)
+      .sort((a, b) => (blockedSince[a.key] ?? 0) - (blockedSince[b.key] ?? 0));
+    return list.length ? { first: list[0], more: list.length - 1 } : null;
+  });
+  function attnElapsed(key: string): string {
+    const ms = nowTick - (blockedSince[key] ?? nowTick);
+    return ms < 60000 ? `<1${t('sessions.unitMin')}` : humanizeMs(ms);
   }
   // Right-click on a rail row → the pane's main actions (maximize / background / close) without
   // hunting for its header. The global handler suppresses WebView2's native menu everywhere else.
@@ -1332,11 +1436,44 @@
     const folder = p.cwd ? p.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '' : '';
     return folder ? `${p.tool} · ${folder}` : p.tool;
   }
-  // Humanize a duration to minute granularity: "Nm" under an hour, else "Nh Mm".
+  // Humanize a duration to minute granularity: "Nм" under an hour, else "Nч Mм".
+  // Council X-9: units go through i18n — the Russian UI showed English "m"/"h".
   function humanizeMs(ms: number): string {
     const m = Math.floor(ms / 60000);
-    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+    const uM = t('sessions.unitMin');
+    return m < 60 ? `${m}${uM}` : `${Math.floor(m / 60)}${t('sessions.unitHour')} ${m % 60}${uM}`;
   }
+  // Disambiguated pane labels: identical agents (same profile, no custom name) get their folder
+  // basename appended, and №N when even that matches — three "ccmy" rows become tellable apart.
+  const paneLabels = $derived.by(() => {
+    const base = new Map<string, string>();
+    for (const p of activePanes) base.set(p.key, paneLabel(p));
+    const counts = new Map<string, number>();
+    for (const l of base.values()) counts.set(l, (counts.get(l) ?? 0) + 1);
+    const withFolder = new Map<string, string>();
+    for (const p of activePanes) {
+      let l = base.get(p.key) ?? '';
+      if ((counts.get(l) ?? 0) > 1) {
+        const folder = (p.cwd ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+        if (folder && !l.includes(folder)) l = `${l} · ${folder}`;
+      }
+      withFolder.set(p.key, l);
+    }
+    const c2 = new Map<string, number>();
+    for (const l of withFolder.values()) c2.set(l, (c2.get(l) ?? 0) + 1);
+    const seen = new Map<string, number>();
+    const out: Record<string, string> = {};
+    for (const p of activePanes) {
+      const l = withFolder.get(p.key) ?? '';
+      if ((c2.get(l) ?? 0) > 1) {
+        const n = (seen.get(l) ?? 0) + 1;
+        seen.set(l, n);
+        out[p.key] = `${l} №${n}`;
+      } else out[p.key] = l;
+    }
+    return out;
+  });
+  const plabel = (p: Pane) => paneLabels[p.key] ?? paneLabel(p);
   // Pane hover title with the session's elapsed time appended (when the backend reported a spawn).
   function paneTitleElapsed(p: Pane): string {
     const id = sessionIds[p.key];
@@ -1344,11 +1481,14 @@
     return spawn ? `${paneLabel(p)} · ${t('sessions.activeFor', { d: humanizeMs(Date.now() - spawn) })}` : paneLabel(p);
   }
 
-  // ─── Settings (⚙): default args + SSH servers — all in one place, no dialogs ───
-  // The "browse starts in" root moved out of the launcher UI (owner: no duplicate folder inputs);
-  // FolderField still reads its last value from localStorage for the Browse dialog's start dir.
-  function openSettings() {
-    launcherOpen = true;
+  // ─── Settings (⚙): global session policies + registries, in a categorized modal ───
+  // The launch FORM holds per-launch parameters; the modal holds only what applies to ALL
+  // sessions (behavior toggles, limit policy, default-args presets, SSH host registry).
+  function openSettings(cat: SetCat = 'behavior') {
+    setCat = cat;
+    newOpen = false; // the launcher popover sits at z-60 and would overlap the modal
+    plusMenuOpen = false;
+    settingsOpen = true;
   }
   // Add-server form (inline in settings) — reuses the SSH host registry.
   let srvName = $state('');
@@ -1466,6 +1606,21 @@
   // Preset flag chips for the launch form, per harness (claude included now — the redesigned form is
   // the ONE place args are set, so claude's flags live here beside the input, not only in ⚙ defaults).
   const launchChips = $derived(ARG_PRESETS[lEnv] ?? []);
+  // Redesign 2026-07 (mockup A): the args INPUT shows only the custom remainder — preset flags
+  // render as chips, never as literal text too. lArgs stays the single source of truth; this is a
+  // one-way mirror that only rewrites the input when the normalized remainder actually changed
+  // (so typing a trailing space doesn't fight the cursor).
+  let lArgsExtra = $state('');
+  $effect(() => {
+    const want = stripFlags(lArgs, launchChips);
+    if (stripFlags(lArgsExtra, launchChips) !== want) lArgsExtra = want;
+  });
+  function onExtraArgsInput(v: string) {
+    lArgsExtra = v;
+    const active = launchChips.filter((f) => lArgs.includes(f));
+    lArgs = [v.trim(), ...active].filter(Boolean).join(' ');
+    argsTouched = true;
+  }
   // First-class identity selectors for the non-claude agents (parity with claude's profile dropdown):
   // codex → a `config.toml` profile (--profile), opencode → a provider/model (--model). Empty = the
   // tool's own default. The selection is composed into the launch args at spawn time (composeArgs),
@@ -1479,6 +1634,8 @@
   // effort but the user can override the effort field directly.
   let lClaudeEffort = $state('');
   let lClaudeModel = $state('');
+  // Council U-7: per-launch "at limit" policy override ('' = follow the global ⚙ setting).
+  let lLimitMode = $state<'' | 'wait' | 'switchProfile'>('');
   let lTaskClass = $state<LaunchTaskClass>('feature');
   const EFFORTS = ['low', 'medium', 'high', 'max'];
   const TASK_CLASSES: LaunchTaskClass[] = [
@@ -1547,6 +1704,16 @@
   // no drift). Pure & reactive; launches nothing. Applying it just fills the launcher fields, which
   // stay fully editable before spawn. Rendered only for the claude harness.
   const advice = $derived(launchAdvisor(profileInfos, limitsByProfile, lTaskClass, reservedClaude));
+  // Council U-4: when every profile is maxed the advisor used to dead-end — surface WHEN the
+  // nearest 5h window resets so "wait or switch" becomes an informed decision.
+  const nearestReset = $derived.by(() => {
+    let best: { profile: string; at: number } | null = null;
+    for (const [profile, ev] of Object.entries(limitsByProfile)) {
+      const at = ev?.h5Reset ? Date.parse(ev.h5Reset) : NaN;
+      if (Number.isFinite(at) && at > nowTick && (!best || at < best.at)) best = { profile, at };
+    }
+    return best;
+  });
   function applyAdvice() {
     if (!advice.recommendation) return;
     lProfile = advice.recommendation.profile;
@@ -1583,7 +1750,7 @@
   function onLocChange(v: string) {
     if (v === LOC_ADD) {
       lLoc = ''; // host management (add/test/save) lives in ⚙ settings
-      openSettings();
+      openSettings('servers');
       return;
     }
     lLoc = v;
@@ -1633,7 +1800,8 @@
     if (v) {
       if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
       setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs); // explicit choice
-      addPane(v); // addPane records the recipe into "recents"
+      // Council U-7: carry the per-session limit-policy override ('' = follow the global setting).
+      addPane(lEnv === 'claude' && lLimitMode ? { ...v, limitMode: lLimitMode } : v); // addPane records the recipe into "recents"
       newOpen = false; // close the launcher popover once a session starts
     }
   }
@@ -1741,13 +1909,34 @@
   const menuRecents = $derived.by(() => {
     const seenLabel = new Set<string>();
     return recents
-      .filter((r) => !favorites.some((f) => recipeKey(f) === recipeKey(r)))
+      // Drop a recent when a favorite matches by recipe OR by visible label — args may differ
+      // slightly (different key) while the row LOOKS identical, which read as a duplicate.
+      .filter((r) => !favorites.some((f) => recipeKey(f) === recipeKey(r) || f.label === r.label))
       .filter((r) => {
         if (seenLabel.has(r.label)) return false;
         seenLabel.add(r.label);
         return true;
       });
   });
+  // ▾-menu row helpers: env prefix moves into an icon, recency shown as a compact age.
+  // Council X-6: when stripping the tool name would leave ONLY the folder (codex/opencode without
+  // an identity), keep the full label — an icon alone doesn't say what launches.
+  function stripEnvPrefix(r: { env: string; label: string }): string {
+    const l = r.label.startsWith(r.env) ? r.label.slice(r.env.length).replace(/^[·\s]+/, '') : r.label;
+    return l.includes('·') ? l : r.label;
+  }
+  function agoLabel(when: number): string {
+    const m = Math.max(0, Math.floor((nowTick - when) / 60000));
+    if (m < 60) return `${m}${t('sessions.unitMin')}`;
+    const h = Math.floor(m / 60);
+    return h < 24 ? `${h}${t('sessions.unitHour')}` : `${Math.floor(h / 24)}${t('sessions.unitDay')}`;
+  }
+  // Promote a recent to a favorite right from its ▾-menu row (it moves between the sections).
+  function pinRecent(r: Recent) {
+    const id = `f${Date.now()}${Math.round(Math.random() * 1e4)}`;
+    favorites = [...favorites, { id, env: r.env, profile: r.profile, locId: r.locId, folder: r.folder, remoteDir: r.remoteDir, args: r.args, label: r.label }];
+    pushToast({ kind: 'success', title: t('sessions.pinned', { label: r.label }) });
+  }
   function launchRecent(r: Recent) {
     const v = paneFrom(r.env, r.profile, r.locId, r.folder, r.remoteDir, r.args);
     if (v) {
@@ -1968,7 +2157,7 @@
       ) {
         args = `${args} --resume ${s.claudeSid}`.trim();
       }
-      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name, space: s.space });
+      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name, space: s.space, limitMode: s.limitMode });
     }
     // addPane's cap guard silently drops panes past the limit — tell the user how many landed.
     const restored = panes.length - before;
@@ -2033,59 +2222,78 @@
 />
 
 <div class="wrap">
-  <header class="mb-sw-3 flex items-center justify-between gap-sw-4">
-    <div class="flex items-baseline gap-sw-3 min-w-0">
-      <h1 class="text-lg font-semibold">{t('sessions.title')}</h1>
-      {#if statusCounts.blocked || statusCounts.working || statusCounts.done || statusCounts.limited}
-        <!-- herdr-style rollup: which sessions need a decision / are running / are ready to review /
-             are rate-limited and awaiting auto-resume (#10/#13). -->
-        <span class="status-sum" role="status">
-          {#if statusCounts.blocked}<span class="ss ss-blocked status-bad">● {t('sessions.sumBlocked', { n: statusCounts.blocked })}</span>{/if}
-          {#if statusCounts.working}<span class="ss ss-working status-warn">● {t('sessions.sumWorking', { n: statusCounts.working })}</span>{/if}
-          {#if statusCounts.done}<span class="ss ss-done">● {t('sessions.sumDone', { n: statusCounts.done })}</span>{/if}
-          {#if statusCounts.limited}<span class="ss ss-limited">↻ {t('sessions.sumAwaiting', { n: statusCounts.limited })}</span>{/if}
-        </span>
-      {:else}
-        <p class="truncate text-sw-xs text-sw-text-muted">{t('sessions.subtitle')}</p>
-      {/if}
-    </div>
+  <!-- Redesign 2026-07 (mockup #5 + #1 density): ONE header row — title, launcher split-button,
+       status rollup, then search / command / broadcast / layout / overflow / close-all. The old
+       stack (2-line title + toolbar + separate launcher bar) cost ~3 rows of vertical space. -->
+  <header class="mb-sw-2 topbar">
+    <h1 class="shrink-0 text-lg font-semibold">{t('sessions.title')}</h1>
+    <span class="plus-split" bind:this={splitEl}>
+      <button bind:this={newBtnEl} type="button" class="split-main" disabled={atLimit}
+        onclick={mainPlus} title={mainLabel ? t('sessions.plusHereTip') : t('sessions.newSession')}>
+        ＋ {#if mainLabel}{t('sessions.plusHere')}<span class="split-sub">· {mainLabel}</span>{:else}{t('sessions.newSession')}{/if}
+      </button>
+      <button type="button" class="split-chev" class:active={plusMenuOpen}
+        onclick={() => (plusMenuOpen = !plusMenuOpen)} aria-expanded={plusMenuOpen} aria-haspopup="menu"
+        title={t('sessions.plusMenuTip')} aria-label={t('sessions.plusMenuTip')}>▾</button>
+    </span>
+    {#if statusCounts.blocked || statusCounts.working || statusCounts.done || statusCounts.limited}
+      <!-- herdr-style rollup: which sessions need a decision / are running / are ready to review /
+           are rate-limited and awaiting auto-resume (#10/#13). -->
+      <!-- Chips are BUTTONS: click cycles focus through the panes in that state (any project). -->
+      <span class="status-sum" role="status">
+        {#if statusCounts.blocked}<button type="button" class="ss ss-blocked status-bad" onclick={() => focusNextInState('blocked')} title={t('sessions.sumJumpTip')}>● {t('sessions.sumBlocked', { n: statusCounts.blocked })}</button>{/if}
+        {#if statusCounts.working}<button type="button" class="ss ss-working status-warn" onclick={() => focusNextInState('working')} title={t('sessions.sumJumpTip')}>● {t('sessions.sumWorking', { n: statusCounts.working })}</button>{/if}
+        {#if statusCounts.done}<button type="button" class="ss ss-done" onclick={() => focusNextInState('done')} title={t('sessions.sumJumpTip')}>● {t('sessions.sumDone', { n: statusCounts.done })}</button>{/if}
+        {#if statusCounts.limited}<button type="button" class="ss ss-limited" onclick={() => focusNextInState('limited')} title={t('sessions.sumJumpTip')}>↻ {t('sessions.sumAwaiting', { n: statusCounts.limited })}</button>{/if}
+      </span>
+    {/if}
+    {#if headerProfile}
+      <!-- Council D: the active profile's remaining quota, next to the actions it informs. -->
+      <span class="hdr-usage" title={t('sessions.phProfile')}>
+        <span class="hdr-usage-p">{headerProfile}</span>
+        <ProfileUsageBadge profile={headerProfile} compact />
+      </span>
+    {/if}
+    <span class="top-spacer"></span>
     <div class="flex shrink-0 items-center gap-sw-2">
       {#if spacePanes.length > 1}
-        <input class="sw-input text-sw-xs" style="width:120px" bind:value={searchAllText}
+        <!-- Search: Enter = next, Shift+Enter = previous (the old ↑↓ buttons duplicated the keys). -->
+        <input class="sw-input text-sw-xs" style="width:130px" bind:value={searchAllText}
           placeholder={t('sessions.searchAllPlaceholder')} title={t('sessions.searchAllTip')} spellcheck="false"
           oninput={searchAllDebounced} onkeydown={(e) => e.key === 'Enter' && searchAll(!e.shiftKey)} />
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => searchAll(false)} title={t('sessions.findPrev')} aria-label={t('sessions.findPrev')}>↑</button>
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => searchAll(true)} title={t('sessions.findNext')} aria-label={t('sessions.findNext')}>↓</button>
         <input class="sw-input text-sw-xs" style="width:130px" bind:value={sendAllText}
           placeholder={t('sessions.sendAllPlaceholder')} title={t('sessions.sendAllTip')} spellcheck="false"
           onkeydown={(e) => e.key === 'Enter' && sendToAll()} />
-        <span class="text-sw-text-muted">·</span>
         <label class="flex cursor-pointer items-center gap-1" title={t('sessions.broadcastTip')}>
           <Toggle bind:checked={broadcast} ariaLabel={t('sessions.broadcast')} />
           <span class="text-sw-xs" class:broadcast-armed={broadcast} class:text-sw-text-secondary={!broadcast}
             >{broadcast ? t('sessions.broadcastArmed', { count: spacePanes.length }) : t('sessions.broadcast')}</span>
         </label>
-        <span class="text-sw-text-muted">·</span>
       {/if}
       <span class="text-sw-xs text-sw-text-muted">{t('sessions.layout')}</span>
       {#each [1, 2, 3] as c (c)}
         <button class="sw-btn sw-btn-ghost text-sw-xs" class:active={columns === c} onclick={() => (columns = c)}
           title="{t('sessions.layoutCols', { n: c })} · Ctrl+Alt+{c}">{c}</button>
       {/each}
+      <!-- Council G: settings existed only inside ⋯ and the launch form — a first-class ⚙ now. -->
+      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => openSettings()}
+        title={t('sessions.settingsTip')} aria-label={t('sessions.settingsTip')}>⚙</button>
+      <DropdownMenu
+        title={t('sessions.moreActions')}
+        items={[
+          ...(panes.length
+            ? [
+                { label: `A− ${t('sessions.zoomAllOut')}`, onClick: () => zoomAll(-1) },
+                { label: `A+ ${t('sessions.zoomAllIn')}`, onClick: () => zoomAll(1) },
+                { label: `◎ ${t('sessions.focusMode')}${focusMode ? ' ✓' : ''}`, onClick: () => (focusMode = !focusMode) },
+                { label: `⬈ ${t('sessions.distribute')}`, onClick: distributeToMonitors }
+              ]
+            : []),
+          { label: `⌨ ${t('sessions.hotkeys')}`, onClick: () => (hotkeysOpen = true) },
+          ...(savedLayoutExists ? [{ label: `↺ ${t('sessions.forgetLayout')}`, onClick: forgetLayout }] : [])
+        ]}
+      />
       {#if panes.length}
-        <!-- Redesign 2D: rare whole-grid actions leave the header row for an overflow menu —
-             the strip keeps only search / command / broadcast / layout / close-all. -->
-        <DropdownMenu
-          title={t('sessions.moreActions')}
-          items={[
-            { label: `A− ${t('sessions.zoomAllOut')}`, onClick: () => zoomAll(-1) },
-            { label: `A+ ${t('sessions.zoomAllIn')}`, onClick: () => zoomAll(1) },
-            { label: `◎ ${t('sessions.focusMode')}${focusMode ? ' ✓' : ''}`, onClick: () => (focusMode = !focusMode) },
-            { label: `⬈ ${t('sessions.distribute')}`, onClick: distributeToMonitors },
-            { label: `⌨ ${t('sessions.hotkeys')}`, onClick: () => (hotkeysOpen = true) },
-            ...(savedLayoutExists ? [{ label: `↺ ${t('sessions.forgetLayout')}`, onClick: forgetLayout }] : [])
-          ]}
-        />
         <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={closeAll} title={t('sessions.closeAllTip')}>
           {t('sessions.closeAll')}
         </button>
@@ -2106,35 +2314,11 @@
     </div>
   {/if}
 
-  <!-- Launcher C (V9+V3): split "＋" — the main zone instantly spawns one more agent per the ACTIVE
-       project's recipe (label shows what will run; empty project → the full form). The chevron opens
-       the memory menu: recent recipes + favorites (moved here from bar chips) + "custom launch…". -->
-  <div class="newbar">
-    <span class="plus-split" bind:this={splitEl}>
-      <button bind:this={newBtnEl} type="button" class="split-main" disabled={atLimit}
-        onclick={mainPlus} title={mainLabel ? t('sessions.plusHereTip') : t('sessions.newSession')}>
-        ＋ {#if mainLabel}{t('sessions.plusHere')}<span class="split-sub">· {mainLabel}</span>{:else}{t('sessions.newSession')}{/if}
-      </button>
-      <button type="button" class="split-chev" class:active={plusMenuOpen}
-        onclick={() => (plusMenuOpen = !plusMenuOpen)} aria-expanded={plusMenuOpen} aria-haspopup="menu"
-        title={t('sessions.plusMenuTip')} aria-label={t('sessions.plusMenuTip')}>▾</button>
-    </span>
-  </div>
-
   {#if plusMenuOpen && splitEl}
     <!-- Launcher C memory menu: recent recipes (1 click = repeat) + favorites + custom launch (form) -->
     <div class="plusmenu" role="menu" aria-label={t('sessions.plusMenuTip')} tabindex="-1"
       use:anchored={{ anchor: splitEl, onOutside: () => (plusMenuOpen = false) }}
       onkeydown={(e) => e.key === 'Escape' && (plusMenuOpen = false)}>
-      {#if menuRecents.length}
-        <div class="pm-hdr">{t('sessions.menuRecent')}</div>
-        {#each menuRecents as r (recipeKey(r))}
-          <button type="button" class="pm-item" role="menuitem" disabled={atLimit} onclick={() => launchRecent(r)}>
-            <span class="pm-label">{r.label}</span>
-            <span class="pm-path" title={r.locId ? r.remoteDir : r.folder}>{r.locId ? r.remoteDir : r.folder}</span>
-          </button>
-        {/each}
-      {/if}
       {#if favorites.length}
         <div class="pm-hdr">{t('sessions.menuFavs')}</div>
         {#each favorites as f (f.id)}
@@ -2142,10 +2326,25 @@
             <button type="button" class="pm-item" role="menuitem" disabled={atLimit}
               onclick={() => { launchFav(f); plusMenuOpen = false; }} title={t('sessions.favLaunchTip')}>
               <span class="pm-star">★</span>
-              <span class="pm-label">{f.label}</span>
+              <span class="env-ic pm-ic env-tint-{f.env}">{@html envIcon(f.env)}</span>
+              <span class="pm-label">{stripEnvPrefix(f)}</span>
               <span class="pm-path" title={f.locId ? f.remoteDir : f.folder}>{f.locId ? f.remoteDir : f.folder}</span>
             </button>
             <button type="button" class="pm-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
+          </div>
+        {/each}
+      {/if}
+      {#if menuRecents.length}
+        <div class="pm-hdr">{t('sessions.menuRecent')}</div>
+        {#each menuRecents as r (recipeKey(r))}
+          <div class="pm-row">
+            <button type="button" class="pm-item" role="menuitem" disabled={atLimit} onclick={() => launchRecent(r)}>
+              <span class="env-ic pm-ic env-tint-{r.env}">{@html envIcon(r.env)}</span>
+              <span class="pm-label">{stripEnvPrefix(r)}</span>
+              <span class="pm-when">{agoLabel(r.when)}</span>
+              <span class="pm-path" title={r.locId ? r.remoteDir : r.folder}>{r.locId ? r.remoteDir : r.folder}</span>
+            </button>
+            <button type="button" class="pm-x pm-pin" onclick={() => pinRecent(r)} title={t('sessions.pin')} aria-label={t('sessions.pin')}>☆</button>
           </div>
         {/each}
       {/if}
@@ -2168,8 +2367,8 @@
           </button>
         {/each}
       </div>
-      <button class="sw-btn sw-btn-ghost text-sw-xs" class:active={launcherOpen}
-        onclick={() => (launcherOpen = !launcherOpen)} title={t('sessions.settingsTip')} aria-pressed={launcherOpen}>⚙ {t('sessions.settings')}</button>
+      <button class="sw-btn sw-btn-ghost text-sw-xs"
+        onclick={() => openSettings()} title={t('sessions.settingsTip')}>⚙ {t('sessions.settings')}</button>
     </div>
 
     <!-- The phrase: reads as a sentence and adapts to the chosen environment / location -->
@@ -2190,6 +2389,15 @@
             <span class="fld-lbl">{t('sessions.phModel')}</span>
             <input class="sw-input font-mono text-sw-xs pmodel" bind:value={lClaudeModel}
               placeholder={t('sessions.phClaudeModelPlaceholder')} spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="fld">
+            <!-- Council U-7: heavy session → wait, scratch session → switch — per launch. -->
+            <span class="fld-lbl">{t('sessions.limitMode')}</span>
+            <div class="psel"><Select bind:value={lLimitMode} options={[
+              { value: '', label: t('sessions.limitModeDefault') },
+              { value: 'wait', label: t('sessions.limitModeWait') },
+              { value: 'switchProfile', label: t('sessions.limitModeSwitch') }
+            ]} /></div>
           </div>
         {:else if lEnv === 'codex'}
           <!-- Codex identity: config.toml profile (when any exist) + a --model override. -->
@@ -2243,17 +2451,47 @@
         <div class="fld launchargs">
           <span class="fld-lbl">{t('sessions.phWith')}</span>
           <div class="argsrow">
-            <input class="sw-input grow font-mono text-sw-xs pargs" bind:value={lArgs} oninput={() => (argsTouched = true)}
-              placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
             {#each launchChips as flag (flag)}
               <button type="button" class="argchip" class:on={lArgs.includes(flag)}
                 onclick={() => { lArgs = toggleFlag(lArgs, flag); argsTouched = true; }}>{flag}</button>
             {/each}
+            <input class="sw-input grow font-mono text-sw-xs pargs" value={lArgsExtra}
+              oninput={(e) => onExtraArgsInput(e.currentTarget.value)}
+              placeholder={t('sessions.argsCustomPlaceholder')} spellcheck="false" autocomplete="off" />
           </div>
+          <!-- Council X-10: with a single toggled chip the preview just repeats it — show the
+               composed line only when it actually adds information (2+ flags or a custom part). -->
+          {#if lArgs.trim() && (lArgsExtra.trim() || launchChips.filter((f) => lArgs.includes(f)).length > 1)}
+            <span class="args-preview font-mono" title={t('sessions.phWith')}>= {lArgs.trim()}</span>
+          {/if}
         </div>
       {/if}
       {#if lLoc && lEnv !== 'shell'}
         <span class="ssh-hint" title={t('sessions.sshToolHint', { tool: lEnv })}>{t('sessions.sshToolHint', { tool: lEnv })}</span>
+      {/if}
+
+      {#if lEnv === 'claude'}
+        <!-- Task 5 / council F: quota-aware recommendation sits ABOVE the launch button (advice
+             before the decision, not after it). Launches nothing; Apply just fills the fields.
+             Same ranker as the resume auto-switch (launchAdvisor → evaluateProfiles). -->
+        <div class="stackbar advisor" role="group" aria-label={t('sessions.advisorLabel')}>
+          <span class="stk-label">{t('sessions.advisorTask')}</span>
+          <div class="psel"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
+          {#if advice.recommendation}
+            {@const r = advice.recommendation}
+            <span class="adv-rec" title={t('sessions.advisorRecTip')}>
+              {t('sessions.advisorRec', { profile: r.profile, effort: r.effort, util: Math.round(r.util) })}
+            </span>
+            <button type="button" class="sw-btn sw-btn-ghost text-sw-xs" onclick={applyAdvice}
+              disabled={lProfile === r.profile && lClaudeEffort === r.effort}
+              title={t('sessions.advisorApplyTip')}>{t('sessions.advisorApply')}</button>
+          {:else}
+            <!-- Council F: the dead-end "no free profile" now says WHY inline, not only on hover. -->
+            <span class="adv-none" title={advice.rejected.map((x) => `${x.name}: ${x.reason}`).join(', ')}>
+              {t('sessions.advisorNone')}{#if advice.rejected.length}&nbsp;— {advice.rejected[0].name}: {advice.rejected[0].reason}{#if advice.rejected.length > 1}&nbsp;(+{advice.rejected.length - 1}){/if}{/if}{#if nearestReset}&nbsp;· {t('sessions.advisorNextReset', { profile: nearestReset.profile, d: humanizeMs(nearestReset.at - nowTick) })}{/if}
+            </span>
+          {/if}
+        </div>
       {/if}
 
       <div class="launchactions">
@@ -2261,27 +2499,6 @@
         <button type="button" class="sw-btn sw-btn-ghost fav-btn" onclick={pinCurrent} title={t('sessions.pin')}>☆ {t('sessions.pin')}</button>
       </div>
     </div>
-
-    {#if lEnv === 'claude'}
-      <!-- Task 5: quota-aware launch recommendation — task class → default effort, least-loaded free
-           profile from already-polled usage. Launches nothing; Apply just fills the fields (which stay
-           editable). Same ranker as the resume auto-switch (launchAdvisor → evaluateProfiles). -->
-      <div class="stackbar advisor" role="group" aria-label={t('sessions.advisorLabel')}>
-        <span class="stk-label">{t('sessions.advisorTask')}</span>
-        <div class="psel"><Select bind:value={lTaskClass} options={taskClassOptions} /></div>
-        {#if advice.recommendation}
-          {@const r = advice.recommendation}
-          <span class="adv-rec" title={t('sessions.advisorRecTip')}>
-            {t('sessions.advisorRec', { profile: r.profile, effort: r.effort, util: Math.round(r.util) })}
-          </span>
-          <button type="button" class="sw-btn sw-btn-ghost text-sw-xs" onclick={applyAdvice}
-            disabled={lProfile === r.profile && lClaudeEffort === r.effort}
-            title={t('sessions.advisorApplyTip')}>{t('sessions.advisorApply')}</button>
-        {:else}
-          <span class="adv-none" title={advice.rejected.map((x) => `${x.name}: ${x.reason}`).join(', ')}>{t('sessions.advisorNone')}</span>
-        {/if}
-      </div>
-    {/if}
 
     {#if lEnv === 'opencode'}
       <!-- D: FreeLLMAPI stack status + one-click start + dashboard, so opencode isn't launched blindly
@@ -2318,104 +2535,148 @@
       </div>
     {/if}
 
-    <!-- Settings (⚙): default args + SSH servers — everything configurable, no dialogs. The folder /
-         "browse starts in" root lives ONLY in the phrase now (owner: no duplicate folder inputs). -->
-    {#if launcherOpen}
-      <div class="settings">
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.defaultArgsHint')}>{t('sessions.defaultArgs')}</span>
-          <input class="sw-input grow font-mono text-sw-xs" bind:value={defaultArgs}
-            placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
-          {#each ARG_PRESETS.claude as flag (flag)}
-            <button type="button" class="argchip" class:on={defaultArgs.includes(flag)}
-              onclick={() => (defaultArgs = toggleFlag(defaultArgs, flag))}>{flag}</button>
+    <!-- Quick repeat (mockup A): top favorites + recents as one-click chips INSIDE the form, so
+         "repeat what I ran yesterday" doesn't require closing the form and reopening the ▾ menu. -->
+    {#if favorites.length || menuRecents.length}
+      <div class="form-recents">
+        <span class="fld-lbl">{t('sessions.quickRepeat')}</span>
+        <div class="fr-chips">
+          {#each favorites.slice(0, 3) as f (f.id)}
+            <button type="button" class="argchip fr-fav" disabled={atLimit} title={t('sessions.favLaunchTip')}
+              onclick={() => { launchFav(f); newOpen = false; }}>★ {f.label}</button>
           {/each}
-        </div>
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.statusHookHint')}>{t('sessions.statusHook')}</span>
-          <Toggle checked={statusHookOn} disabled={!statusHookState} onCheckedChange={toggleStatusHook}
-            title={t('sessions.statusHookHint')} />
-          {#if statusHookState}
-            <span class="text-sw-xs text-sw-text-muted" title={statusHookState.wired.join(', ')}>
-              {t('sessions.statusHookCoverage', { wired: statusHookHealth.wired, total: statusHookHealth.total })}
-            </span>
-            {#if statusHookHealth.status === 'script-missing'}
-              <span class="hook-warn" title={t('sessions.statusHookScriptMissingHint')}>{t('sessions.statusHookScriptMissing')}</span>
-            {/if}
-            {#if statusHookHealth.drift > 0}
-              <span class="hook-warn" title={statusHookState.partial.map((p) => `${p.profile}: ${p.missing.join(', ')}`).join(' · ')}>{t('sessions.statusHookDrift', { n: statusHookHealth.drift })}</span>
-            {/if}
-          {/if}
-        </div>
-        <!-- Each toggle now gets its own labelled row (was crammed onto the status-hook line). -->
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.statusSoundHint')}>{t('sessions.statusSound')}</span>
-          <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusSound')} />
-        </div>
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.statusToastHint')}>{t('sessions.statusToast')}</span>
-          <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusToast')} />
-        </div>
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.limitModeHint')}>{t('sessions.limitMode')}</span>
-          <div class="psel">
-            <Select value={limitMode}
-              onChange={(v) => { limitMode = v === 'switchProfile' ? 'switchProfile' : 'wait'; saveLimitMode(); }}
-              options={[
-                { value: 'wait', label: t('sessions.limitModeWait') },
-                { value: 'switchProfile', label: t('sessions.limitModeSwitch') }
-              ]} />
-          </div>
-        </div>
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.resumeChoiceHint')}>{t('sessions.resumeChoice')}</span>
-          <div class="psel">
-            <Select value={resumeChoice}
-              onChange={(v) => { resumeChoice = v === 'full' || v === 'ask' ? v : 'summary'; saveAutoContinuePrefs(); }}
-              options={[
-                { value: 'summary', label: t('sessions.resumeChoiceSummary') },
-                { value: 'full', label: t('sessions.resumeChoiceFull') },
-                { value: 'ask', label: t('sessions.resumeChoiceAsk') }
-              ]} />
-          </div>
-        </div>
-        <div class="set-row">
-          <span class="set-k" title={t('sessions.autoContinueTextHint')}>{t('sessions.autoContinueTextLabel')}</span>
-          <input class="sw-input text-sw-xs" style="width:170px" bind:value={autoContinueText}
-            onblur={saveAutoContinuePrefs} placeholder={continuationText()}
-            spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="set-srv">
-          <span class="set-k">{t('sessions.servers')}</span>
-          <div class="srv-list">
-            {#each sshHostList as h (h.id)}
-              <span class="srv-chip">
-                <span class="dot {reachDotClass(sshReach[h.id])}" title={reachTitle(sshReach[h.id])}></span>
-                <span class="srv-n">{h.name}</span>
-                <span class="srv-t font-mono">{sshTargetLabel(h)}</span>
-                {#if h.source === 'saved'}
-                  <button class="srv-x" onclick={() => askDeleteServer(h)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
-                {:else}
-                  <span class="srv-cfg">~/.ssh/config</span>
-                {/if}
-              </span>
-            {/each}
-            {#if !sshHostList.length}<span class="text-sw-xs text-sw-text-muted">{t('sessions.dlgSshEmpty')}</span>{/if}
-          </div>
-          <div class="srv-add">
-            <input class="sw-input text-sw-xs" style="width:130px" bind:value={srvName} placeholder={t('sessions.dlgSshName')} spellcheck="false" autocomplete="off" />
-            <input class="sw-input grow font-mono text-sw-xs" bind:value={srvTarget} placeholder={t('sessions.dlgSshTargetPlaceholder')} spellcheck="false" autocomplete="off" />
-            <input class="sw-input font-mono text-sw-xs" style="width:170px" bind:value={srvDir} placeholder={t('sessions.dlgSshRemoteDir')} spellcheck="false" autocomplete="off" />
-            <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!srvTarget.trim() || srvTesting} onclick={testServer}>{t('sessions.dlgSshTest')}</button>
-            {#if srvTest === 'ok'}<span class="text-sw-xs" style="color:var(--sw-status-up)">✓ {t('sessions.dlgSshTestOk')}</span>{/if}
-            {#if srvTest === 'fail'}<span class="text-sw-xs status-bad">✕ {t('sessions.dlgSshTestFail')}</span>{/if}
-            <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!srvTarget.trim()} onclick={addServer}>{t('sessions.serverAdd')}</button>
-          </div>
+          {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
+            <button type="button" class="argchip" disabled={atLimit}
+              onclick={() => { launchRecent(r); newOpen = false; }}>{r.label}</button>
+          {/each}
         </div>
       </div>
     {/if}
     </div>
   {/if}
+
+  <!-- ⚙ Session settings (mockup B): ONLY global policies + registries, categorized. Per-launch
+       parameters live exclusively in the launch form — the old inline block duplicated its args UI. -->
+  <ModalShell open={settingsOpen} onClose={() => (settingsOpen = false)} size="lg" labelledBy="sset-title">
+    <h3 id="sset-title" class="mb-sw-3 text-sw-base font-semibold">⚙ {t('sessions.settingsTitle')}</h3>
+    <div class="sset">
+      <nav class="sset-nav" aria-label={t('sessions.settingsTitle')}>
+        <button type="button" class="sset-cat" class:on={setCat === 'behavior'} onclick={() => (setCat = 'behavior')}>{t('sessions.setCatBehavior')}</button>
+        <button type="button" class="sset-cat" class:on={setCat === 'limits'} onclick={() => (setCat = 'limits')}>{t('sessions.setCatLimits')}</button>
+        <button type="button" class="sset-cat" class:on={setCat === 'args'} onclick={() => (setCat = 'args')}>{t('sessions.setCatArgs')}</button>
+        <button type="button" class="sset-cat" class:on={setCat === 'servers'} onclick={() => (setCat = 'servers')}>{t('sessions.servers')}</button>
+      </nav>
+      <div class="sset-body">
+        {#if setCat === 'behavior'}
+          <div class="set-row">
+            <span class="set-k" title={t('sessions.statusHookHint')}>{t('sessions.statusHook')}</span>
+            <Toggle checked={statusHookOn} disabled={!statusHookState} onCheckedChange={toggleStatusHook}
+              title={t('sessions.statusHookHint')} />
+            {#if statusHookState}
+              <span class="text-sw-xs text-sw-text-muted" title={statusHookState.wired.join(', ')}>
+                {t('sessions.statusHookCoverage', { wired: statusHookHealth.wired, total: statusHookHealth.total })}
+              </span>
+              {#if statusHookHealth.status === 'script-missing'}
+                <span class="hook-warn" title={t('sessions.statusHookScriptMissingHint')}>{t('sessions.statusHookScriptMissing')}</span>
+              {/if}
+              {#if statusHookHealth.drift > 0}
+                <span class="hook-warn" title={statusHookState.partial.map((p) => `${p.profile}: ${p.missing.join(', ')}`).join(' · ')}>{t('sessions.statusHookDrift', { n: statusHookHealth.drift })}</span>
+              {/if}
+            {/if}
+          </div>
+          <!-- Council C: the hints existed only as hover-tooltips — a modal the user opens to
+               UNDERSTAND options must show them inline. -->
+          <div class="set-row">
+            <span class="set-k">{t('sessions.statusSound')}</span>
+            <Toggle bind:checked={statusSounds} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusSound')} />
+          </div>
+          <p class="set-hint">{t('sessions.statusSoundHint')}</p>
+          <div class="set-row">
+            <span class="set-k">{t('sessions.statusToast')}</span>
+            <Toggle bind:checked={statusNotify} onCheckedChange={saveStatusPrefs} ariaLabel={t('sessions.statusToast')} />
+          </div>
+          <p class="set-hint">{t('sessions.statusToastHint')}</p>
+        {:else if setCat === 'limits'}
+          <p class="set-note">{t('sessions.limitsGlobalNote')}</p>
+          <div class="set-row">
+            <span class="set-k" title={t('sessions.limitModeHint')}>{t('sessions.limitMode')}</span>
+            <div class="psel">
+              <Select value={limitMode}
+                onChange={(v) => { limitMode = v === 'switchProfile' ? 'switchProfile' : 'wait'; saveLimitMode(); }}
+                options={[
+                  { value: 'wait', label: t('sessions.limitModeWait') },
+                  { value: 'switchProfile', label: t('sessions.limitModeSwitch') }
+                ]} />
+            </div>
+          </div>
+          <p class="set-hint">{t('sessions.limitModeHint')}</p>
+          <div class="set-row">
+            <span class="set-k" title={t('sessions.resumeChoiceHint')}>{t('sessions.resumeChoice')}</span>
+            <div class="psel">
+              <Select value={resumeChoice}
+                onChange={(v) => { resumeChoice = v === 'full' || v === 'ask' ? v : 'summary'; saveAutoContinuePrefs(); }}
+                options={[
+                  { value: 'summary', label: t('sessions.resumeChoiceSummary') },
+                  { value: 'full', label: t('sessions.resumeChoiceFull') },
+                  { value: 'ask', label: t('sessions.resumeChoiceAsk') }
+                ]} />
+            </div>
+          </div>
+          <p class="set-hint">{t('sessions.resumeChoiceHint')}</p>
+          <div class="set-row">
+            <span class="set-k" title={t('sessions.autoContinueTextHint')}>{t('sessions.autoContinueTextLabel')}</span>
+            <input class="sw-input text-sw-xs" style="width:170px" bind:value={autoContinueText}
+              onblur={saveAutoContinuePrefs} placeholder={continuationText()}
+              spellcheck="false" autocomplete="off" />
+          </div>
+          <p class="set-hint">{t('sessions.autoContinueTextHint')}</p>
+        {:else if setCat === 'args'}
+          <div class="set-row">
+            <span class="set-k" title={t('sessions.defaultArgsHint')}>{t('sessions.defaultArgs')}</span>
+            <input class="sw-input grow font-mono text-sw-xs" bind:value={defaultArgs}
+              placeholder={t('sessions.dlgArgsPlaceholder')} spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="set-row">
+            {#each ARG_PRESETS.claude as flag (flag)}
+              <button type="button" class="argchip" class:on={defaultArgs.includes(flag)}
+                onclick={() => (defaultArgs = toggleFlag(defaultArgs, flag))}>{flag}</button>
+            {/each}
+          </div>
+          <p class="text-sw-xs text-sw-text-muted">{t('sessions.defaultArgsHint')}</p>
+        {:else}
+          <div class="set-srv">
+            <div class="srv-list">
+              {#each sshHostList as h (h.id)}
+                <span class="srv-chip">
+                  <span class="dot {reachDotClass(sshReach[h.id])}" title={reachTitle(sshReach[h.id])}></span>
+                  <span class="srv-n">{h.name}</span>
+                  <span class="srv-t font-mono">{sshTargetLabel(h)}</span>
+                  {#if h.source === 'saved'}
+                    <button class="srv-x" onclick={() => askDeleteServer(h)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
+                  {:else}
+                    <span class="srv-cfg">~/.ssh/config</span>
+                  {/if}
+                </span>
+              {/each}
+              {#if !sshHostList.length}<span class="text-sw-xs text-sw-text-muted">{t('sessions.dlgSshEmpty')}</span>{/if}
+            </div>
+            <div class="srv-add">
+              <input class="sw-input text-sw-xs" style="width:130px" bind:value={srvName} placeholder={t('sessions.dlgSshName')} spellcheck="false" autocomplete="off" />
+              <input class="sw-input grow font-mono text-sw-xs" bind:value={srvTarget} placeholder={t('sessions.dlgSshTargetPlaceholder')} spellcheck="false" autocomplete="off" />
+              <input class="sw-input font-mono text-sw-xs" style="width:170px" bind:value={srvDir} placeholder={t('sessions.dlgSshRemoteDir')} spellcheck="false" autocomplete="off" />
+              <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!srvTarget.trim() || srvTesting} onclick={testServer}>{t('sessions.dlgSshTest')}</button>
+              {#if srvTest === 'ok'}<span class="text-sw-xs" style="color:var(--sw-status-up)">✓ {t('sessions.dlgSshTestOk')}</span>{/if}
+              {#if srvTest === 'fail'}<span class="text-sw-xs status-bad">✕ {t('sessions.dlgSshTestFail')}</span>{/if}
+              <button class="sw-btn sw-btn-primary text-sw-xs" disabled={!srvTarget.trim()} onclick={addServer}>{t('sessions.serverAdd')}</button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+    <div class="mt-sw-4 flex justify-end">
+      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (settingsOpen = false)}>{t('common.close')}</button>
+    </div>
+  </ModalShell>
 
   {#if globalCount >= SESSION_LIMIT}
     <p class="mb-sw-2 text-sw-xs status-warn">{t('sessions.globalLimitNote', { n: SESSION_LIMIT })}</p>
@@ -2425,23 +2686,37 @@
     <p class="mb-sw-2 text-sw-xs" style="color:var(--sw-text-muted)">{t('sessions.globalNearNote', { used: globalCount, max: SESSION_LIMIT })}</p>
   {/if}
 
-  <!-- Restore the previous run's session set IN-GRID (claude panes resume their conversation) -->
-  {#if restorable.length}
+  <!-- ONE restore bar (was two near-identical «Восстановить» banners — owner kept clicking the
+       monitor-layout one expecting the in-grid restore). Primary action = in-grid; the per-monitor
+       arrangement is a clearly-labelled secondary button on the same row. -->
+  {#if restorable.length || (savedLayoutExists && !layoutBannerDismissed)}
     <div class="restorebar">
-      <span class="text-sw-xs">{t('sessions.restoreOffer', { n: restorable.length })}</span>
-      <button class="sw-btn sw-btn-primary text-sw-xs" onclick={restoreLast}>{t('sessions.restoreDo')}</button>
-      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (restorable = [])}>{t('sessions.restoreDismiss')}</button>
+      {#if restorable.length}
+        <span class="text-sw-xs">↺ {t('sessions.restoreOffer', { n: restorable.length })}</span>
+        <button class="sw-btn sw-btn-primary text-sw-xs" onclick={restoreLast}>{t('sessions.restoreInGrid')}</button>
+      {:else}
+        <span class="text-sw-xs">🖥 {t('sessions.restoreLayoutPrompt')}{#if savedLayoutSummary} · <span class="text-sw-text-muted">{savedLayoutSummary}</span>{/if}</span>
+      {/if}
+      {#if savedLayoutExists && !layoutBannerDismissed}
+        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => { layoutBannerDismissed = true; void restoreLayout(); }}>🖥 {t('sessions.restoreOnMonitors')}</button>
+        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={forgetLayout}>{t('sessions.forgetLayout')}</button>
+      {/if}
+      {#if restorable.length}
+        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (restorable = [])}>{t('sessions.restoreDismiss')}</button>
+      {/if}
     </div>
   {/if}
 
-  <!-- Restore the previous per-MONITOR arrangement (detached windows) — distinct from the in-grid
-       restore above (icon + "по мониторам") so the two aren't confused, and INLINE so it never covers
-       the launcher buttons the way the old floating toast did. -->
-  {#if savedLayoutExists && !layoutBannerDismissed}
-    <div class="restorebar">
-      <span class="text-sw-xs">🖥 {t('sessions.restoreLayoutPrompt')}{#if savedLayoutSummary} · <span class="text-sw-text-muted">{savedLayoutSummary}</span>{/if}</span>
-      <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => { layoutBannerDismissed = true; void restoreLayout(); }}>{t('sessions.restoreLayoutAction')}</button>
-      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={forgetLayout}>{t('sessions.forgetLayout')}</button>
+  <!-- Attention strip (mockup #10): the longest-waiting blocked pane, with one-click jump. Shows
+       only panes OTHER than the focused one — never nags about what's already on screen. -->
+  {#if attention}
+    <div class="attnbar" role="status">
+      <span class="attn-dot"></span>
+      <span class="text-sw-xs attn-msg">
+        <b>{plabel(attention.first)}</b>{#if spaces.length > 1}&nbsp;· {spaces.find((s) => s.id === paneSpace(attention.first))?.name}{/if}
+        — {t('sessions.attnWaiting', { d: attnElapsed(attention.first.key) })}{#if attention.more}&nbsp;· {t('sessions.attnMore', { n: attention.more })}{/if}
+      </span>
+      <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => railFocus(attention.first.key)}>{t('sessions.attnJump')}</button>
     </div>
   {/if}
 
@@ -2462,7 +2737,10 @@
 
   <!-- herdr W3: project spaces. Switching a space shows only its panes; every pane stays mounted
        (CSS-filtered, never unmounted) so no live session dies. Double-click a tab to rename. -->
-  {#if activePanes.length > 0 || spaces.length > 1}
+  <!-- Redesign 2026-07: while the rail is open it IS the project navigation (groups with the same
+       actions), so the tab row hides — projects no longer appear twice on screen. The tabs come
+       back when the rail is collapsed or there's only one pane. Drag-reorder stays tab-only. -->
+  {#if (activePanes.length > 0 || spaces.length > 1) && !railVisible}
     <div class="spaces" role="tablist" aria-label={t('sessions.agents')}>
       {#each spaces as sp (sp.id)}
         {@const worst = spaceWorst(sp.id)}
@@ -2503,7 +2781,7 @@
       {#each spacePanes as p (p.key)}
         <button class="maxchip" class:active={maximized === p.key}
           onclick={() => { maximized = p.key; unread = { ...unread, [p.key]: false }; }} title={paneTitleElapsed(p)}>
-          <span class="maxchip-dot" class:unread={unread[p.key] && maximized !== p.key}></span>{paneLabel(p)}
+          <span class="maxchip-dot" class:unread={unread[p.key] && maximized !== p.key}></span>{plabel(p)}
         </button>
       {/each}
       <span class="spacer"></span>
@@ -2515,38 +2793,77 @@
     <div class="stage">
       <!-- herdr W2: left agent rail — one row per active pane (env icon · status dot · label · limit
            chip); click focuses that pane. Same status dots as the pane headers. Collapsible. -->
-      {#if !railOpen && spacePanes.length >= 2}
+      {#if !railOpen && activePanes.length >= 2}
         <button type="button" class="rail-reopen" onclick={() => setRail(true)}
           title={t('sessions.railShow')} aria-label={t('sessions.railShow')}>›</button>
       {/if}
-      {#if railOpen && spacePanes.length >= 2}
+      {#if railVisible}
         <aside class="rail" aria-label={t('sessions.agents')}>
           <div class="rail-head">
             <span class="rail-title">{t('sessions.agents')}</span>
             <button type="button" class="rail-toggle" onclick={() => setRail(false)}
               title={t('sessions.railHide')} aria-label={t('sessions.railHide')}>‹</button>
           </div>
-          {#each spacePanes as pane (pane.key)}
-            {@const st = displayStateById[pane.key]}
-            <button type="button" class="rail-item" class:active={activeKey === pane.key}
-              onclick={() => railFocus(pane.key)}
-              oncontextmenu={(e) => openRailMenu(e, pane.key)}
-              onkeydown={(e) => {
-                // Keyboard parity with right-click: Shift+F10 / the ContextMenu key open the row menu.
-                if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
-                  e.preventDefault();
-                  railMenuAnchor = e.currentTarget as HTMLElement;
-                  railMenuFor = pane.key;
-                }
-              }}
-              title={st && st !== 'unknown' ? t(`sessions.state_${st}`) : paneLabel(pane)}>
-              <span class="env-ic">{@html envIcon(pane.tool)}</span>
-              <span class="dot" class:working={st === 'working'} class:blocked={st === 'blocked'}
-                class:done={st === 'done'} class:limited={st === 'limited'}></span>
-              <span class="rail-label">{paneLabel(pane)}</span>
-              {#if pane.tool === 'claude' && pane.profile}<ProfileUsageBadge profile={pane.profile} compact />{/if}
-            </button>
+          <!-- Redesign 2026-07 (mockup #2): the rail shows EVERY project's agents, grouped —
+               cross-project awareness (a blocked agent elsewhere is visible) + one-click jump. -->
+          {#each spaces as sp (sp.id)}
+            {@const spPanes = activePanes.filter((p) => paneSpace(p) === sp.id)}
+            <!-- Header renders for EMPTY projects too — with the tab row hidden, the rail is the
+                 only way to reach them. -->
+            {#if spPanes.length || spaces.length > 1}
+              {#if spaces.length > 1}
+                {@const worst = spaceWorst(sp.id)}
+                <!-- Group header = the project tab's full feature set (the tab row hides while the
+                     rail is open): click switches, dblclick renames, ＋ launches into it, ✕ closes. -->
+                {#if spaceEditId === sp.id}
+                  <input class="space-edit sw-input text-sw-xs" bind:value={spaceEditName} use:focusMount
+                    onkeydown={(e) => { if (e.key === 'Enter') commitRenameSpace(); else if (e.key === 'Escape') (spaceEditId = null); }}
+                    onblur={commitRenameSpace} />
+                {:else}
+                  <div class="rail-group" class:cur={sp.id === activeSpace} class:empty={!spPanes.length}>
+                    <button type="button" class="rail-group-go" onclick={() => switchSpace(sp.id)}
+                      ondblclick={() => beginRenameSpace(sp.id)}
+                      oncontextmenu={(e) => { e.preventDefault(); beginRenameSpace(sp.id); }}
+                      title="{sp.name} · {t('sessions.spaceRename')}">
+                      {#if worst}<span class="dot" class:working={worst === 'working'} class:blocked={worst === 'blocked'} class:done={worst === 'done'}></span>{/if}
+                      <span class="rail-group-name">{sp.name}</span><span class="rail-group-n">{spPanes.length}</span>
+                    </button>
+                    <button type="button" class="rail-group-act" onclick={() => spacePlus(sp.id)}
+                      title={t('sessions.spaceNewAgent')} aria-label={t('sessions.spaceNewAgent')}>＋</button>
+                    <button type="button" class="rail-group-act" onclick={() => askDeleteSpace(sp.id)}
+                      title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
+                  </div>
+                {/if}
+              {/if}
+              {#each spPanes as pane (pane.key)}
+                {@const st = displayStateById[pane.key]}
+                <button type="button" class="rail-item" class:active={activeKey === pane.key}
+                  class:offspace={sp.id !== activeSpace}
+                  onclick={() => railFocus(pane.key)}
+                  oncontextmenu={(e) => openRailMenu(e, pane.key)}
+                  onkeydown={(e) => {
+                    // Keyboard parity with right-click: Shift+F10 / the ContextMenu key open the row menu.
+                    if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
+                      e.preventDefault();
+                      railMenuAnchor = e.currentTarget as HTMLElement;
+                      railMenuFor = pane.key;
+                    }
+                  }}
+                  title={`${plabel(pane)} · ${pane.cwd || '~'}${st && st !== 'unknown' ? ` · ${t(`sessions.state_${st}`)}` : ''}`}>
+                  <span class="env-ic env-tint-{pane.tool}">{@html envIcon(pane.tool)}</span>
+                  <span class="dot" class:working={st === 'working'} class:blocked={st === 'blocked'}
+                    class:done={st === 'done'} class:limited={st === 'limited'}></span>
+                  <span class="rail-label">{plabel(pane)}</span>
+                  {#if st && RAIL_WORDS[st]}
+                    <span class="rail-word" class:blocked={st === 'blocked'} class:done={st === 'done'}
+                      class:limited={st === 'limited'}>{t(`sessions.${RAIL_WORDS[st]}`)}</span>
+                  {/if}
+                  {#if pane.tool === 'claude' && pane.profile}<ProfileUsageBadge profile={pane.profile} compact />{/if}
+                </button>
+              {/each}
+            {/if}
           {/each}
+          <button type="button" class="rail-add" onclick={addSpace} title={t('sessions.spaceNew')}>＋ {t('sessions.spaceNew')}</button>
         </aside>
       {/if}
       {#if railMenuFor && railMenuAnchor}
@@ -2602,6 +2919,7 @@
             autoResumeLabel={autoResumeById[pane.key] ?? null}
             visible={visible && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
+            showUsage={!railVisible || activeKey === pane.key}
             {broadcast}
             onInput={broadcastInput}
             onUserInput={(k) => (lastUserInputAt[k] = Date.now())}
@@ -2639,6 +2957,21 @@
           <EmptyState icon={SquareTerminal} title={t('sessions.spaceEmptyTitle')}
             description={t('sessions.spaceEmptyHint')} action={() => (newOpen = true)}
             actionLabel={t('sessions.newSession')} />
+          {#if favorites.length || menuRecents.length || wsNames.length}
+            <div class="empty-chips-hdr">{t('sessions.quickRepeat')}</div>
+            <div class="empty-chips">
+              {#each wsNames as name (name)}
+                <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
+                  onclick={() => launchWorkspace(name)}>▶ {name} ({workspaces[name].length})</button>
+              {/each}
+              {#each favorites.slice(0, 3) as f (f.id)}
+                <button type="button" class="argchip fr-fav" disabled={atLimit} onclick={() => launchFav(f)}>★ {f.label}</button>
+              {/each}
+              {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
+                <button type="button" class="argchip" disabled={atLimit} onclick={() => launchRecent(r)}>{r.label}</button>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -2693,6 +3026,25 @@
   {#if !activePanes.length && !bgPanes.length}
     <EmptyState icon={SquareTerminal} title={t('sessions.emptyTitle')} description={t('sessions.emptyHint')}
       action={launchPhrase} actionLabel={t('sessions.phLaunch')} />
+    {#if favorites.length || menuRecents.length || wsNames.length}
+      <!-- Mockup #9 + council U-2: the empty screen doubles as a launchpad — saved WORKSPACES
+           (whole fleets) launch one-click next to favorite/recent single recipes. -->
+      <div class="empty-launchpad">
+        <div class="empty-chips-hdr">{t('sessions.quickRepeat')}</div>
+        <div class="empty-chips">
+          {#each wsNames as name (name)}
+            <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
+              onclick={() => launchWorkspace(name)}>▶ {name} ({workspaces[name].length})</button>
+          {/each}
+          {#each favorites.slice(0, 3) as f (f.id)}
+            <button type="button" class="argchip fr-fav" disabled={atLimit} onclick={() => launchFav(f)}>★ {f.label}</button>
+          {/each}
+          {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
+            <button type="button" class="argchip" disabled={atLimit} onclick={() => launchRecent(r)}>{r.label}</button>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -2717,16 +3069,59 @@
     margin-bottom: var(--sw-space-2);
     padding: 6px 12px;
     border: 1px solid var(--sw-border);
+    border-left: 3px solid var(--sw-accent);
     border-radius: var(--sw-radius-md);
     background: var(--sw-bg-subtle);
   }
-  /* Agent-status rollup chips (header): blocked / working / done counts. */
+  /* Attention strip: the longest-waiting blocked pane. Danger accent = "a human is needed". */
+  .attnbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: var(--sw-space-2);
+    padding: 6px 12px;
+    border: 1px solid var(--sw-border);
+    border-left: 3px solid var(--sw-danger, #f85149);
+    border-radius: var(--sw-radius-md);
+    background: var(--sw-bg-subtle);
+  }
+  .attn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--sw-danger, #f85149);
+    animation: sw-dot-pulse 0.7s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  .attn-msg {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--sw-text-secondary);
+  }
+  /* Agent-status rollup chips (header): blocked / working / done counts. Buttons — click cycles
+     focus through the panes in that state (cross-project). */
   .status-sum {
     display: inline-flex;
     align-items: baseline;
-    gap: 10px;
+    gap: 6px;
     font-size: var(--sw-text-xs);
     white-space: nowrap;
+  }
+  .ss {
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 1px 7px;
+    border-radius: 9999px;
+    font: inherit;
+    font-size: var(--sw-text-xs);
+    cursor: pointer;
+  }
+  .ss:hover {
+    border-color: var(--sw-border);
+    background: var(--sw-bg-hover);
   }
   .ss-blocked {
     /* V7: text color from the .status-bad canon (light-aware); the strip stays bold. */
@@ -2780,13 +3175,16 @@
     padding-bottom: var(--sw-space-3);
     border-bottom: 1px solid var(--sw-border);
   }
-  /* herdr W1: compact bar holding the "＋ New session" button + favorite chips. */
-  .newbar {
+  /* One-row header (mockup #5/#1): title · launcher split · status rollup · tools. Wraps only
+     when the window is genuinely too narrow. */
+  .topbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--sw-space-2);
-    margin-bottom: var(--sw-space-4);
+  }
+  .top-spacer {
+    flex: 1;
   }
   /* The launcher rendered as an anchored popover: an elevated card (use:anchored sets position:fixed
      + top/left inline), overriding the inline .launcher border-bottom/margins. */
@@ -2903,9 +3301,8 @@
     align-items: center;
     gap: 10px;
   }
-  .fav-btn {
-    color: var(--sw-warn);
-  }
+  /* Council V-3: the pin button stays NEUTRAL (ghost) — amber pulled the eye harder than the
+     primary «Запустить» and broke the blue brand palette; amber is reserved for warnings/limits. */
   .phrase .ph-note {
     font-size: var(--sw-text-xs);
     color: var(--sw-text-muted);
@@ -3049,6 +3446,44 @@
     color: var(--sw-warn);
     flex-shrink: 0;
   }
+  /* Council V-16: a stable tint per harness so the tool reads from the icon alone —
+     Claude warm coral, opencode green, codex violet, shell neutral. Same hues everywhere. */
+  :global(.env-tint-claude) {
+    color: #e0836a;
+  }
+  :global(.env-tint-opencode) {
+    color: #4cc38a;
+  }
+  :global(.env-tint-codex) {
+    color: #9a8cff;
+  }
+  :global(.env-tint-shell) {
+    color: var(--sw-text-muted);
+  }
+  /* ▾-menu: env icon, recency age, hover-☆ (pin a recent straight from its row). */
+  .pm-ic {
+    display: inline-flex;
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+  .pm-when {
+    flex-shrink: 0;
+    color: var(--sw-text-muted);
+    font-family: var(--sw-font-mono);
+    font-size: 10px;
+  }
+  .pm-pin {
+    color: var(--sw-text-muted);
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .pm-row:hover .pm-pin,
+  .pm-pin:focus-visible {
+    opacity: 1;
+  }
+  .pm-pin:hover {
+    color: var(--sw-warn);
+  }
   .pm-path {
     margin-left: auto;
     color: var(--sw-text-muted);
@@ -3085,14 +3520,100 @@
     gap: var(--sw-space-2);
     margin-bottom: var(--sw-space-3);
   }
-  .settings {
+  /* ⚙ settings modal (mockup B): category nav on the left, one category's rows on the right. */
+  .sset {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: var(--sw-space-3);
+    /* Council V-7: size to content — the fixed tall frame read as emptiness. */
+    min-height: 120px;
+  }
+  /* Inline explanation under a settings row (council C: hover-only hints hid the meaning). */
+  .set-hint {
+    margin: -4px 0 2px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    max-width: 460px;
+  }
+  /* Category-level note, e.g. "applies to ALL sessions" (council U-7). */
+  .set-note {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-secondary);
+    padding: 4px 8px;
+    border-left: 2px solid var(--sw-accent);
+    background: var(--sw-bg-subtle);
+    border-radius: var(--sw-radius-sm);
+  }
+  /* Active profile's remaining quota in the tab header (council D). */
+  .hdr-usage {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--sw-text-xs);
+    padding: 2px 8px;
+    border: 1px solid var(--sw-border);
+    border-radius: 9999px;
+  }
+  .hdr-usage-p {
+    color: var(--sw-text-secondary);
+    font-weight: 600;
+  }
+  .sset-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid var(--sw-border);
+    padding-right: var(--sw-space-2);
+  }
+  .sset-cat {
+    border: none;
+    background: transparent;
+    color: var(--sw-text-secondary);
+    text-align: left;
+    padding: 6px 9px;
+    border-radius: var(--sw-radius-sm);
+    font-size: var(--sw-text-xs);
+    cursor: pointer;
+  }
+  .sset-cat:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .sset-cat.on {
+    background: var(--sw-accent-glow);
+    color: var(--sw-text-primary);
+    font-weight: 600;
+  }
+  .sset-body {
     display: flex;
     flex-direction: column;
     gap: var(--sw-space-2);
-    padding: 10px 12px;
-    background: var(--sw-bg-secondary);
-    border: 1px solid var(--sw-border);
-    border-radius: var(--sw-radius-md);
+    min-width: 0;
+  }
+  /* Quick-repeat chips inside the launch form (top favorites + recents, one-click launch). */
+  .form-recents {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-top: 1px solid var(--sw-border);
+    margin-top: var(--sw-space-2);
+    padding-top: var(--sw-space-2);
+  }
+  .fr-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .fr-fav {
+    color: var(--sw-status-warn);
+  }
+  /* Composed-args preview under the chips row — the one honest "what will actually run" line. */
+  .args-preview {
+    font-size: 10.5px;
+    color: var(--sw-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .set-row,
   .srv-add {
@@ -3265,8 +3786,10 @@
   /* The pane holding keyboard focus gets an accent ring so "you are here" is visible across panes
      (esp. for Ctrl+]/[ cycling). border-radius matches the pane's own rounding. */
   .cell.active {
+    /* Fully INSIDE the cell (-2px): with -1px the outer 1px of the ring leaked past the cell edge
+       and .grid { overflow: hidden } clipped it on edge cells — the ring looked cut in places. */
     outline: 2px solid var(--sw-accent);
-    outline-offset: -1px;
+    outline-offset: -2px;
     border-radius: var(--sw-radius-md);
   }
   /* Focus mode: dim every pane except the one under the cursor (for screencasts). */
@@ -3371,6 +3894,128 @@
     align-self: flex-start;
     border: 1px solid var(--sw-border);
   }
+  /* Project group header inside the rail — the project tab's stand-in while the tab row is
+     hidden: switch / rename (dblclick) / ＋ agent / ✕ close. */
+  .rail-group {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    color: var(--sw-text-muted);
+  }
+  .rail-group.cur {
+    color: var(--sw-accent-text);
+  }
+  .rail-group-go {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    padding: 6px 4px 2px 7px;
+    color: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    text-align: left;
+  }
+  .rail-group-go:hover {
+    color: var(--sw-text-primary);
+  }
+  .rail-group-go .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--sw-status-up);
+    flex-shrink: 0;
+  }
+  .rail-group-go .dot.working {
+    background: var(--sw-status-warn);
+  }
+  .rail-group-go .dot.blocked {
+    background: var(--sw-danger, #f85149);
+  }
+  .rail-group-go .dot.done {
+    background: var(--sw-status-done);
+  }
+  .rail-group-act {
+    border: none;
+    background: transparent;
+    color: var(--sw-text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 4px 4px 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .rail-group:hover .rail-group-act,
+  .rail-group-act:focus-visible {
+    opacity: 1;
+  }
+  .rail-group-act:hover {
+    color: var(--sw-text-primary);
+  }
+  /* "＋ new project" footer row of the rail (the tab row's ＋ while tabs are hidden). */
+  .rail-add {
+    margin-top: auto;
+    border: 1px dashed var(--sw-border);
+    border-radius: var(--sw-radius-sm);
+    background: transparent;
+    color: var(--sw-text-muted);
+    font-size: var(--sw-text-xs);
+    padding: 4px 8px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .rail-add:hover {
+    color: var(--sw-text-primary);
+    border-color: var(--sw-border2, var(--sw-border));
+    background: var(--sw-bg-hover);
+  }
+  .rail-group-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-group-n {
+    flex-shrink: 0;
+    font-size: 9px;
+    background: var(--sw-bg-hover);
+    border-radius: 9999px;
+    padding: 0 5px;
+  }
+  /* Short status word on a rail row — a word beats a dot for glanceability. */
+  .rail-word {
+    flex-shrink: 0;
+    font-size: 9.5px;
+    padding: 0 5px;
+    border-radius: 9999px;
+    border: 1px solid var(--sw-border);
+    color: var(--sw-text-muted);
+  }
+  .rail-word.blocked {
+    color: var(--sw-danger, #f85149);
+    border-color: color-mix(in srgb, var(--sw-danger, #f85149) 45%, transparent);
+  }
+  .rail-word.done {
+    color: var(--sw-status-done);
+    border-color: color-mix(in srgb, var(--sw-status-done) 45%, transparent);
+  }
+  .rail-word.limited {
+    color: var(--sw-accent);
+    border-color: color-mix(in srgb, var(--sw-accent) 45%, transparent);
+  }
+  /* A row from a non-active project — slightly muted until you jump to it. */
+  .rail-item.offspace {
+    opacity: 0.72;
+  }
+  /* Empty project groups are noise next to the working one — mute them (council E). */
+  .rail-group.empty {
+    opacity: 0.55;
+  }
   .rail-item {
     display: flex;
     align-items: center;
@@ -3437,6 +4082,18 @@
     align-items: center;
     gap: var(--sw-space-1);
     margin-bottom: var(--sw-space-3);
+  }
+  /* Council V-14: the ＋/✕ actions crowd the pill — reveal them on hover/focus only. */
+  .space-tab .space-plus,
+  .space-tab .space-x {
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .space-tab:hover .space-plus,
+  .space-tab:hover .space-x,
+  .space-tab .space-plus:focus-visible,
+  .space-tab .space-x:focus-visible {
+    opacity: 1;
   }
   .space-tab {
     display: inline-flex;
@@ -3582,7 +4239,44 @@
     flex: 1;
     display: grid;
     place-items: center;
+    align-content: center;
+    gap: var(--sw-space-3);
     min-height: 0;
+  }
+  /* Launchpad chips under an empty state (favorites + recents + workspaces, one click).
+     Council V-8: raised contrast + a section header so they read as buttons, not a caption. */
+  .empty-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-top: var(--sw-space-2);
+    max-width: 640px;
+  }
+  .empty-chips .argchip {
+    color: var(--sw-text-secondary);
+    background: var(--sw-bg-secondary);
+    padding: 5px 12px;
+  }
+  .empty-chips .argchip:hover {
+    color: var(--sw-text-primary);
+    border-color: var(--sw-accent-text);
+    background: var(--sw-accent-glow);
+  }
+  .empty-chips-hdr {
+    width: 100%;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sw-text-muted);
+    margin-top: var(--sw-space-3);
+  }
+  .empty-launchpad {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .grid.collapsed {
     flex: 0 0 auto;

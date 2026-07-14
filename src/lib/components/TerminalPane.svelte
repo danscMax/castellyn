@@ -27,8 +27,8 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   // V9: one icon language (lucide) across the pane toolbar — replaces the emoji/glyph zoo.
   import {
-    FolderOpen, RotateCw, Search, Eraser, Download, Copy, Minus,
-    Maximize2, Minimize2, X, ChevronUp, ChevronDown, StickyNote, Monitor
+    FolderOpen, RotateCw, Search,
+    Maximize2, Minimize2, X, ChevronUp, ChevronDown
   } from '@lucide/svelte';
   import { markMoved, consumeMoved } from '$lib/sessionMove';
   import { MSG_SNIPPETS } from '$lib/sessionPresets';
@@ -67,7 +67,8 @@
     onFocus,
     autoResumeLabel = null,
     displayName = '',
-    onRename
+    onRename,
+    showUsage = true
   }: {
     profile: string;
     tool?: SessionTool;
@@ -84,6 +85,8 @@
     autoResumeLabel?: string | null;
     displayName?: string;
     onRename?: (key: string, name: string) => void;
+    /** Redesign 2026-07: hide the header usage badge when the rail already shows it (dedup). */
+    showUsage?: boolean;
     visible?: boolean;
     maximized?: boolean;
     broadcast?: boolean;
@@ -364,6 +367,20 @@
     term?.focus();
   }
   const snipItems = $derived(MSG_SNIPPETS.map((s) => ({ label: s, onClick: () => insertSnippet(s) })));
+  // Council A: one ⋯ menu aggregates every rare bar action (snippets, clear, export, zoom,
+  // duplicate, background, send-to-monitor) — the bar keeps only search / maximize / close.
+  const paneMenuItems = $derived([
+    ...snipItems.map((s) => ({ label: `✏ ${s.label}`, onClick: s.onClick })),
+    { label: `⌫ ${t('sessions.clearOutput')}`, onClick: () => term?.clear() },
+    { label: `⭳ ${t('sessions.exportLog')}`, onClick: exportLog },
+    { label: `A− ${t('sessions.zoomOut')}`, onClick: () => zoom(-1) },
+    { label: `A+ ${t('sessions.zoomIn')}`, onClick: () => zoom(1) },
+    ...(onDuplicate ? [{ label: `⧉ ${t('sessions.duplicate')} · Ctrl+Shift+D`, onClick: onDuplicate }] : []),
+    ...(onBackground ? [{ label: `▁ ${t('sessions.backgroundPane')}`, onClick: onBackground }] : []),
+    ...(!attachId && id && !exited && monitors.length > 1
+      ? monItems.map((m) => ({ label: `🖥 ${m.label}`, onClick: m.onClick }))
+      : [])
+  ]);
   function onWheel(e: WheelEvent) {
     if (!e.ctrlKey) return; // plain wheel → xterm scrollback
     e.preventDefault();
@@ -721,6 +738,10 @@
         onblur={commitRename} placeholder={label} spellcheck="false" />
     {:else}
       <span class="name" title={onRename ? t('sessions.renameHint') : fullTitle} ondblclick={startRename}>{displayName || label}</span>
+      {#if onRename}
+        <!-- Council M: dblclick-rename was tooltip-only — an ✎ that appears on bar hover makes it discoverable. -->
+        <button class="x rename-ic" onclick={startRename} title={t('sessions.renameHint')} aria-label={t('sessions.renameHint')}>✎</button>
+      {/if}
     {/if}
     {#if cwd && !sshTarget && folderName}<span class="folder" title={cwd}>{folderName}</span>{/if}
     <!-- F12: open the working folder in Explorer. Local panes only — an SSH pane's cwd is a remote path. -->
@@ -729,29 +750,18 @@
         title={t('sessions.openCwd')} aria-label={t('sessions.openCwd')}><FolderOpen size={14} /></button>
     {/if}
     {#if args}<span class="argbadge" title={args}>⚑</span>{/if}
-    {#if tool === 'claude' && profile}<ProfileUsageBadge {profile} compact />{/if}
+    {#if tool === 'claude' && profile && showUsage}<ProfileUsageBadge {profile} compact />{/if}
     <!-- #21f: Castellyn will auto-resume this pane once the limit resets — surfaced so the user knows -->
     {#if autoResumeLabel}<span class="autoresume" title={t('sessions.autoResumeTip')}><RotateCw size={12} /> {autoResumeLabel}</span>{/if}
     <span class="spacer"></span>
     {#if exited || error}
       <button class="x relaunch" onclick={() => (confirmRelaunch = true)} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
     {/if}
-    <DropdownMenu icon={StickyNote} title={t('sessions.snippets')} items={snipItems} />
+    <!-- Council A (2026-07): the bar held ~10 unlabeled icon buttons in a tight row and «close»
+         sat one slip away from «maximize». Frequent actions stay (search / maximize / close);
+         everything rare lives in ONE ⋯ menu; close is set apart and turns red on hover. -->
     <button class="x" onclick={openSearch} title={t('sessions.find')} aria-label={t('sessions.find')}><Search size={14} /></button>
-    <button class="x" onclick={() => term?.clear()} title={t('sessions.clearOutput')} aria-label={t('sessions.clearOutput')}><Eraser size={14} /></button>
-    <button class="x" onclick={exportLog} title={t('sessions.exportLog')} aria-label={t('sessions.exportLog')}><Download size={14} /></button>
-    <button class="x" onclick={() => zoom(-1)} title={t('sessions.zoomOut')} aria-label={t('sessions.zoomOut')}>A−</button>
-    <button class="x" onclick={() => zoom(1)} title={t('sessions.zoomIn')} aria-label={t('sessions.zoomIn')}>A+</button>
-    {#if !attachId && id && !exited && monitors.length > 1}
-      <!-- U6: icon (not label) so the accessible name comes from title, not the symbol -->
-      <DropdownMenu icon={Monitor} title={t('sessions.toMonitorTip')} items={monItems} />
-    {/if}
-    {#if onDuplicate}
-      <button class="x clone" onclick={onDuplicate} title="{t('sessions.duplicate')} · Ctrl+Shift+D" aria-label={t('sessions.duplicate')}><Copy size={14} /></button>
-    {/if}
-    {#if onBackground}
-      <button class="x" onclick={onBackground} title={t('sessions.backgroundPane')} aria-label={t('sessions.backgroundPane')}><Minus size={14} /></button>
-    {/if}
+    <DropdownMenu title={t('sessions.moreActions')} items={paneMenuItems} />
     {#if onToggleMax}
       <button class="x" onclick={onToggleMax}
         title={maximized ? t('sessions.restore') : t('sessions.maximize')}
@@ -760,7 +770,7 @@
     {#if onReturnToMain}
       <button class="x" onclick={onReturnToMain} title={t('sessions.returnToMain')} aria-label={t('sessions.returnToMain')}>←</button>
     {/if}
-    <button class="x" onclick={onClose} title={t('sessions.closePane')} aria-label={t('sessions.closePane')}><X size={14} /></button>
+    <button class="x close" onclick={onClose} title={t('sessions.closePane')} aria-label={t('sessions.closePane')}><X size={14} /></button>
   </div>
   {#if searchOpen}
     <div class="find">
@@ -969,15 +979,25 @@
   .x:hover {
     color: var(--sw-text-primary);
   }
+  /* Close is set apart from its neighbours and reads as destructive on hover (council A). */
+  .x.close {
+    margin-left: 6px;
+  }
+  .x.close:hover {
+    color: var(--sw-danger, #f85149);
+  }
+  /* Rename affordance: hidden until the bar is hovered (council M — dblclick was undiscoverable). */
+  .rename-ic {
+    opacity: 0;
+    font-size: 10px;
+    transition: opacity 0.12s;
+  }
+  .bar:hover .rename-ic,
+  .rename-ic:focus-visible {
+    opacity: 0.85;
+  }
   /* V1: the "clone this agent" action is the 90% path — accent it so it stands out from the muted
      icon row (Ctrl+Shift+D also triggers it). */
-  .x.clone {
-    color: var(--sw-accent-text);
-    font-size: 14px;
-  }
-  .x.clone:hover {
-    color: var(--sw-accent);
-  }
   .term {
     flex: 1;
     min-height: 0;
