@@ -65,6 +65,7 @@
     onNewSession,
     onActivity,
     onFocus,
+    autoResumeLabel = null,
     displayName = '',
     onRename
   }: {
@@ -79,6 +80,8 @@
     paneKey?: string;
     /** Semantic agent state from SessionsTab (working|blocked|done|idle|unknown) or null. */
     agentState?: string | null;
+    /** #21f: "Castellyn will auto-resume this pane" text (e.g. "auto-resume at 11:00"), or null. */
+    autoResumeLabel?: string | null;
     displayName?: string;
     onRename?: (key: string, name: string) => void;
     visible?: boolean;
@@ -727,6 +730,8 @@
     {/if}
     {#if args}<span class="argbadge" title={args}>⚑</span>{/if}
     {#if tool === 'claude' && profile}<ProfileUsageBadge {profile} compact />{/if}
+    <!-- #21f: Castellyn will auto-resume this pane once the limit resets — surfaced so the user knows -->
+    {#if autoResumeLabel}<span class="autoresume" title={t('sessions.autoResumeTip')}><RotateCw size={12} /> {autoResumeLabel}</span>{/if}
     <span class="spacer"></span>
     {#if exited || error}
       <button class="x relaunch" onclick={() => (confirmRelaunch = true)} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
@@ -931,6 +936,19 @@
   .argbadge {
     font-size: 11px;
     color: var(--sw-accent-text);
+    flex-shrink: 0;
+  }
+  /* #21f: "will auto-resume" pill — a calm accent chip so the user sees Castellyn has the limit handled. */
+  .autoresume {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: var(--sw-accent-text);
+    border: 1px solid color-mix(in srgb, var(--sw-accent-text) 40%, transparent);
+    white-space: nowrap;
     flex-shrink: 0;
   }
   .spacer {

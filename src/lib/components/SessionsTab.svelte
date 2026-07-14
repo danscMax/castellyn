@@ -39,6 +39,7 @@
     type ProfileInfo
   } from '$lib/ipc';
   import { pickResumeCandidate } from '$lib/limitSwitch';
+  import { decideMenuContinue } from '$lib/menuContinue';
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
   import { hookHealth } from '$lib/hookHealth';
@@ -313,6 +314,15 @@
         const { id, state } = e.payload;
         if (e.payload.claudeSessionId) claudeSids = { ...claudeSids, [id]: e.payload.claudeSessionId };
         if (e.payload.spawnedAt && !spawnedAt[id]) spawnedAt = { ...spawnedAt, [id]: e.payload.spawnedAt };
+        limitMenuById[id] = e.payload.limitMenu ?? false; // #21f: track whether the limit menu is up
+        // #21f: latch the sticky rate-limit flag the instant a limit is seen — drives the "will
+        // auto-resume" header badge and survives the flickering live flag. Cleared when maybeAutoContinue
+        // re-arms the episode.
+        if (state === 'limited') {
+          const pk = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
+          if (pk) sawRateLimit.add(pk);
+        }
+
         const prev = agentStates[id];
         const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === id);
         const focused = paneKey != null && activeKey === paneKey && visible;
@@ -340,6 +350,15 @@
   let limitsByProfile = $state<Record<string, LimitsStatusEvent>>({});
   const autoContinued = new Set<string>(); // pane keys already handled this limit episode
   const switchAttempted = new Set<string>(); // #21e: switch tried once per episode (else fall to wait)
+  // #21f: the interactive limit MENU is up for this session id (from agent-status.limitMenu). Newer
+  // Claude Code shows "What do you want to do? / 1. Stop and wait…" instead of a passive banner.
+  const limitMenuById: Record<string, boolean> = {};
+  const menuDismissed = new Set<string>(); // #21f: option-1 keystroke sent once per episode
+  const menuDismissedAt: Record<string, number> = {}; // #21f: when it was sent (resume-menu settle)
+  // #21f: STICKY — a real rate limit was seen this episode (agent-status 'limited'). Survives the
+  // flickering live flag so the endpoint reset (not the flag) drives when "continue" fires. $state so
+  // the pane header's "will auto-resume" badge reacts to it.
+  let sawRateLimit = $state(new Set<string>());
   const contJitterMs: Record<string, number> = {};
   // z5_12: last real user keystroke per pane key — auto-continue defers while the user is typing.
   const lastUserInputAt: Record<string, number> = {};
@@ -365,6 +384,37 @@
       if (tickTimer) clearTimeout(tickTimer);
     };
   });
+  // The endpoint reset to wait for: the LATER reset among the exhausted (≥99%) windows (V-18 — a pane
+  // exhausted on 7d still has a near-future 5h reset, so the binding one resets last). When the endpoint
+  // hasn't caught up to a just-hit limit (5-min poll lag, no window ≥99 yet), fall back to the 5h reset.
+  function bindingResetMs(profile: string): number | null {
+    const lim = limitsByProfile[profile];
+    const capped = [
+      (lim?.h5 ?? 0) >= 99 ? parseTsMs(lim?.h5Reset) : NaN,
+      (lim?.d7 ?? 0) >= 99 ? parseTsMs(lim?.d7Reset) : NaN,
+      (lim?.scoped ?? 0) >= 99 ? parseTsMs(lim?.scopedReset) : NaN
+    ].filter(Number.isFinite) as number[];
+    if (capped.length) return Math.max(...capped);
+    const h5 = parseTsMs(lim?.h5Reset);
+    return Number.isFinite(h5) ? h5 : null;
+  }
+  // #21f: per-pane "Castellyn will auto-resume at HH:MM" label, shown while a rate limit is latched
+  // (sawRateLimit) and auto-continue is on. A $derived (not a template-called function) so the header
+  // badge reliably re-renders when the sticky flag latches/clears — a function call in a prop wasn't
+  // tracking the $state Set read. Absolute reset time (stable, no countdown churn).
+  const autoResumeById = $derived.by(() => {
+    const m: Record<string, string | null> = {};
+    if (!autoContinueOn) return m;
+    for (const p of panes) {
+      if (!sawRateLimit.has(p.key)) continue;
+      const resetMs = bindingResetMs(p.profile);
+      if (resetMs == null) { m[p.key] = t('sessions.autoResumeSoon'); continue; }
+      const d = new Date(resetMs);
+      const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      m[p.key] = t('sessions.autoResumeAt', { time: hhmm });
+    }
+    return m;
+  });
   function maybeAutoContinue() {
     if (!autoContinueOn) return; // master escape hatch for ALL unattended limit handling (21c + 21e)
     // L11: profiles switched-to during THIS pass — so a second pane that flips limited in the same
@@ -372,17 +422,28 @@
     const claimedThisTick = new Set<string>();
     for (const p of panes) {
       const id = sessionIds[p.key];
-      if (!id || agentStates[id] !== 'limited') {
-        // Recovered (or pane gone) → re-arm so a later, separate limit episode gets its own attempt.
+      if (!id) {
+        // No live session → clear any stale episode guards.
         autoContinued.delete(p.key);
         switchAttempted.delete(p.key);
+        menuDismissed.delete(p.key);
+        sawRateLimit.delete(p.key);
+        delete menuDismissedAt[p.key];
         delete contJitterMs[p.key];
         continue;
       }
-      if (autoContinued.has(p.key)) continue; // one attempt per episode — never a retry loop
-      // #21e: switchProfile — respawn under a free OAuth profile immediately (once per episode). No
-      // candidate → fall through to the wait-on-reset path below (the spec's "fallback wait").
-      if (limitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
+      // A real rate limit (agent-status 'limited') is STICKY for the episode — the live flag flickers
+      // (a keypress/banner floods PTY output and clears it), so we latch it and drive timing off the
+      // endpoint reset instead. Backend sets 'limited' only for the limit menu/banner, never a bare
+      // resume menu, so this also distinguishes the two.
+      if (agentStates[id] === 'limited') sawRateLimit.add(p.key);
+      const rateLimited = sawRateLimit.has(p.key);
+      // #21f: an option-1 menu is up — the limit "Stop and wait" menu OR the large-session "Resume
+      // from summary" menu. Both block resumption and are auto-driven the same way (pick 1, continue).
+      const menuUp = !!limitMenuById[id];
+      // #21e: switchProfile — respawn a rate-limited pane under a free OAuth profile immediately (once
+      // per episode). Only a real limit, not the resume menu. No candidate → fall through to wait.
+      if (rateLimited && limitMode === 'switchProfile' && !switchAttempted.has(p.key)) {
         switchAttempted.add(p.key);
         const cand = pickResumeCandidate(p.profile, profileInfos, limitsByProfile, claimedThisTick);
         if (cand && switchPaneToProfile(p, id, cand)) {
@@ -392,27 +453,41 @@
           continue;
         }
       }
-      // Wait for the LATER of the two windows (V-18): a pane limited on the 7-day window still has
-      // a near-future 5h reset, so keying on h5Reset alone would fire a "continue" into a session
-      // that's still 7-day-exhausted. The binding window is whichever resets last.
-      const lim = limitsByProfile[p.profile];
-      // parseTsMs tolerates a numeric-epoch resets_at (backend may stringify it) — a bare Date.parse
-      // would yield NaN and silently defeat the auto-continue scheduling on that input.
-      const h5 = parseTsMs(lim?.h5Reset);
-      const d7 = parseTsMs(lim?.d7Reset);
-      const candidates = [h5, d7].filter(Number.isFinite) as number[];
-      if (!candidates.length) continue; // no known reset yet — wait for the next poll
-      const reset = Math.max(...candidates);
-      if (contJitterMs[p.key] == null) contJitterMs[p.key] = 30_000 + Math.floor(Math.random() * 60_000);
-      if (Date.now() < reset + contJitterMs[p.key]) continue;
-      // z5_12: don't inject into a pane the user is actively using — defer (don't consume the
-      // episode) while it's focused or had a keystroke in the last 8s; retry on the next tick.
-      const focused = activeKey === p.key && visible;
-      const recentInput = Date.now() - (lastUserInputAt[p.key] ?? 0) < 8_000;
-      if (focused || recentInput) continue;
-      autoContinued.add(p.key);
-      sessionWrite(id, t('sessions.autoContinueText') + '\r');
-      pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
+      const resetMs = bindingResetMs(p.profile);
+      // Stable per-pane jitter so N panes don't fire in lockstep. Only armed while there is work.
+      if ((rateLimited || menuUp) && contJitterMs[p.key] == null) contJitterMs[p.key] = 30_000 + Math.floor(Math.random() * 60_000);
+      // z5_12: defer every keystroke while the user is at the pane so we never fight their typing.
+      const busy = (activeKey === p.key && visible) || Date.now() - (lastUserInputAt[p.key] ?? 0) < 8_000;
+      // Pure, unit-tested decision (menuContinue.ts) — this component only executes the keystrokes.
+      const action = decideMenuContinue({
+        sawRateLimit: rateLimited,
+        menuUp,
+        menuDismissed: menuDismissed.has(p.key),
+        continued: autoContinued.has(p.key),
+        busy,
+        resetMs,
+        jitterMs: contJitterMs[p.key] ?? 0,
+        menuDismissedAtMs: menuDismissedAt[p.key] ?? null,
+        nowMs: Date.now()
+      });
+      if (action === 'rearm') {
+        autoContinued.delete(p.key);
+        switchAttempted.delete(p.key);
+        menuDismissed.delete(p.key);
+        sawRateLimit.delete(p.key);
+        delete menuDismissedAt[p.key];
+        delete contJitterMs[p.key];
+      } else if (action === 'press1') {
+        // Pick option 1 (limit "Stop and wait" / resume "Resume from summary"), mirroring manual "1".
+        menuDismissed.add(p.key);
+        menuDismissedAt[p.key] = Date.now();
+        sessionWrite(id, '1\r');
+      } else if (action === 'continue') {
+        autoContinued.add(p.key);
+        sessionWrite(id, t('sessions.autoContinueText') + '\r');
+        pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
+      }
+      // 'wait' → active but nothing to do this tick.
     }
   }
   // #21e: respawn a limited pane's conversation under a free OAuth profile. Spawns the new pane FIRST
@@ -2379,6 +2454,7 @@
             ownsSession={pane.ownsSession ?? false}
             paneKey={pane.key}
             agentState={agentStates[sessionIds[pane.key]] ?? null}
+            autoResumeLabel={autoResumeById[pane.key] ?? null}
             visible={visible && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
             {broadcast}
@@ -2453,6 +2529,7 @@
         ownsSession={pane.ownsSession ?? false}
         paneKey={pane.key}
         agentState={agentStates[sessionIds[pane.key]] ?? null}
+        autoResumeLabel={autoResumeById[pane.key] ?? null}
         visible={false}
         maximized={false}
         {broadcast}

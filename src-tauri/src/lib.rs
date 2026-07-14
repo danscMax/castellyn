@@ -15484,6 +15484,23 @@ fn open_monitor_window(app: AppHandle, label: String, monitor_index: usize) -> R
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Dev-only: expose a loopback CDP endpoint so live-verify tooling can attach to the running
+    // WebView2 window and observe real backend-driven UI state (pane `limited` badge, etc.). NEVER
+    // in release — a remote-debugging port exposes the webview + the IPC bridge to the Rust backend.
+    // WebView2 binds the port to 127.0.0.1 only. Respects a pre-set value so the port is overridable
+    // (or disable-able). Must run BEFORE the first WebView2 is created, i.e. here at the top of run().
+    #[cfg(debug_assertions)]
+    if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
+        // SAFETY: first statement in run(), before any Tauri plugin or worker thread starts — there
+        // is no concurrent env access, so this single-threaded set_var is sound under edition 2024.
+        unsafe {
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--remote-debugging-port=9222",
+            );
+        }
+        eprintln!("[castellyn] dev CDP endpoint on http://127.0.0.1:9222");
+    }
     tauri::Builder::default()
         // Single-instance MUST be the FIRST plugin: a second launch hands its argv to this running
         // instance's callback (which just reveals the window) and then exits, instead of opening a

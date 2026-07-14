@@ -1035,7 +1035,7 @@ export const agentStatusHookSet = (enabled: boolean) =>
  * `spawnedAt` is the session's spawn time (unix ms), static — the UI derives elapsed on render.
  * `hookIdle` gates the honest "done" derivation: only a hook-authoritative idle counts as done;
  * a hookless lull (no lifecycle hook) leaves it undefined and the pane stays neutral idle. */
-export type AgentStatusEvent = { id: string; state: string; claudeSessionId: string | null; spawnedAt?: number; hookIdle?: boolean };
+export type AgentStatusEvent = { id: string; state: string; claudeSessionId: string | null; spawnedAt?: number; hookIdle?: boolean; limitMenu?: boolean };
 
 /** Backend `limits-status` event: per-profile Anthropic usage (5h/7d utilization %). `expired`
  * means the OAuth token was rejected (401). Emitted every poll for each OAuth profile. */

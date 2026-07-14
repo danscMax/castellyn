@@ -90,6 +90,15 @@ struct Track {
     limited: AtomicBool,
     /// Bytes emitted since `limited` was set — the resume signal that clears it.
     bytes_since_limit: AtomicU64,
+    /// A resumption-gating MENU is up: the limit menu ("What do you want to do? / 1. Stop and
+    /// wait…") OR the large-session resume menu ("1. Resume from summary / 2. Resume full session…").
+    /// The frontend picks option 1 and then injects "continue". Cleared once output floods past it
+    /// (`bytes_since_menu`), independently of `limited` — the resume menu appears without a limit.
+    /// (item 21f)
+    limit_menu: AtomicBool,
+    /// Bytes since `limit_menu` was set — clears the menu flag once Claude resumes (floods output),
+    /// even when the pane was never `limited` (the resume-menu case). (item 21f)
+    bytes_since_menu: AtomicU64,
     exited: bool,
     /// Latest hook-reported state ("working" | "blocked" | "idle"; "ended" clears it).
     hook_state: Option<String>,
@@ -99,6 +108,9 @@ struct Track {
     hook_mtime: u64,
     claude_session_id: Option<String>,
     last_emitted: Option<String>,
+    /// Last-emitted `limit_menu`, so the menu appearing/clearing re-emits even when `state` stays
+    /// "limited" (the change-gated emit keys on `state` alone otherwise). (item 21f)
+    last_menu: bool,
 }
 
 static TRACKS: LazyLock<Mutex<HashMap<String, Track>>> = LazyLock::new(Default::default);
@@ -133,12 +145,15 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
             bytes_since_block: AtomicU64::new(0),
             limited: AtomicBool::new(false),
             bytes_since_limit: AtomicU64::new(0),
+            limit_menu: AtomicBool::new(false),
+            bytes_since_menu: AtomicU64::new(0),
             exited: false,
             hook_state: None,
             hook_ts: 0,
             hook_mtime: 0,
             claude_session_id: None,
             last_emitted: None,
+            last_menu: false,
         },
     );
 }
@@ -160,6 +175,14 @@ pub fn on_output(id: &str, bytes: usize) {
         {
             t.limited.store(false, Ordering::Relaxed);
         }
+        // The menu flag clears on its own output flood — independent of `limited`, since the resume
+        // menu shows up without a rate limit (large-session case). (item 21f)
+        if t.limit_menu.load(Ordering::Relaxed)
+            && t.bytes_since_menu.fetch_add(bytes as u64, Ordering::Relaxed) + bytes as u64
+                > LIMIT_RESUME_BYTES
+        {
+            t.limit_menu.store(false, Ordering::Relaxed);
+        }
     }
 }
 
@@ -179,6 +202,40 @@ pub fn on_limit(id: &str) {
     }
 }
 
+/// The interactive limit MENU was detected ("What do you want to do? / 1. Stop and wait…"). Like
+/// `on_limit` (flags limited) but also records that a menu is up, so the frontend dismisses it —
+/// picks "Stop and wait" — before injecting "continue" after the window resets. (item 21f)
+pub fn on_limit_menu(id: &str) {
+    if let Some(t) = TRACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+    {
+        if t.tool == "claude" {
+            t.bytes_since_limit.store(0, Ordering::Relaxed);
+            t.limited.store(true, Ordering::Relaxed);
+            t.bytes_since_menu.store(0, Ordering::Relaxed);
+            t.limit_menu.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The large-session RESUME menu was detected ("1. Resume from summary / 2. Resume full session…").
+/// Sets `limit_menu` so the frontend picks option 1 and continues — but NOT `limited`: there is no
+/// rate limit here, so the continue fires promptly instead of waiting for a reset. (item 21f)
+pub fn on_resume_menu(id: &str) {
+    if let Some(t) = TRACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+    {
+        if t.tool == "claude" {
+            t.bytes_since_menu.store(0, Ordering::Relaxed);
+            t.limit_menu.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 /// True when a line signals a Claude Code usage limit. Anchored on the qualified banner wording
 /// ("usage limit reached", "N-hour limit reached") rather than a bare "limit reached", so agent
 /// output merely discussing limits doesn't flip the badge; still tolerant of version drift, with the
@@ -188,18 +245,52 @@ fn is_limit_line(s: &str) -> bool {
     l.contains("usage limit reached")
         || l.contains("hour limit reached")
         || l.contains("out of extra usage")
+        // Newer Claude Code banner family (documented in errors.md): "You've hit your {session |
+        // weekly | Opus} limit · resets …". Anchor on "hit your" + "limit" (apostrophe-agnostic,
+        // covers all three windows) so prose like "the session limit is 5h" doesn't flip the badge.
+        // ponytail: "hit your … limit" could match rare prose ("you'll hit your rate limit"); the
+        // state self-clears on the next output flood + the endpoint monitor cross-checks, so accept it.
+        || (l.contains("hit your") && l.contains("limit"))
 }
 
-/// Scan a fresh PTY chunk's tail for a usage-limit banner and flag the session if found. The reader
-/// passes the raw bytes; we inspect a bounded tail (banners are short lines) to keep it cheap under
-/// a firehose. ponytail: bounded-tail scan, not a full-buffer regex — a banner split across two
+/// True when the interactive rate-limit MENU is showing ("What do you want to do? / 1. Stop and
+/// wait for limit to reset / …"). Distinct from `is_limit_line`'s passive banner: the menu blocks on
+/// a keypress, so auto-continue must dismiss it first. Anchored on the option label (stable text
+/// emitted by the Ink widget), not the volatile "What do you want to do?" header. Pure + unit-tested.
+fn is_limit_menu(s: &str) -> bool {
+    let l = s.to_ascii_lowercase();
+    // Require the "Stop and wait" option AND a second menu marker (the header or the Upgrade option)
+    // so prose merely discussing a limit can never trigger an auto-keypress — only the real menu does.
+    l.contains("stop and wait for limit")
+        && (l.contains("what do you want to do") || l.contains("upgrade your plan"))
+}
+
+/// True when the large-session RESUME menu is showing ("1. Resume from summary / 2. Resume full
+/// session as-is / 3. Don't ask me again"). Anchored on the distinctive "resume full session" option
+/// label so ordinary prose about resuming doesn't trip it. This menu is NOT a rate limit — the
+/// frontend picks option 1 and continues immediately (no reset wait). (item 21f)
+fn is_resume_menu(s: &str) -> bool {
+    let l = s.to_ascii_lowercase();
+    // Require BOTH option labels — near-zero chance of both appearing together outside the real menu,
+    // so ordinary talk of "resuming" can't trigger an auto-keypress.
+    l.contains("resume from summary") && l.contains("resume full session")
+}
+
+/// Scan a fresh PTY chunk's tail for a usage-limit banner/menu and flag the session if found. The
+/// reader passes the raw bytes; we inspect a bounded tail (banners are short lines) to keep it cheap
+/// under a firehose. The MENU is checked first — its wording is the more specific signal, and a menu
+/// implies a limit. ponytail: bounded-tail scan, not a full-buffer regex — a banner split across two
 /// chunk boundaries beyond the tail window would be missed; the endpoint monitor still catches it.
 pub fn scan_limit(id: &str, chunk: &[u8]) {
     const TAIL: usize = 512;
     let start = chunk.len().saturating_sub(TAIL);
     let tail = String::from_utf8_lossy(&chunk[start..]);
-    if is_limit_line(&tail) {
+    if is_limit_menu(&tail) {
+        on_limit_menu(id);
+    } else if is_limit_line(&tail) {
         on_limit(id);
+    } else if is_resume_menu(&tail) {
+        on_resume_menu(id);
     }
 }
 
@@ -234,6 +325,9 @@ struct StatusEvent {
     /// hookless activity-lull can't fire a false "finished" (live-smoke 2026-07-03). Serialized
     /// (`hookIdle`) so the frontend gates its visual "done" the same way as the toast.
     hook_idle: bool,
+    /// The interactive limit menu is up (`limitMenu`): the frontend picks "Stop and wait" to dismiss
+    /// it before injecting "continue" after reset. Rides alongside `state` ("limited"). (item 21f)
+    limit_menu: bool,
 }
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
@@ -520,9 +614,13 @@ pub fn start(app: tauri::AppHandle) {
                     t.hook_state = None;
                 }
                 let state = compute(t, now);
-                if t.last_emitted.as_deref() != Some(state) {
+                let menu = t.limit_menu.load(Ordering::Relaxed);
+                // Re-emit when the menu flag flips too, not only on a `state` change — a menu appearing
+                // while state stays "limited" must still reach the frontend. (item 21f)
+                if t.last_emitted.as_deref() != Some(state) || t.last_menu != menu {
                     let prev = t.last_emitted.take();
                     t.last_emitted = Some(state.to_string());
+                    t.last_menu = menu;
                     events.push(StatusEvent {
                         id: id.clone(),
                         state: state.to_string(),
@@ -532,6 +630,7 @@ pub fn start(app: tauri::AppHandle) {
                         label: t.label.clone(),
                         exited: t.exited,
                         hook_idle: t.hook_state.as_deref() == Some("idle"),
+                        limit_menu: menu,
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop
@@ -566,12 +665,15 @@ mod tests {
             bytes_since_block: AtomicU64::new(0),
             limited: AtomicBool::new(false),
             bytes_since_limit: AtomicU64::new(0),
+            limit_menu: AtomicBool::new(false),
+            bytes_since_menu: AtomicU64::new(0),
             exited: false,
             hook_state: None,
             hook_ts: 0,
             hook_mtime: 0,
             claude_session_id: None,
             last_emitted: None,
+            last_menu: false,
         }
     }
 
@@ -617,11 +719,40 @@ mod tests {
         assert!(is_limit_line("5-hour limit reached"));
         assert!(is_limit_line("You are out of extra usage"));
         assert!(is_limit_line("USAGE LIMIT REACHED")); // case-insensitive
+        // Newer banner family, per Claude Code errors.md — session / weekly / Opus windows.
+        assert!(is_limit_line("You've hit your session limit \u{b7} resets 3:45pm"));
+        assert!(is_limit_line("You've hit your weekly limit \u{b7} resets Mon 12:00am"));
+        assert!(is_limit_line("You've hit your Opus limit \u{b7} resets 3:45pm"));
+        assert!(!is_limit_line("the session limit is five hours per window")); // prose, no "hit your"
         assert!(!is_limit_line("running the linter, no limits here"));
         assert!(!is_limit_line("rate limited by the API")); // not our banner wording
         // Anchored: a bare "limit reached" in ordinary agent output must NOT flip the badge.
         assert!(!is_limit_line("the rate limit reached its cap in the test fixture"));
         assert!(!is_limit_line("// TODO: handle when the retry limit reached"));
+    }
+
+    #[test]
+    fn limit_menu_detection() {
+        // The interactive menu Claude shows on --resume into an active limit (item 21f).
+        assert!(is_limit_menu("What do you want to do?\n> 1. Stop and wait for limit to reset\n  2. Upgrade your plan"));
+        assert!(is_limit_menu("STOP AND WAIT FOR LIMIT to reset\nUPGRADE YOUR PLAN")); // case-insensitive
+        // Two markers required: the bare option phrase alone (e.g. in prose) must NOT auto-fire a keypress.
+        assert!(!is_limit_menu("you should stop and wait for limit to reset, then retry"));
+        // The passive banner is NOT the menu — it needs no keypress, so it must not set limit_menu.
+        assert!(!is_limit_menu("You've hit your session limit \u{b7} resets 3:45pm"));
+        assert!(!is_limit_menu("running the linter, no limits here"));
+    }
+
+    #[test]
+    fn resume_menu_detection() {
+        // The large-session resume menu (item 21f): frontend picks option 1, continues immediately.
+        assert!(is_resume_menu("> 1. Resume from summary (recommended)\n  2. Resume full session as-is\n  3. Don't ask me again"));
+        assert!(is_resume_menu("RESUME FROM SUMMARY\nRESUME FULL SESSION as-is")); // case-insensitive
+        // Two labels required: one alone (or prose) must NOT auto-fire a keypress.
+        assert!(!is_resume_menu("I'll resume the full session where we left off"));
+        assert!(!is_resume_menu("resume from summary of the meeting notes"));
+        // The limit menu is not the resume menu.
+        assert!(!is_resume_menu("> 1. Stop and wait for limit to reset\n  2. Upgrade your plan"));
     }
 
     #[test]
@@ -747,6 +878,7 @@ mod tests {
             label: t.label.clone(),
             exited: t.exited,
             hook_idle: false,
+            limit_menu: false,
         };
         assert_ne!(ev.spawned_at, 0);
         assert_eq!(ev.spawned_at, now);
