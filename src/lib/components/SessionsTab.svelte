@@ -39,7 +39,7 @@
     type ProfileInfo
   } from '$lib/ipc';
   import { pickResumeCandidate } from '$lib/limitSwitch';
-  import { decideMenuContinue } from '$lib/menuContinue';
+  import { decideMenuContinue, pickBindingResetMs } from '$lib/menuContinue';
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
   import { hookHealth } from '$lib/hookHealth';
@@ -341,6 +341,10 @@
             ? 'done'
             : (state as AgentPaneState);
         agentStates = { ...agentStates, [id]: next };
+        // #3: drive auto-continue on the EVENT, not only the ≤12s tick — a blocking menu can appear and
+        // vanish faster than a tick, so press option 1 the instant a limit/menu is detected (phase 2
+        // still waits for the endpoint reset). Idempotent: maybeAutoContinue is fully guarded per pane.
+        if (state === 'limited' || e.payload.limitMenu) maybeAutoContinue();
       })
     );
   });
@@ -399,14 +403,14 @@
   // hasn't caught up to a just-hit limit (5-min poll lag, no window ≥99 yet), fall back to the 5h reset.
   function bindingResetMs(profile: string): number | null {
     const lim = limitsByProfile[profile];
-    const capped = [
-      (lim?.h5 ?? 0) >= 99 ? parseTsMs(lim?.h5Reset) : NaN,
-      (lim?.d7 ?? 0) >= 99 ? parseTsMs(lim?.d7Reset) : NaN,
-      (lim?.scoped ?? 0) >= 99 ? parseTsMs(lim?.scopedReset) : NaN
-    ].filter(Number.isFinite) as number[];
-    if (capped.length) return Math.max(...capped);
-    const h5 = parseTsMs(lim?.h5Reset);
-    return Number.isFinite(h5) ? h5 : null;
+    return pickBindingResetMs(
+      [
+        { util: lim?.h5 ?? 0, resetMs: parseTsMs(lim?.h5Reset) },
+        { util: lim?.d7 ?? 0, resetMs: parseTsMs(lim?.d7Reset) },
+        { util: lim?.scoped ?? 0, resetMs: parseTsMs(lim?.scopedReset) }
+      ],
+      parseTsMs(lim?.h5Reset)
+    );
   }
   // #21f: per-pane "Castellyn will auto-resume at HH:MM" label, shown while a rate limit is latched
   // (sawRateLimit) and auto-continue is on. A $derived (not a template-called function) so the header
@@ -492,6 +496,9 @@
         menuDismissed.add(p.key);
         menuDismissedAt[p.key] = Date.now();
         sessionWrite(id, '1\r');
+        // #11: surface phase 1 too (not just the later "continue") so every autonomous step is visible.
+        // Once per episode — menuDismissed now guards press1, so this can't re-fire on the next tick.
+        pushToast({ kind: 'info', title: t('sessions.autoContinuePress1', { name: p.name ?? p.profile }) });
       } else if (action === 'continue') {
         autoContinued.add(p.key);
         sessionWrite(id, t('sessions.autoContinueText') + '\r');

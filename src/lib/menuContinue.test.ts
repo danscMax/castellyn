@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideMenuContinue, type MenuContinueState } from './menuContinue';
+import { decideMenuContinue, pickBindingResetMs, type MenuContinueState } from './menuContinue';
 
 // A neutral base; each test overrides the fields it exercises. now = 1_000_000.
 const NOW = 1_000_000;
@@ -97,5 +97,39 @@ describe('decideMenuContinue', () => {
   it('a rate-limit pane stays active until its (hours-away) reset — no early give-up', () => {
     const s = base({ sawRateLimit: true, menuUp: false, menuDismissed: true, menuDismissedAtMs: NOW - 600_000, resetMs: NOW + 3_600_000 });
     expect(decideMenuContinue(s)).toBe('wait'); // 10 min in, reset 1h away → still waiting, not re-armed
+  });
+});
+
+describe('pickBindingResetMs', () => {
+  const H5 = NOW + 1_000; // near-future 5h reset
+  const D7 = NOW + 500_000; // farther weekly reset
+
+  it('picks the LATER reset among exhausted windows (V-18: capped on 7d, 5h resets first)', () => {
+    // Both exhausted → the binding reset is the one that clears LAST (d7), not the sooner 5h.
+    expect(
+      pickBindingResetMs([{ util: 100, resetMs: H5 }, { util: 99, resetMs: D7 }], H5)
+    ).toBe(D7);
+  });
+
+  it('uses only exhausted (≥99%) windows — a healthy window never binds', () => {
+    expect(
+      pickBindingResetMs([{ util: 100, resetMs: H5 }, { util: 40, resetMs: D7 }], H5)
+    ).toBe(H5); // d7 at 40% is ignored even though it resets later
+  });
+
+  it('falls back to the 5h reset when the endpoint has not marked any window exhausted (poll lag)', () => {
+    expect(
+      pickBindingResetMs([{ util: 50, resetMs: H5 }, { util: 10, resetMs: D7 }], H5)
+    ).toBe(H5);
+  });
+
+  it('skips an exhausted window whose reset is unknown (NaN), using the next exhausted one', () => {
+    expect(
+      pickBindingResetMs([{ util: 100, resetMs: NaN }, { util: 100, resetMs: D7 }], NaN)
+    ).toBe(D7);
+  });
+
+  it('returns null when nothing is exhausted and the 5h fallback is unknown', () => {
+    expect(pickBindingResetMs([{ util: 10, resetMs: NaN }], NaN)).toBeNull();
   });
 });

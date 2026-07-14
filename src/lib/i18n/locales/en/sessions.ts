@@ -10,6 +10,7 @@ export default {
   state_limited: 'Usage limit reached — waiting for reset',
   autoContinueText: 'continue',
   autoContinueDone: 'Auto-continued: {name} — limit reset',
+  autoContinuePress1: 'Picked option 1 for {name}',
   autoResumeAt: 'auto-resume at {time}',
   autoResumeSoon: 'auto-resume soon',
   autoResumeTip: 'Castellyn will continue this session after the limit resets — it picks the right option and sends “continue”',

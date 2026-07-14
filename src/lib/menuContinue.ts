@@ -71,3 +71,19 @@ export function decideMenuContinue(s: MenuContinueState): MenuContinueAction {
   const settled = s.menuDismissedAtMs == null || s.nowMs - s.menuDismissedAtMs >= RESUME_SETTLE_MS;
   return !s.menuUp && settled ? 'continue' : 'wait';
 }
+
+/** One usage window's exhaustion + its reset time already parsed to epoch ms (NaN when unknown). */
+export type ResetWindow = { util: number; resetMs: number };
+
+/**
+ * The endpoint reset a rate-limited pane should wait for (`resetMs` fed to {@link decideMenuContinue}).
+ * It's the LATER reset among the EXHAUSTED (≥99%) windows — V-18: a pane capped on 7d still has a
+ * near-future 5h reset, so the *binding* one is whichever resets last. When the endpoint hasn't caught
+ * up to a just-hit limit (5-min poll lag → no window reads ≥99 yet), fall back to the 5h reset. Returns
+ * null when nothing is finite. Extracted from SessionsTab.bindingResetMs so it's unit-testable (#18).
+ */
+export function pickBindingResetMs(windows: ResetWindow[], h5FallbackMs: number): number | null {
+  const capped = windows.filter((w) => w.util >= 99 && Number.isFinite(w.resetMs)).map((w) => w.resetMs);
+  if (capped.length) return Math.max(...capped);
+  return Number.isFinite(h5FallbackMs) ? h5FallbackMs : null;
+}

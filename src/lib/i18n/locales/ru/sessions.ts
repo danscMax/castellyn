@@ -10,6 +10,7 @@ export default {
   state_limited: 'Лимит исчерпан — ожидание сброса',
   autoContinueText: 'продолжай',
   autoContinueDone: 'Авто-продолжение: {name} — лимит сброшен',
+  autoContinuePress1: 'Авто-выбор «1» в меню: {name}',
   autoResumeAt: 'авто-возобновление в {time}',
   autoResumeSoon: 'авто-возобновление…',
   autoResumeTip: 'Castellyn сам продолжит эту сессию после сброса лимита — выберет нужную опцию и отправит «продолжай»',

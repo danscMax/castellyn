@@ -10,6 +10,7 @@ export default {
   state_limited: '用量已达上限 — 等待重置',
   autoContinueText: '继续',
   autoContinueDone: '已自动继续：{name} — 限额已重置',
+  autoContinuePress1: '已为 {name} 选择选项 1',
   autoResumeAt: '{time} 自动恢复',
   autoResumeSoon: '即将自动恢复',
   autoResumeTip: 'Castellyn 会在限额重置后自动继续此会话 — 选择相应选项并发送“继续”',
