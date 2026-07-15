@@ -584,7 +584,7 @@
     if (forkRuns[path]?.running) return;
     forkRuns = { ...forkRuns, [path]: { line: t('page.forks_starting'), running: true, code: null } };
     runForkRepo(action, path).catch((e) => {
-      appendLog(t('page.log_error', { e }));
+      appendLog(t('page.log_error', { e: String(e) }));
       forkRuns = { ...forkRuns, [path]: { line: String(e), running: false, code: -1 } };
     });
   }
@@ -2200,8 +2200,11 @@
   });
   // U8: a Home quick-action's inline spinner clears once the run it launched is done. Runs go through
   // either the global lock (`running`) or the stack lock (`stackRunning`); when both are idle, clear.
+  // Reading `homeBusyAction` here matters: a confirm-gated chip (relink/clean-conflicts/stop-stack)
+  // or a no-op (repair with nothing broken) sets it WITHOUT ever flipping a lock, so without this
+  // dependency the effect never re-runs and the chip would stay "busy" forever.
   $effect(() => {
-    if (!running && !stackRunning) homeBusyAction = null;
+    if (homeBusyAction && !running && !stackRunning) homeBusyAction = null;
   });
   // Phase 4.2 — after a palette navigation, briefly scroll to + highlight a specific item in the target tab.
   let highlightTarget = $state<{ tab: string; id: string } | null>(null);
