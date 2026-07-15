@@ -139,6 +139,35 @@ describe('deriveOutcome', () => {
     expect(o.detail).not.toBe('резюме');
   });
 
+  it('exit-0 with a STALE envelope verdict → success, not the prior run\'s changes/error', () => {
+    // The script exited 0 but did not rewrite its envelope this run (e.g. Write-StatusJson threw);
+    // loadStatus reloaded the PREVIOUS run's `changes` envelope. Its status/counts must not drive
+    // this run's toast — fall through to the exit-0 success instead.
+    const started = Date.parse('2026-07-08T10:00:00Z');
+    const o = deriveOutcome({
+      id: 'rtk',
+      name: 'RTK CLI',
+      code: 0,
+      mode: 'check',
+      status: { status: 'changes', counts: { changed: 5, failed: 0 }, timestamp: '2026-07-08T09:00:00Z' },
+      startedAt: started
+    });
+    expect(o.kind).toBe('success');
+  });
+
+  it('exit-0 with a FRESH envelope verdict → the real status still drives the toast', () => {
+    const started = Date.parse('2026-07-08T10:00:00Z');
+    const o = deriveOutcome({
+      id: 'rtk',
+      name: 'RTK CLI',
+      code: 0,
+      mode: 'check',
+      status: { status: 'changes', counts: { changed: 5, failed: 0 }, timestamp: '2026-07-08T10:00:05Z' },
+      startedAt: started
+    });
+    expect(o.kind).toBe('info');
+  });
+
   it('U10: a status this build does not know is a warning, never a green "up to date"', () => {
     // A newer envelope schema, or a script that wrote the file without Write-StatusJson.
     const o = deriveOutcome({
