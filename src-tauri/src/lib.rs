@@ -9321,20 +9321,27 @@ fn load_opencode_cfg_for_edit() -> Result<serde_json::Value, String> {
     Ok(cfg)
 }
 
+/// The canonical MCP servers map (from MCP_CONFIG_REL, `{{USERPROFILE_FWD}}` expanded, BOM-tolerant),
+/// shared by the opencode and codex deploy paths — returns the owned `mcpServers` object.
+fn canonical_mcp_servers(home: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let src = std::fs::read_to_string(abs(MCP_CONFIG_REL))
+        .map_err(|e| trv("err.mcp_read", cur_lang(), &[("e", &e)]))?
+        .replace("{{USERPROFILE_FWD}}", &home.replace('\\', "/"));
+    let canonical = parse_json_bom(&src).map_err(|e| trv("err.mcp_parse", cur_lang(), &[("e", &e)]))?;
+    canonical
+        .get("mcpServers")
+        .and_then(|m| m.as_object())
+        .cloned()
+        .ok_or_else(|| tr("err.mcp_no_servers", cur_lang()).to_string())
+}
+
 #[tauri::command]
 fn run_opencode_mcp() -> Result<usize, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4/L4
     use serde_json::json;
     let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     // Canonical source, placeholders expanded (same as write_temp_mcp_config).
-    let src = std::fs::read_to_string(abs(MCP_CONFIG_REL))
-        .map_err(|e| trv("err.mcp_read", cur_lang(), &[("e", &e)]))?
-        .replace("{{USERPROFILE_FWD}}", &home.replace('\\', "/"));
-    let canonical = parse_json_bom(&src).map_err(|e| trv("err.mcp_parse", cur_lang(), &[("e", &e)]))?;
-    let servers = canonical
-        .get("mcpServers")
-        .and_then(|m| m.as_object())
-        .ok_or_else(|| tr("err.mcp_no_servers", cur_lang()).to_string())?;
+    let servers = canonical_mcp_servers(&home)?;
 
     let cfg_path = opencode_config_path();
     let mut cfg = load_opencode_cfg_for_edit()?;
@@ -9356,7 +9363,7 @@ fn run_opencode_mcp() -> Result<usize, String> {
         .map(|(name, _)| name.clone())
         .collect();
     let mut count = 0usize;
-    for (name, def) in servers {
+    for (name, def) in &servers {
         let command = def
             .get("command")
             .and_then(|c| c.as_str())
@@ -9610,18 +9617,11 @@ fn run_codex_mcp_blocking() -> Result<serde_json::Value, String> {
     use std::os::windows::process::CommandExt;
     let home = std::env::var("USERPROFILE")
         .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    let src = std::fs::read_to_string(abs(MCP_CONFIG_REL))
-        .map_err(|e| trv("err.mcp_read", cur_lang(), &[("e", &e)]))?
-        .replace("{{USERPROFILE_FWD}}", &home.replace('\\', "/"));
-    let canonical = parse_json_bom(&src).map_err(|e| trv("err.mcp_parse", cur_lang(), &[("e", &e)]))?;
-    let servers = canonical
-        .get("mcpServers")
-        .and_then(|m| m.as_object())
-        .ok_or_else(|| tr("err.mcp_no_servers", cur_lang()).to_string())?;
+    let servers = canonical_mcp_servers(&home)?;
 
     let mut count = 0usize;
     let mut errs: Vec<String> = Vec::new();
-    for (name, def) in servers {
+    for (name, def) in &servers {
         let Some(argv) = codex_mcp_add_args(name, def) else {
             continue;
         };
@@ -12974,15 +12974,24 @@ fn status_hook_script_present(home: &str) -> bool {
     std::path::Path::new(&status_hook_script_path(home)).exists()
 }
 
-/// Install/refresh the status hook script (same version-gated policy as plugin_sync).
-fn ensure_status_hook_script(home: &str) -> Result<(), String> {
-    let path = status_hook_script_path(home);
-    let ver = |t: &str| script_version_header(t, "# castellyn-status-version:");
-    let disk = std::fs::read_to_string(&path).unwrap_or_default();
-    if ver(&disk) < ver(STATUS_HOOK_SCRIPT) {
-        write_json_atomic(&path, STATUS_HOOK_SCRIPT).map_err(|e| format!("write {path}: {e}"))?;
+/// Write `content` to `path` only when the on-disk copy is an older (or missing) version, keyed by a
+/// `…-version:` header line — the shared version-gated install policy for the hook/notifier/plugin.
+fn ensure_versioned_file(path: &str, content: &str, marker: &str) -> Result<(), String> {
+    let ver = |t: &str| script_version_header(t, marker);
+    let disk = std::fs::read_to_string(path).unwrap_or_default();
+    if ver(&disk) < ver(content) {
+        write_json_atomic(path, content).map_err(|e| format!("write {path}: {e}"))?;
     }
     Ok(())
+}
+
+/// Install/refresh the status hook script (same version-gated policy as plugin_sync).
+fn ensure_status_hook_script(home: &str) -> Result<(), String> {
+    ensure_versioned_file(
+        &status_hook_script_path(home),
+        STATUS_HOOK_SCRIPT,
+        "# castellyn-status-version:",
+    )
 }
 
 // --- Codex end-of-turn notifier (Sessions tab) ---
@@ -13005,11 +13014,7 @@ fn notify_script_path() -> Result<String, String> {
 /// Install/refresh the notifier (same version-gated policy as the status hook).
 fn ensure_notify_script() -> Result<String, String> {
     let path = notify_script_path()?;
-    let ver = |t: &str| script_version_header(t, "# castellyn-notify-version:");
-    let disk = std::fs::read_to_string(&path).unwrap_or_default();
-    if ver(&disk) < ver(NOTIFY_SCRIPT) {
-        write_json_atomic(&path, NOTIFY_SCRIPT).map_err(|e| format!("write {path}: {e}"))?;
-    }
+    ensure_versioned_file(&path, NOTIFY_SCRIPT, "# castellyn-notify-version:")?;
     Ok(path)
 }
 
@@ -13049,11 +13054,7 @@ fn opencode_plugin_path() -> Result<String, String> {
 
 fn ensure_opencode_plugin() -> Result<String, String> {
     let path = opencode_plugin_path()?;
-    let ver = |t: &str| script_version_header(t, "// castellyn-plugin-version:");
-    let disk = std::fs::read_to_string(&path).unwrap_or_default();
-    if ver(&disk) < ver(OPENCODE_PLUGIN) {
-        write_json_atomic(&path, OPENCODE_PLUGIN).map_err(|e| format!("write {path}: {e}"))?;
-    }
+    ensure_versioned_file(&path, OPENCODE_PLUGIN, "// castellyn-plugin-version:")?;
     Ok(path)
 }
 
