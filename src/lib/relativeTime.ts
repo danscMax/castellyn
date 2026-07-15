@@ -57,6 +57,12 @@ export function formatAbsTime(
   return snapshotFallback?.(ts) ?? t('common.dash');
 }
 
+// Relative time when it's parseable, else the absolute date — the shared "2h ago / else full date"
+// display idiom (was inlined as `relTime(x) || formatAbsTime(x)` across ComponentCard / ForksTab).
+export function relOrAbs(ts?: string | null): string {
+  return relTime(ts) || formatAbsTime(ts);
+}
+
 // Parse a timestamp string to epoch-ms, tolerating both a Date-parseable string (ISO/year) AND a
 // bare Unix epoch (seconds or ms) — the limits API may report resets_at as a NUMBER that the backend
 // stringifies (e.g. "1751565600"), which Date.parse rejects. Returns NaN when unparseable. Shared so

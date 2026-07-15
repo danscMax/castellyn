@@ -19,6 +19,7 @@
   import { copyText } from '$lib/clipboard';
   import { redactSecrets } from '$lib/redact';
   import { relTime } from '$lib/relativeTime';
+  import { urlHost } from '$lib/url';
   import { profileDotColor } from '$lib/statusColor';
   import { profileHasMissingLink } from '$lib/attention';
   import ProfileEditDialog from './ProfileEditDialog.svelte';
@@ -148,11 +149,7 @@
     if (!p || !p.baseUrl) return t('profiles.providerDefault');
     const eng = (engines ?? []).find((e) => e.baseUrl === p.baseUrl);
     if (eng) return eng.name;
-    try {
-      return new URL(p.baseUrl).host;
-    } catch {
-      return p.baseUrl;
-    }
+    return urlHost(p.baseUrl);
   }
 
   // Lifecycle dialog state.

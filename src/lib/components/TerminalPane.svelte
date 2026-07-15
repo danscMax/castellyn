@@ -23,6 +23,7 @@
     type MonitorInfo
   } from '$lib/ipc';
   import { getMonitors, openDetached } from '$lib/monitors';
+  import { downloadBlob } from '$lib/download';
   import DropdownMenu from './DropdownMenu.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   // V9: one icon language (lucide) across the pane toolbar — replaces the emoji/glyph zoo.
@@ -310,13 +311,7 @@
       if (line) lines.push(line.translateToString(true));
     }
     const text = lines.join('\n').replace(/\s+$/, '') + '\n';
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${label.replace(/[^\w.-]+/g, '_') || 'session'}.log`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(`${label.replace(/[^\w.-]+/g, '_') || 'session'}.log`, text, 'text/plain;charset=utf-8');
   }
   function runSearch(next: boolean) {
     if (!query) return;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { readFreellmapiAnalytics, type FreellmapiAnalytics, type AnalyticsModel } from '$lib/ipc';
-  import { t, locale } from '$lib/i18n';
+  import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
   import { pushToast } from '$lib/toast.svelte';
   import { chartSeriesColor } from '$lib/statusColor';
@@ -10,7 +10,8 @@
   import { limitsStore } from '$lib/limits.svelte';
   import { agentSummary } from '$lib/agentStatus.svelte';
   import type { LimitsStatusEvent } from '$lib/ipc';
-  import { formatAbsTime } from '$lib/relativeTime';
+  import { formatAbsTime, localeTag } from '$lib/relativeTime';
+  import { downloadBlob } from '$lib/download';
   import { BarChart3 } from '@lucide/svelte';
   import SectionHeader from './SectionHeader.svelte';
 
@@ -104,9 +105,7 @@
   });
 
   // Locale-aware formatters (re-derive on language change) — numbers, currency, percent.
-  const fmtLocale = $derived(
-    locale.current === 'ru' ? 'ru-RU' : locale.current === 'zh' ? 'zh-CN' : 'en-US'
-  );
+  const fmtLocale = $derived(localeTag());
   const nf = $derived(new Intl.NumberFormat(fmtLocale));
   const cf = $derived(new Intl.NumberFormat(fmtLocale, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }));
   const fmt = (n: number) => nf.format(n ?? 0);
@@ -129,13 +128,7 @@
           .join(',')
       );
     }
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `castellyn-analytics-${rangeHours}h.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(`castellyn-analytics-${rangeHours}h.csv`, rows.join('\n'), 'text/csv;charset=utf-8');
   }
   const available = $derived(!!data?.available);
   const models = $derived(data?.perModel ?? []);

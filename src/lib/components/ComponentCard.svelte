@@ -3,7 +3,7 @@
   import { glossaryText } from '$lib/glossary';
   import { componentName } from '$lib/componentLabel';
   import { t, pUpdate, plural } from '$lib/i18n';
-  import { relTime, formatAbsTime, parseTsMs } from '$lib/relativeTime';
+  import { relTime, relOrAbs, formatAbsTime, parseTsMs } from '$lib/relativeTime';
   import { countOf, isUnknownStatus } from '$lib/envelope';
   import Spinner from './Spinner.svelte';
 
@@ -128,9 +128,9 @@
       <div class="flex justify-between">
         <dt>{t('updates.lastRun')}</dt>
         {#if isStale}
-          <dd class="status-warn" title={t('updates.staleOldest', { time: relTime(status?.timestamp) })}>{relTime(status?.timestamp) || fmtTime(status?.timestamp)}</dd>
+          <dd class="status-warn" title={t('updates.staleOldest', { time: relTime(status?.timestamp) })}>{relOrAbs(status?.timestamp)}</dd>
         {:else}
-          <dd class="text-sw-text" title={fmtTime(status?.timestamp)}>{relTime(status?.timestamp) || fmtTime(status?.timestamp)}</dd>
+          <dd class="text-sw-text" title={fmtTime(status?.timestamp)}>{relOrAbs(status?.timestamp)}</dd>
         {/if}
       </div>
       {#if durationText}

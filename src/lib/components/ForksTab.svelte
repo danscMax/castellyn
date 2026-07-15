@@ -1,7 +1,7 @@
 <script lang="ts">
   import { confFiles, pickFolder, readForkConfig, writeForkConfig, type ForkConfig, type ForkStatus, type ForkAction, type GithubRepo } from '$lib/ipc';
   import { forkMode, t, plural, pRepo, pConflict } from '$lib/i18n';
-  import { relTime, formatAbsTime } from '$lib/relativeTime';
+  import { relTime, relOrAbs, formatAbsTime } from '$lib/relativeTime';
   import { statusTextClass } from '$lib/statusColor';
   import { pushToast } from '$lib/toast.svelte';
   import ForkRepoCard from './ForkRepoCard.svelte';
@@ -352,7 +352,7 @@
             {t('forks.modeLine', { mode: forkMode(status?.mode) })}
           {/if}
         </div>
-        <div title={fmtTime(status?.timestamp ?? status?.generatedAt)}>{t('forks.updatedAt', { time: relTime(status?.timestamp ?? status?.generatedAt) || fmtTime(status?.timestamp ?? status?.generatedAt) })}</div>
+        <div title={fmtTime(status?.timestamp ?? status?.generatedAt)}>{t('forks.updatedAt', { time: relOrAbs(status?.timestamp ?? status?.generatedAt) })}</div>
       </div>
     </div>
   {/if}
@@ -471,7 +471,7 @@
               {:else if col.key === 'stars'}
                 <span class="text-sw-xs text-sw-text-muted tabular-nums whitespace-nowrap">{g.stars > 0 ? `★ ${g.stars}` : ''}</span>
               {:else if col.key === 'updated'}
-                <span class="text-sw-xs text-sw-text-muted whitespace-nowrap" title={fmtTime(g.updatedAt)}>{relTime(g.updatedAt) || fmtTime(g.updatedAt)}</span>
+                <span class="text-sw-xs text-sw-text-muted whitespace-nowrap" title={fmtTime(g.updatedAt)}>{relOrAbs(g.updatedAt)}</span>
               {:else if col.key === 'kind'}
                 <span class="flex flex-wrap gap-sw-1">
                   {#if g.isArchived}<span class="badge badge-warn" title={t('forks.ghArchivedTip')}>{t('forks.ghArchived')}</span>{/if}

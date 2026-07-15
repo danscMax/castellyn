@@ -9,3 +9,13 @@ export function isValidHttpUrl(s: string): boolean {
     return false;
   }
 }
+
+// Host (host:port) of a URL, or the raw string if it doesn't parse — the shared "show just the host"
+// idiom (was inlined as try { new URL(s).host } catch { s } across ProfilesTab / matrixState).
+export function urlHost(s: string): string {
+  try {
+    return new URL(s).host;
+  } catch {
+    return s;
+  }
+}

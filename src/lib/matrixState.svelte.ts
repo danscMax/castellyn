@@ -5,7 +5,7 @@
 import type { EngineStatus, MyProvider, MatrixRow, MatrixApply } from '$lib/ipc';
 import { readProfileMatrix } from '$lib/ipc';
 import { t } from '$lib/i18n';
-import { isValidHttpUrl } from '$lib/url';
+import { isValidHttpUrl, urlHost } from '$lib/url';
 
 // plugins = per-id explicit override (true/false); absent id = no draft edit (baseline stands).
 type Draft = { provider: string; proxy: string; folders: string[]; plugins: Record<string, boolean> };
@@ -81,11 +81,7 @@ export class MatrixState {
     if (e) return e.name;
     const m = (this.myProviders ?? []).find((x) => x.baseUrl === baseUrl);
     if (m) return m.name;
-    try {
-      return new URL(baseUrl).host;
-    } catch {
-      return baseUrl;
-    }
+    return urlHost(baseUrl);
   }
   // Model fields for a chosen provider come from a saved custom provider; local engines carry none.
   private modelFor(baseUrl: string): { model: string; smallModel: string } {

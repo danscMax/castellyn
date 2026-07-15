@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ProfileLaunch } from '$lib/ipc';
-  import { t, locale } from '$lib/i18n';
+  import { t } from '$lib/i18n';
+  import { localeTag } from '$lib/relativeTime';
   import Toggle from './Toggle.svelte';
   import ModalShell from './ModalShell.svelte';
 
@@ -95,8 +96,7 @@
 
   function fmt(n: number | null) {
     if (n === null) return '—';
-    const loc = locale.current === 'ru' ? 'ru-RU' : locale.current === 'zh' ? 'zh-CN' : 'en-US';
-    return n.toLocaleString(loc);
+    return n.toLocaleString(localeTag());
   }
 </script>
 
