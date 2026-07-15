@@ -83,6 +83,9 @@ export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
   );
   if (dup) {
     dup.count = (dup.count ?? 1) + 1;
+    // The key is kind+title+detail only — the newer arrival's action can differ (e.g. "Open log"
+    // closing over a different runId). Adopt it so the button targets the LATEST event, not the first.
+    dup.action = t.action;
     const tm = timers.get(dup.id);
     if (tm) {
       clearTimeout(tm.handle);

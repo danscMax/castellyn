@@ -32,7 +32,7 @@
   $effect(() => {
     if (open) typed = '';
   });
-  const blocked = $derived(!!requireText && typed.trim() !== requireText);
+  const blocked = $derived(!!requireText && typed.trim() !== requireText.trim());
   function confirm() {
     if (!blocked) onConfirm();
   }

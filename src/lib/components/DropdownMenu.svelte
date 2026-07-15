@@ -95,7 +95,7 @@
   </button>
   {#if open}
     <div class="menu" role="menu" tabindex="-1" bind:this={menuEl} onkeydown={onMenuKey} use:anchored={{ anchor: root!, align, onOutside: () => (open = false) }}>
-      {#each items as it (it.label)}
+      {#each items as it, i (i)}
         <button
           class="item"
           class:status-bad={it.danger}
