@@ -75,6 +75,8 @@ export default {
   advisorNextReset: '最近重置：{profile}，{d} 后',
   limitModeDefault: '按全局设置',
   previewTitle: '将启动',
+  riskyFlagTip: '禁用权限确认——代理将无需确认直接操作。请谨慎启用。',
+  riskyFlagNote: '无权限确认',
   restoredPartial: '已恢复 {m} 个中的 {n} 个 — 已达会话上限',
   activeFor: '活动 {d}',
   layout: '列数：',

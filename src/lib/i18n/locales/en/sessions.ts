@@ -75,6 +75,8 @@ export default {
   advisorNextReset: 'next reset: {profile} in {d}',
   limitModeDefault: 'as in settings',
   previewTitle: 'Will launch',
+  riskyFlagTip: 'Disables the permission prompt — the agent acts without confirmations. Enable deliberately.',
+  riskyFlagNote: 'No permission prompt',
   restoredPartial: 'Restored {n} of {m} — session limit reached',
   activeFor: 'active {d}',
   layout: 'Columns:',

@@ -75,6 +75,8 @@ export default {
   advisorNextReset: 'ближайший сброс: {profile} через {d}',
   limitModeDefault: 'как в настройках',
   previewTitle: 'Будет запущено',
+  riskyFlagTip: 'Отключает проверку разрешений — агент действует без подтверждений. Включай осознанно.',
+  riskyFlagNote: 'Без проверки разрешений',
   restoredPartial: 'Восстановлено {n} из {m} — достигнут лимит сессий',
   activeFor: 'активна {d}',
   layout: 'Колонок:',

@@ -7,6 +7,18 @@ export const ARG_PRESETS: Record<string, string[]> = {
   codex: ['--yolo', '--full-auto', '--search']
 };
 
+// Flags that disable a safety prompt (permission / approval / sandbox). The launch form tints
+// their chip as a warning so a risky default (clicker-audit #3) is never silently active.
+const RISKY_FLAGS = [
+  '--dangerously-skip-permissions',
+  '--yolo',
+  '--full-auto',
+  '--dangerously-bypass-approvals-and-sandbox'
+];
+export function isRiskyFlag(flag: string): boolean {
+  return RISKY_FLAGS.includes(flag.trim());
+}
+
 // First-message snippet templates inserted into a pane (no auto-Enter). Common Claude slash
 // commands + a couple of nudges. Inserted as-is so the user can review before sending.
 export const MSG_SNIPPETS: string[] = ['/clear', '/compact', '/context', 'continue', 'go on'];

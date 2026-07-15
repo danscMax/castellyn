@@ -54,7 +54,7 @@
   import { markMoved, peekMoved } from '$lib/sessionMove';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { currentMonitor } from '@tauri-apps/api/window';
-  import { ARG_PRESETS, stripFlags, toggleFlag } from '$lib/sessionPresets';
+  import { ARG_PRESETS, isRiskyFlag, stripFlags, toggleFlag } from '$lib/sessionPresets';
   import { pushToast } from '$lib/toast.svelte';
 
   const MAX_PANES = 12; // each pane is a pwsh+tool process — cap to keep the machine responsive
@@ -1720,6 +1720,8 @@
   // Mockup #3 (owner-picked): live preview card — the EXACT command that will run and the
   // chosen profile's remaining 5h/7d windows, so launching is never a guess.
   const previewCmd = $derived(lEnv === 'shell' ? 'pwsh' : `${lEnv} ${composeArgs(lEnv, lArgs)}`.trim());
+  // Clicker-audit #3: does the composed command carry a safety-skipping flag? Surfaced in the card.
+  const previewRisky = $derived(lEnv !== 'shell' && composeArgs(lEnv, lArgs).split(/\s+/).some(isRiskyFlag));
   const previewLimits = $derived(lEnv === 'claude' ? (limitsByProfile[lProfile] ?? null) : null);
   const barClass = (v: number | null | undefined) => (v == null ? '' : v >= 95 ? 'max' : v >= 70 ? 'hot' : '');
   // Council U-4: when every profile is maxed the advisor used to dead-end — surface WHEN the
@@ -2475,7 +2477,9 @@
           <div class="argsrow">
             {#each launchChips as flag (flag)}
               <button type="button" class="argchip" class:on={lArgs.includes(flag)}
-                onclick={() => { lArgs = toggleFlag(lArgs, flag); argsTouched = true; }}>{flag}</button>
+                class:risky={isRiskyFlag(flag) && lArgs.includes(flag)}
+                title={isRiskyFlag(flag) ? t('sessions.riskyFlagTip') : undefined}
+                onclick={() => { lArgs = toggleFlag(lArgs, flag); argsTouched = true; }}>{#if isRiskyFlag(flag) && lArgs.includes(flag)}⚠ {/if}{flag}</button>
             {/each}
             <input class="sw-input grow font-mono text-sw-xs pargs" value={lArgsExtra}
               oninput={(e) => onExtraArgsInput(e.currentTarget.value)}
@@ -2504,6 +2508,9 @@
       </div>
       <div class="lp-folder" title={lLoc ? lRemoteDir : lFolder}>📁 {lLoc ? (lRemoteDir || '~') : (lFolder || t('sessions.cwdShort'))}</div>
       <div class="lp-cmd font-mono" title={previewCmd}>{previewCmd}</div>
+      {#if previewRisky}
+        <div class="lp-risk" title={t('sessions.riskyFlagTip')}>⚠ {t('sessions.riskyFlagNote')}</div>
+      {/if}
       {#if previewLimits}
         <div class="lp-meters">
           <div class="um">
@@ -3425,6 +3432,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .lp-risk {
+    font-size: 10.5px;
+    color: var(--sw-status-warn);
+    line-height: 1.35;
+  }
   .lp-cmd {
     font-size: 11px;
     line-height: 1.6;
@@ -3861,6 +3873,12 @@
     background: var(--sw-accent-glow);
     color: var(--sw-text-primary);
     border-color: var(--sw-accent-text);
+  }
+  /* Clicker-audit #3: an active safety-skipping flag reads as a warning, not a neutral toggle. */
+  .argchip.risky {
+    background: color-mix(in srgb, var(--sw-status-warn) 16%, transparent);
+    border-color: color-mix(in srgb, var(--sw-status-warn) 55%, transparent);
+    color: var(--sw-status-warn);
   }
   .ws-chip {
     display: inline-flex;
