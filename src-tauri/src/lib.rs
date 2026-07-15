@@ -2289,6 +2289,21 @@ fn valid_profile_name(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// A legitimate ssh target is `[user@]host` (v4/v6 literal or name) or a `~/.ssh/config` Host alias —
+/// a single token. It must NOT begin with `-`, contain whitespace, or carry option/shell metachars:
+/// `--%` stops PowerShell re-parsing the ssh line but NOT ssh.exe's own option parsing, so a "target"
+/// like `-oProxyCommand=calc.exe host` (which can arrive from a persisted/synced session recipe or an
+/// imported ~/.ssh/config entry, not just live typing) would run an arbitrary local program before
+/// connecting. Keep the charset tight — space + a leading dash are what the attack needs.
+fn valid_ssh_target(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty()
+        && s.len() <= 255
+        && !s.starts_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | ':' | '[' | ']'))
+}
+
 /// Profile lifecycle: add / remove / rename / recolor / redescribe / set-links via Manage-Profiles.ps1.
 #[tauri::command]
 // command handler: args come from the JS invoke boundary
@@ -13211,6 +13226,25 @@ mod audit_fixes_tests {
     }
 
     #[test]
+    fn valid_ssh_target_blocks_option_injection() {
+        // Rejected: leading-dash option injection, embedded spaces (a second `-o…` token), empty.
+        for bad in [
+            "-oProxyCommand=calc.exe host",
+            "-oProxyCommand=calc.exe",
+            "host -oProxyCommand=calc.exe",
+            "user@host; calc",
+            "",
+            "   ",
+        ] {
+            assert!(!valid_ssh_target(bad), "should reject {bad:?}");
+        }
+        // Allowed: ordinary targets, aliases, IPv4/IPv6 literals, user@host.
+        for ok in ["host", "user@host.example.com", "my-server_1", "192.168.1.10", "user@[::1]", "10.0.0.5"] {
+            assert!(valid_ssh_target(ok), "should allow {ok:?}");
+        }
+    }
+
+    #[test]
     fn plugin_id_path_safe_rejects_traversal() {
         assert!(plugin_id_path_safe("my-plugin.name_1"));
         for bad in ["", "..", "../evil", "a/b", "a\\b", "..\\x"] {
@@ -14764,6 +14798,14 @@ fn session_spawn(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
+    // The structured ssh target is dropped verbatim into the `ssh --% -t {target}` line. `--%` blocks
+    // PowerShell, not ssh.exe's option parsing — a target sourced from a persisted/restored recipe or
+    // an imported ~/.ssh/config could carry `-oProxyCommand=…` and run a local program. Gate it.
+    if let Some(t) = ssh {
+        if !valid_ssh_target(t) {
+            return Err(trv("err.invalid_ssh_target", cur_lang(), &[("target", &t)]));
+        }
+    }
     let remote = remote_dir
         .as_deref()
         .map(str::trim)

@@ -208,6 +208,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("err.tar_failed", ["Не удалось запустить tar: {e}", "Could not run tar: {e}", "无法运行 tar：{e}"]),
     ("err.bad_hotkey", ["неверная комбинация: {e}", "invalid shortcut: {e}", "快捷键无效: {e}"]),
     ("err.unknown_tool", ["неизвестный инструмент: {tool}", "unknown tool: {tool}", "未知工具: {tool}"]),
+    ("err.invalid_ssh_target", ["недопустимый SSH-адрес: {target}", "invalid ssh target: {target}", "SSH 目标无效: {target}"]),
     ("err.session_limit", ["достигнут предел сессий ({max})", "session limit reached ({max})", "已达到会话上限 ({max})"]),
     ("err.session_not_found", ["сессия не найдена", "session not found", "未找到会话"]),
 
