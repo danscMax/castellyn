@@ -6804,6 +6804,7 @@ async fn next_provider_key(
     // mutators (save/delete/add_key/remove_key) take — without it a concurrent add/save could lose
     // this update. Scoped to the RMW only: the guard MUST be dropped before the connect .await below
     // (a std MutexGuard held across .await would make the future non-Send and could deadlock connect).
+    let old_active;
     {
         let _guard = MYPROVIDERS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut list = read_myproviders_checked()?;
@@ -6812,12 +6813,26 @@ async fn next_provider_key(
         if count < 2 {
             return Err(tr("err.single_key", cur_lang()).into());
         }
+        old_active = active;
         let next = next_key_index(active, count);
         list[pos]["activeKey"] = serde_json::json!(next);
         write_myproviders_raw(&list)?;
     }
-    // Re-bind the harness to the now-active key (reuses the full connect dispatch).
-    connect_my_provider(app, state, id).await
+    // Re-bind the harness to the now-active key (reuses the full connect dispatch). If the connect
+    // FAILS (hard error, or a non-zero exit = the bind never took), roll the pointer back — otherwise
+    // the persisted `activeKey` drifts ahead of the key the harness is really on and a second "next"
+    // click silently skips a key.
+    let res = connect_my_provider(app, state, id.clone()).await;
+    if !matches!(&res, Ok(0)) {
+        let _guard = MYPROVIDERS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(mut list) = read_myproviders_checked() {
+            if let Some(pos) = find_provider_idx(&list, &id) {
+                list[pos]["activeKey"] = serde_json::json!(old_active);
+                let _ = write_myproviders_raw(&list);
+            }
+        }
+    }
+    res
 }
 
 /// Count models in an OpenAI/Anthropic-style /models response (data[] | models[] | bare array).
