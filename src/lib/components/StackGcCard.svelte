@@ -105,7 +105,7 @@
           <span class="cbspace" aria-hidden="true"></span>
         {/if}
         <span class="min-w-0 flex-1 truncate" title={it.path}>{it.label}</span>
-        <span class="cat">{t(CAT_KEY[it.category])}</span>
+        <span class="cat">{CAT_KEY[it.category] ? t(CAT_KEY[it.category]) : it.category}</span>
         <span class="size">{fmt(it.size_bytes)}</span>
       </div>
     {/each}

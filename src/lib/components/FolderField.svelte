@@ -25,8 +25,12 @@
 
   function read() {
     try {
-      favorites = JSON.parse(localStorage.getItem(FAV) ?? '[]');
-      recent = JSON.parse(localStorage.getItem(REC) ?? '[]');
+      // Guard against valid-JSON-but-not-an-array (corruption / a downgrade) — a non-array would
+      // survive JSON.parse and then throw at `favorites.includes(...)` in the isFav derived.
+      const f = JSON.parse(localStorage.getItem(FAV) ?? '[]');
+      favorites = Array.isArray(f) ? f : [];
+      const r = JSON.parse(localStorage.getItem(REC) ?? '[]');
+      recent = Array.isArray(r) ? r : [];
       root = localStorage.getItem(ROOT) ?? '';
     } catch {
       /* first run */

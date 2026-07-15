@@ -235,7 +235,7 @@
                 {:else if diffCache[item.name]}
                   <table class="w-full border-collapse">
                     <tbody>
-                      {#each diffCache[item.name].lines as line}
+                      {#each diffCache[item.name].lines as line, i (i)}
                         <tr class="diff-{line.kind}">
                           <td class="w-4 select-none text-center text-sw-text-muted">
                             {line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}

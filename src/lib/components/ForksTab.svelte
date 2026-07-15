@@ -111,7 +111,7 @@
   const githubOnly = $derived(
     (githubRepos ?? [])
       .filter((g) => !localNames.has(g.name.toLowerCase()))
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
   );
   let ghOpen = $state(true);
 
