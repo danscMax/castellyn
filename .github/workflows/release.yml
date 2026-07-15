@@ -25,20 +25,20 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      # This job holds TAURI_SIGNING_PRIVATE_KEY, so EVERY action here is SHA-pinned (a moved/hijacked
+      # major tag would otherwise run with signing-key access). SHAs resolved from the major tags on
+      # 2026-07-15; the trailing comment tracks which tag they pinned so updates stay auditable.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
-      # Pinned to a commit SHA, not @master: this job also holds TAURI_SIGNING_PRIVATE_KEY below, so a
-      # compromise of the action's maintainer account would run with access to the update-signing key.
-      # (The action publishes a `v1` tag, but that tag moves — a SHA is the only immutable ref.)
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-06-30
         with:
           toolchain: "1.93.0"   # match rust-toolchain.toml (1.94 breaks the `time` crate)
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
       - run: npm ci
@@ -103,7 +103,10 @@ jobs:
           $sig = (Get-Content $sigPath -Raw).Trim()
           $notes = if ([string]::IsNullOrWhiteSpace($env:NOTES)) { "See the release page for details." } else { $env:NOTES }
           $manifest = [ordered]@{
-            version   = "$env:TAG"
+            # Strip the tag's leading `v` — the manifest version must be bare semver (the installed
+            # app is `0.7.0`, not `v0.7.0`), or tauri-plugin-updater's semver parse rejects latest.json
+            # and every auto-update check errors out.
+            version   = $env:TAG.TrimStart('v')
             notes     = $notes
             pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
