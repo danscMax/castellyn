@@ -70,13 +70,28 @@
   async function minimize() {
     await appWin.minimize();
   }
+  let maxBusy = false;
   async function toggleMaximize() {
-    if (await appWin.isMaximized()) {
-      await appWin.unmaximize();
-    } else {
-      await appWin.maximize();
+    // Re-entrancy guard: a double-click on the maximize button fires two onclick toggles plus the
+    // bubbled titlebar ondblclick — without this they read the same pre-toggle isMaximized() and race.
+    if (maxBusy) return;
+    maxBusy = true;
+    try {
+      if (await appWin.isMaximized()) {
+        await appWin.unmaximize();
+      } else {
+        await appWin.maximize();
+      }
+      syncMax();
+    } finally {
+      maxBusy = false;
     }
-    syncMax();
+  }
+  function onTitlebarDblClick(e: MouseEvent) {
+    // Only the empty drag area toggles maximize — ignore a dblclick that bubbled up from a button
+    // (nav arrows, minimize, palette…), which would otherwise maximize the window unexpectedly.
+    if ((e.target as HTMLElement).closest('button, input, a, [role="button"]')) return;
+    toggleMaximize();
   }
   async function close() {
     // Window CloseRequested is intercepted in Rust → hides to tray.
