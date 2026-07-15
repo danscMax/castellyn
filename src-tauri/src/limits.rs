@@ -161,7 +161,9 @@ fn save_fired(fired: &HashMap<String, u8>) {
 /// profile). The token is returned by value and never logged.
 fn read_access_token(cred_path: &str) -> Option<String> {
     let text = std::fs::read_to_string(cred_path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    // Strip a leading BOM before parsing — matches the codebase convention for external JSON
+    // (a migration/tool could rewrite credentials.json as UTF-8-with-BOM).
+    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
     v.get("claudeAiOauth")?
         .get("accessToken")?
         .as_str()
