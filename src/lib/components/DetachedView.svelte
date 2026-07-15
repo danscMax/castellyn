@@ -1,8 +1,9 @@
 <script lang="ts">
   // Rendered by +layout.svelte when this window is a detached per-monitor / popped-out window (its
   // label is not "main"). It reads the handoff spec stashed by the main window (by window label) and
-  // mirrors the LIVE session(s) via TerminalPane's attach mode — no respawn. Closing a pane drops its
-  // attached channel (the session keeps running in the main window); emptying the window closes it.
+  // mirrors the LIVE session(s) via TerminalPane's attach mode — no respawn. Panes here OWN their
+  // sessions: closing a single pane (its ✕) ENDS that session; closing the WHOLE window returns every
+  // live session to the main window instead of ending them (see closeWin). Emptying the window closes it.
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { t } from '$lib/i18n';
@@ -56,14 +57,26 @@
     markMoved(id);
     closePane(p._key);
   }
-  function closeWin() {
+  async function closeWin() {
+    // Panes here OWN their sessions (owns:true), so a bare win.close() would let each TerminalPane's
+    // onDestroy sessionKill it — closing a monitor window must NOT silently end (paid) sessions. Hand
+    // every live session back to the main window first (markMoved suppresses the kill; the emit lets
+    // main re-adopt it, matching returnPane). Await delivery so main receives them before we close.
+    await Promise.all(
+      panes.map((p) => {
+        const id = liveIds[p._key] ?? p.sessionId;
+        if (!id) return Promise.resolve();
+        markMoved(id);
+        return emit('pane:add', { target: 'main', pane: { ...p, sessionId: id, owns: true } });
+      })
+    );
     win.close();
   }
 </script>
 
 <div class="detached">
   <div class="bar" data-tauri-drag-region>
-    <span class="ttl">{panes.length === 1 ? panes[0].title : `Castellyn · ${panes.length}`}</span>
+    <span class="ttl">{!loaded ? 'Castellyn' : panes.length === 1 ? panes[0].title : `Castellyn · ${panes.length}`}</span>
     <button class="x" onclick={closeWin} aria-label={t('common.close')} title={t('common.close')}>✕</button>
   </div>
   <div class="body">
