@@ -163,7 +163,9 @@
     ghTimeout = c.ghTimeoutSec ?? '';
     startHidden = !!c.startHidden;
     closeToTray = c.closeToTray ?? true;
-    stackNative = !!c.stackNative;
+    // Clicker-audit #4: contract is "absent/true = native" (ipc.ts) — `!!` displayed a fresh
+    // config as OFF and a later save would have silently persisted false (legacy PS scripts).
+    stackNative = c.stackNative ?? true;
     showSessionStatusBar = c.showSessionStatusBar ?? true;
     uiPrefs.showSessionStatusBar = showSessionStatusBar;
     limitsMonitor = c.limitsMonitor ?? true;

@@ -304,7 +304,12 @@
 
     <!-- Item toggles -->
     <SectionHeader title={t('sync.whatToSync')} />
-    <div class="card-grid">
+    <!-- Clicker-audit #6: with no Syncthing the enabled toggles read as "sync is working".
+         Say explicitly that they are inert until the daemon is up, and dim the block. -->
+    {#if !st?.available}
+      <p class="mb-sw-2 text-sw-xs status-warn">{t('sync.togglesInertNote')}</p>
+    {/if}
+    <div class="card-grid" class:sync-inert={!st?.available}>
       {#each ITEMS as item (item.key)}
         <div class="sw-card flex items-start gap-sw-3" title={t('sync.itemTitle', { path: item.path })}>
           <div class="mt-0.5"><Toggle bind:checked={sel[item.key]} disabled={busy} title={t('sync.itemToggleTip')} /></div>
@@ -352,5 +357,9 @@
   }
   .diff-del td {
     background-color: color-mix(in srgb, var(--sw-status-down) 10%, transparent);
+  }
+  /* Toggles are inert while Syncthing is absent — dim them so they don't read as active sync. */
+  .sync-inert {
+    opacity: 0.55;
   }
 </style>

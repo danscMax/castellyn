@@ -51,6 +51,7 @@ export default {
   openWebUi: 'Web UI',
   openWebUiTip: 'Открыть веб-интерфейс Syncthing (localhost:8384)',
   notFoundTitle: 'Syncthing не найден или не запущен — синхронизация не активна на этой машине',
+  togglesInertNote: 'Syncthing не запущен — эти переключатели пока ни на что не влияют: они применятся, когда демон появится.',
   notFound: 'не найден',
   folder: 'Папка',
   folderIdTitle: 'ID папки: {id}',

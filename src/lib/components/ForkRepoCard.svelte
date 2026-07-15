@@ -254,7 +254,9 @@
           {#if busy}<span class="busy-dot shrink-0" title={t('common.busy')}></span>{/if}
           <h3 class="truncate font-medium" title={repo.Name}>{repo.Name}</h3>
         </div>
-        <p class="truncate text-sw-xs text-sw-text-muted">
+        <!-- Clicker-audit #10: long branch names truncate — the full text lives in title. -->
+        <p class="truncate text-sw-xs text-sw-text-muted"
+          title="{repo.defaultBranch ?? ''}{repo.currentBranch && repo.currentBranch !== repo.defaultBranch ? t('forks.onBranch', { branch: repo.currentBranch }) : ''}">
           <span class="badge {repo.isOwn ? 'badge-muted' : 'badge-info'}" title={repo.isOwn ? t('forks.badgeOwnTip') : t('forks.badgeForkTip')}>{repo.isOwn ? t('forks.badgeOwn') : t('forks.badgeFork')}</span>
           {repo.defaultBranch ?? t('common.dash')}{repo.currentBranch && repo.currentBranch !== repo.defaultBranch ? t('forks.onBranch', { branch: repo.currentBranch }) : ''}
           · {branches.length} {pBranch(branches.length)}

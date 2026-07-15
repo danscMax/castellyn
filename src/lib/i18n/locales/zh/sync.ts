@@ -51,6 +51,7 @@ export default {
   openWebUi: 'Web UI',
   openWebUiTip: '打开 Syncthing 网页界面（localhost:8384）',
   notFoundTitle: '未找到或未运行 Syncthing——此设备上同步未激活',
+  togglesInertNote: 'Syncthing 未运行——这些开关暂时不起作用：守护进程启动后才会生效。',
   notFound: '未找到',
   folder: '文件夹',
   folderIdTitle: '文件夹 ID：{id}',

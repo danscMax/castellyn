@@ -180,9 +180,17 @@
     changelogError = null;
     changelogLoading = false;
   }
-  const skillRows = $derived(
-    skillSource === 'all' ? skillList : skillList.filter((s) => skillKind(s) === skillSource)
-  );
+  // Clicker-audit #2: the scan can report the same skill dir twice (linked roots/junctions) —
+  // that both duplicated the visible row and crashed the keyed each (rowKey = dir). One dir = one row.
+  const skillRows = $derived.by(() => {
+    const base = skillSource === 'all' ? skillList : skillList.filter((s) => skillKind(s) === skillSource);
+    const seen = new Set<string>();
+    return base.filter((s) => {
+      if (seen.has(s.dir)) return false;
+      seen.add(s.dir);
+      return true;
+    });
+  });
   const ownSkillCount = $derived(skillList.filter((s) => s.mine).length);
   const pluginSkillCount = $derived(
     skillList.filter((s) => s.source.startsWith('plugin:') && !s.mine).length

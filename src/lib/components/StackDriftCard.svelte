@@ -83,7 +83,9 @@
         <div class="flex flex-wrap items-center gap-sw-2">
           <span class="dot" style="background:{dotColor(r.state)}" aria-hidden="true"></span>
           <span class="text-sw-sm font-medium">{labelOf(r.id)}</span>
-          {#if r.detail}<span class="text-sw-xs text-sw-text-secondary">· {r.detail}</span>{/if}
+          <!-- Clicker-audit #9: the detail is raw diagnostic passthrough (English) — mono type
+               marks it as machine output inside the localized UI instead of a missed translation. -->
+          {#if r.detail}<span class="font-mono text-[11px] text-sw-text-muted">· {r.detail}</span>{/if}
           {#if r.fix}
             <button class="sw-btn sw-btn-ghost text-sw-xs ml-auto shrink-0" disabled={!!working || busy}
               onclick={() => doFix(r)}

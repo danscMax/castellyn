@@ -2040,7 +2040,9 @@
     runExternalSearch: (q: string, next?: boolean) => void;
     setFontSize: (px: number) => void;
   };
-  const paneRefs: Record<string, PaneApi | undefined> = {};
+  // Clicker-audit #3: `bind:this={paneRefs[key]}` on a plain object fires Svelte's
+  // binding_property_non_reactive warning on every spawn — $state makes the binding legal.
+  const paneRefs: Record<string, PaneApi | undefined> = $state({});
   let focusIdx = 0;
 
   // Search every pane at once (#52). Each pane runs the query through its own SearchAddon;
@@ -3066,8 +3068,12 @@
   </div>
 
   {#if !activePanes.length && !bgPanes.length}
+    <!-- Clicker-audit #1 (Critical): this button used to CALL launchPhrase directly — it silently
+         launched whatever the form state held (a real claude profile) while the toolbar displayed a
+         different recipe. An empty-state button must never run something the user can't see: it
+         opens the launch form, where the preview card shows exactly what will start. -->
     <EmptyState icon={SquareTerminal} title={t('sessions.emptyTitle')} description={t('sessions.emptyHint')}
-      action={launchPhrase} actionLabel={t('sessions.phLaunch')} />
+      action={() => (newOpen = true)} actionLabel={t('sessions.newSession')} />
     {#if favorites.length || menuRecents.length || wsNames.length}
       <!-- Mockup #9 + council U-2: the empty screen doubles as a launchpad — saved WORKSPACES
            (whole fleets) launch one-click next to favorite/recent single recipes. -->

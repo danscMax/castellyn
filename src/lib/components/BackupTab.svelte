@@ -138,7 +138,15 @@
     return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : null;
   }
   function fmtSnap(name: string) {
-    return snapToReadable(name) ?? name;
+    // Clicker-audit #7: the header shows toLocaleString (dd.mm.yyyy for ru) while snapshot rows
+    // showed the raw "yyyy-mm-dd hh:mm:ss" name — two date formats on one screen. Route the
+    // parseable snapshot time through the SAME locale formatter; fall back to the readable name.
+    const readable = snapToReadable(name);
+    if (readable) {
+      const ms = Date.parse(readable.replace(' ', 'T'));
+      if (!Number.isNaN(ms)) return formatAbsTime(new Date(ms).toISOString());
+    }
+    return readable ?? name;
   }
   // "weekly-2026-06-15.zip" -> "2026-06-15" (falls back to the raw name).
   function fmtWeekly(name: string): string {

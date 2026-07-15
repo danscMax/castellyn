@@ -51,6 +51,7 @@ export default {
   openWebUi: 'Web UI',
   openWebUiTip: 'Open the Syncthing web interface (localhost:8384)',
   notFoundTitle: 'Syncthing not found or not running — sync is not active on this machine',
+  togglesInertNote: 'Syncthing is not running — these toggles have no effect yet: they apply once the daemon is up.',
   notFound: 'not found',
   folder: 'Folder',
   folderIdTitle: 'Folder ID: {id}',
