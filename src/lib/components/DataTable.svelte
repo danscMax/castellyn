@@ -132,6 +132,7 @@
       handle.releasePointerCapture?.(e.pointerId);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       activeDrag = null;
       if (storageKey) {
         try {
@@ -145,11 +146,15 @@
     activeDrag = { move, up };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    // pointercancel (touch/pen interruption, capture loss) otherwise never runs `up`, leaving
+    // `resizing` stuck true — every later header click would be swallowed by the sort guard.
+    window.addEventListener('pointercancel', up);
   }
   onDestroy(() => {
     if (activeDrag) {
       window.removeEventListener('pointermove', activeDrag.move);
       window.removeEventListener('pointerup', activeDrag.up);
+      window.removeEventListener('pointercancel', activeDrag.up);
     }
   });
 
@@ -206,6 +211,8 @@
   const visibleKeys = $derived(sorted.map(rowKey));
   const visibleKeySet = $derived(new Set(visibleKeys));
   const allSelected = $derived(visibleKeys.length > 0 && visibleKeys.every((k) => selected.has(k)));
+  // Partial selection → the header checkbox shows the indeterminate (dash) state instead of empty.
+  const someSelected = $derived(visibleKeys.some((k) => selected.has(k)));
   // Bulk actions operate on EVERY selected row, not just the visible ones — so selecting rows and
   // then narrowing the search/filter does not silently drop them from the batch. Preserve order:
   // visible (sorted) keys first, then any selected-but-hidden keys appended.
@@ -213,6 +220,15 @@
     ...visibleKeys.filter((k) => selected.has(k)),
     ...[...selected].filter((k) => !visibleKeySet.has(k))
   ]);
+  // Prune selections whose row no longer exists in the SOURCE data (a background refresh deleted it) —
+  // otherwise selectedList would feed a bulk action ids for gone rows. Query-hidden rows stay in
+  // `rows`, so they're correctly preserved; only truly-absent keys are dropped.
+  $effect(() => {
+    const live = new Set(rows.map(rowKey));
+    if ([...selected].some((k) => !live.has(k))) {
+      selected = new Set([...selected].filter((k) => live.has(k)));
+    }
+  });
   function toggleAll() {
     if (allSelected) {
       // Deselect only the visible rows; keep any selected-but-hidden rows intact.
@@ -261,7 +277,7 @@
         <tr>
           {#if selectable}
             <th class="dt-sel">
-              <input class="dt-check" type="checkbox" checked={allSelected} onchange={toggleAll} aria-label={t('common.selectAll')} />
+              <input class="dt-check" type="checkbox" checked={allSelected} indeterminate={someSelected && !allSelected} onchange={toggleAll} aria-label={t('common.selectAll')} />
             </th>
           {/if}
           {#if expand}<th class="dt-exp" aria-hidden="true"></th>{/if}
