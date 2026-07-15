@@ -26,6 +26,7 @@ export function anchored(node: HTMLElement, params: AnchoredParams) {
     node.style.position = 'fixed';
     node.style.right = '';
     if (p.matchWidth) node.style.width = `${a.width}px`;
+    else node.style.width = ''; // clear a width forced by a previous matchWidth:true (params can flip)
 
     const w = node.offsetWidth || 200;
     const h = node.offsetHeight || 0;

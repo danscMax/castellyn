@@ -146,6 +146,7 @@
       target.releasePointerCapture(ev.pointerId);
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
       try {
         localStorage.setItem(HKEY, String(height));
       } catch {
@@ -154,6 +155,8 @@
     };
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', up);
+    // pointercancel (touch/pen interruption) otherwise leaves move bound + capture unreleased.
+    target.addEventListener('pointercancel', up);
   }
 </script>
 
