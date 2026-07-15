@@ -2097,6 +2097,11 @@
   }
   function onKey(e: KeyboardEvent) {
     if (!visible) return;
+    // Don't hijack tab hotkeys while the user types in one of OUR form fields (search-all,
+    // send-to-all, launch args). The xterm helper <textarea> lives inside `.xterm` — leave it out
+    // so pane shortcuts (Alt+N, Ctrl+]) still work while focused in a terminal.
+    const tgt = e.target as HTMLElement | null;
+    if (tgt && (tgt.tagName === 'INPUT' || tgt.isContentEditable || (tgt.tagName === 'TEXTAREA' && !tgt.closest('.xterm')))) return;
     if (e.ctrlKey && e.shiftKey && (e.key === 't' || e.key === 'T')) {
       e.preventDefault();
       launchPhrase();

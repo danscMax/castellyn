@@ -7,6 +7,7 @@
   import Spinner from './Spinner.svelte';
   import DropdownMenu from './DropdownMenu.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
+  import ModalShell from './ModalShell.svelte';
   import { Puzzle, SquareSlash, Bot, Lock } from '@lucide/svelte';
 
   let {
@@ -526,44 +527,38 @@
   {/if}
 </div>
 
-<!-- Escape closes the changelog, like every other overlay in the app. -->
-<svelte:window onkeydown={(e) => e.key === 'Escape' && changelogPlugin !== null && closeChangelog()} />
-
-{#if changelogPlugin !== null}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="cl-overlay" role="presentation" onclick={closeChangelog} ontouchstart={closeChangelog}>
-    <div class="cl-modal" role="dialog" aria-label={t('plugins.changelogTitle')} tabindex="-1" onclick={(e) => e.stopPropagation()} ontouchstart={(e) => e.stopPropagation()}>
-      <div class="cl-header">
-        <h2 class="cl-title">{t('plugins.changelogTitle')} — {changelogPlugin}</h2>
-        <button class="iconbtn" onclick={closeChangelog} aria-label={t('common.close')}>✕</button>
-      </div>
-      <div class="cl-body">
-        {#if changelogLoading}
-          <p class="cl-status">{t('plugins.changelogLoading')}</p>
-        {:else if changelogError}
-          <p class="cl-status status-bad">{t('plugins.changelogError')}<br><span class="cl-errdetail">{changelogError}</span></p>
-        {:else if changelogReleases && changelogReleases.length}
-          {#each changelogReleases as rel (rel.tag_name)}
-            <div class="cl-release">
-              <div class="cl-release-head">
-                <span class="cl-tag">{rel.tag_name}</span>
-                <span class="cl-date">{rel.published_at.slice(0, 10)}</span>
-              </div>
-              {#if rel.name && rel.name !== rel.tag_name}
-                <p class="cl-release-name">{rel.name}</p>
-              {/if}
-              {#if rel.body}
-                <pre class="cl-notes">{rel.body}</pre>
-              {/if}
-            </div>
-          {/each}
-        {:else}
-          <p class="cl-status">{t('plugins.changelogNoReleases')}</p>
-        {/if}
-      </div>
-    </div>
+<!-- Changelog overlay: ModalShell gives focus move-in/restore, Tab-trap, aria-modal + Escape, so
+     this dialog is keyboard/screen-reader safe like every other one (was hand-rolled before). -->
+<ModalShell open={changelogPlugin !== null} onClose={closeChangelog} size="lg" labelledBy="cl-title">
+  <div class="cl-header">
+    <h2 class="cl-title" id="cl-title">{t('plugins.changelogTitle')} — {changelogPlugin}</h2>
+    <button class="iconbtn" onclick={closeChangelog} aria-label={t('common.close')}>✕</button>
   </div>
-{/if}
+  <div class="cl-body">
+    {#if changelogLoading}
+      <p class="cl-status">{t('plugins.changelogLoading')}</p>
+    {:else if changelogError}
+      <p class="cl-status status-bad">{t('plugins.changelogError')}<br><span class="cl-errdetail">{changelogError}</span></p>
+    {:else if changelogReleases && changelogReleases.length}
+      {#each changelogReleases as rel (rel.tag_name)}
+        <div class="cl-release">
+          <div class="cl-release-head">
+            <span class="cl-tag">{rel.tag_name}</span>
+            <span class="cl-date">{rel.published_at.slice(0, 10)}</span>
+          </div>
+          {#if rel.name && rel.name !== rel.tag_name}
+            <p class="cl-release-name">{rel.name}</p>
+          {/if}
+          {#if rel.body}
+            <pre class="cl-notes">{rel.body}</pre>
+          {/if}
+        </div>
+      {/each}
+    {:else}
+      <p class="cl-status">{t('plugins.changelogNoReleases')}</p>
+    {/if}
+  </div>
+</ModalShell>
 
 <style>
   .synccard {
@@ -888,31 +883,13 @@
   .mdopen {
     margin-top: 12px;
   }
-  /* Changelog modal */
-  .cl-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 70;
-    background: rgba(0,0,0,0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .cl-modal {
-    background: var(--sw-bg-primary);
-    border: 1px solid var(--sw-border);
-    border-radius: 12px;
-    width: min(680px, calc(100vw - 40px));
-    max-height: min(80vh, 600px);
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.35);
-  }
+  /* Changelog modal — rendered inside ModalShell's card (it owns padding, scroll, backdrop). */
   .cl-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
     border-bottom: 1px solid var(--sw-border);
   }
   .cl-title {
@@ -923,9 +900,9 @@
     white-space: nowrap;
   }
   .cl-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .cl-status {
     text-align: center;
