@@ -351,7 +351,8 @@
         const r = term.rows;
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-          if (id) sessionResize(id, c, r);
+          // Fire-and-forget: the child may exit in the debounce gap (map entry gone → session_not_found).
+          if (id) sessionResize(id, c, r).catch(() => {});
         }, 120);
       }
     });
@@ -408,9 +409,15 @@
     // Binary output channel: raw PTY bytes arrive as ArrayBuffers (no base64/JSON per chunk).
     const chan = new Channel<ArrayBuffer>();
     chan.onmessage = (buf) => {
+      // Late chunks queued in the webview loop can fire AFTER onDestroy disposed the terminal —
+      // writing to a disposed xterm throws. Dropping post-close bytes is correct.
+      if (destroyed) return;
       if (!gotData) gotData = true;
       const bytes = new Uint8Array(buf);
       if (visible) {
+        // Flush any buffered backlog FIRST: `visible` flips true a tick before the drain effect runs,
+        // so a live write here would otherwise jump ahead of older buffered bytes → scrambled TUI redraw.
+        if (pendingBuf.length) drainPending();
         term?.write(bytes);
       } else {
         // P1: off-screen — buffer instead of parsing now. Flushed on show (visible effect below).
@@ -477,6 +484,10 @@
       }
       id = null;
     }
+    // Drop any output the PREVIOUS session buffered while hidden — otherwise a later show would drain
+    // stale pre-reset bytes into the fresh terminal.
+    pendingBuf = [];
+    pendingBytes = 0;
     term?.reset();
     await start();
   }
@@ -559,7 +570,7 @@
         onInput(d);
         return;
       }
-      if (id && !exited) sessionWrite(id, d);
+      if (id && !exited) sessionWrite(id, d).catch(() => {}); // child may exit in the write gap
     });
     // A shell BEL (\a) is an explicit attention signal — mark the pane unread even when it's
     // on screen (unlike off-screen output). The marker self-clears when the pane is focused.
@@ -581,7 +592,7 @@
         const seq = '\x1b\r';
         onUserInput?.(paneKey);
         if (broadcast && onInput) onInput(seq);
-        else if (id && !exited) sessionWrite(id, seq);
+        else if (id && !exited) sessionWrite(id, seq).catch(() => {});
         return false;
       }
       if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
