@@ -4,7 +4,9 @@
 import type { Component, ForkStatus, BackupList, ProfilesStatus, SyncStatus, StackDriftItem } from './ipc';
 import { countOf } from './envelope';
 
-export type Attention = { level: 'info' | 'warn' | 'danger' | 'done'; count?: number };
+// `tip` is an optional i18n KEY: a badge whose meaning isn't obvious from the tab name
+// (e.g. Plugins counts available UPDATES, not installed plugins) explains itself on hover.
+export type Attention = { level: 'info' | 'warn' | 'danger' | 'done'; count?: number; tip?: string };
 
 /** Sum of available updates across update components. */
 export function updatesAttention(
@@ -55,7 +57,9 @@ export function profilesAttention(data: ProfilesStatus | null | undefined): Atte
 
 /** Plugins with an available update. */
 export function pluginsAttention(updateCount: number): Attention | null {
-  return updateCount > 0 ? { level: 'info', count: updateCount } : null;
+  // Clicker-audit #5: «0 плагинов» in the tab vs a "1" badge read as a contradiction — the badge
+  // counts available UPDATES; say so on hover.
+  return updateCount > 0 ? { level: 'info', count: updateCount, tip: 'nav.attentionPluginUpdates' } : null;
 }
 
 /**

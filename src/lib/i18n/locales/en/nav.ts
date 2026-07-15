@@ -23,6 +23,7 @@ export default {
   reorderHint: 'Drag items to reorder, or Alt+↑/↓ when focused',
   attention: 'Needs attention',
   attentionCount: 'Needs attention: {count}',
+  attentionPluginUpdates: 'Plugin updates available: {count}',
 
   // Section tooltips
   updatesTip: 'Check and install updates for the whole Claude Code stack',

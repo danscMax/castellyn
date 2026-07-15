@@ -230,7 +230,7 @@
             {:else if attention[it.id]}
               {@const att = attention[it.id]}
               {#if att?.count}
-                <span class="att att-{att.level}" title={t('nav.attentionCount', { count: att.count })}>{att.count}</span>
+                <span class="att att-{att.level}" title={t(att.tip ?? 'nav.attentionCount', { count: att.count })}>{att.count}</span>
               {:else}
                 <span class="att-dot att-{att?.level}" title={t('nav.attention')}></span>
               {/if}

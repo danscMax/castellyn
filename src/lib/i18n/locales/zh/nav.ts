@@ -23,6 +23,7 @@ export default {
   reorderHint: '拖动项目可重新排序，或聚焦时按 Alt+↑/↓',
   attention: '需要关注',
   attentionCount: '需要关注：{count}',
+  attentionPluginUpdates: '有插件更新：{count}',
 
   // Section tooltips
   updatesTip: '检查并安装整个 Claude Code 技术栈的更新',

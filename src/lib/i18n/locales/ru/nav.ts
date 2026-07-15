@@ -23,6 +23,7 @@ export default {
   reorderHint: 'Перетащите пункты для смены порядка или Alt+↑/↓ при фокусе',
   attention: 'Требует внимания',
   attentionCount: 'Требует внимания: {count}',
+  attentionPluginUpdates: 'Доступны обновления плагинов: {count}',
 
   // Section tooltips
   updatesTip: 'Проверка и установка обновлений всего стека Claude Code',

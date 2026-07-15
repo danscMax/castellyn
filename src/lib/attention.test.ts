@@ -62,7 +62,7 @@ describe('attention', () => {
   });
 
   it('plugins reflect update count', () => {
-    expect(pluginsAttention(3)).toEqual({ level: 'info', count: 3 });
+    expect(pluginsAttention(3)).toEqual({ level: 'info', count: 3, tip: 'nav.attentionPluginUpdates' });
     expect(pluginsAttention(0)).toBeNull();
   });
 
