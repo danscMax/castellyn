@@ -65,11 +65,19 @@ function Test-PortBusy([int]$Port) {
 
 function Stop-Iso {
   Write-Host '⏹  Останавливаю изолированный экземпляр…' -ForegroundColor Yellow
-  Get-Process castellyn -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  # Free the vite port: kill whatever node process listens on it.
-  Get-NetTCPConnection -State Listen -LocalPort $VitePort -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty OwningProcess -Unique |
-    ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+  # Only kill the ISOLATED (debug-build) exe, matched by its full path — never the user's real
+  # release/dev Castellyn that happens to share the process name.
+  $iso = @(Get-Process castellyn -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $Exe })
+  if ($iso.Count) {
+    $iso | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Free the vite port only because WE had an iso instance up — otherwise this would nuke a real
+    # `npm run tauri dev`'s vite (port 1420 is shared; the two can never run at once).
+    Get-NetTCPConnection -State Listen -LocalPort $VitePort -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess -Unique |
+      ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+  } else {
+    Write-Host '   (изолированный debug-экземпляр не запущен — ничего не тронуто)' -ForegroundColor DarkGray
+  }
   if ($Fresh -and (Test-Path $IsoRoot)) {
     Remove-Item -LiteralPath $IsoRoot -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "🧹 Профиль удалён: $IsoRoot" -ForegroundColor Yellow
@@ -93,7 +101,12 @@ if (Test-PortBusy $CdpPort) {
 if ($Build) {
   Write-Host '🔨 cargo build (debug)…' -ForegroundColor Cyan
   Push-Location $Repo
-  try { & cargo build --manifest-path 'src-tauri\Cargo.toml' } finally { Pop-Location }
+  # `& cargo` is a native call — it sets $LASTEXITCODE but does NOT throw, so a compile error would
+  # fall through and launch a STALE exe below. Fail loudly instead of testing outdated Rust.
+  try {
+    & cargo build --manifest-path 'src-tauri\Cargo.toml'
+    if ($LASTEXITCODE -ne 0) { throw "cargo build упал (код $LASTEXITCODE) — не запускаю устаревший exe." }
+  } finally { Pop-Location }
 }
 if (-not (Test-Path $Exe)) {
   throw "Не найден $Exe — собери сперва: pwsh -File tools/iso-test.ps1 -Build"
