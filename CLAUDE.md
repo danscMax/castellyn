@@ -97,6 +97,29 @@ npm run build          # frontend → build/
 Green gates before declaring done: `npm run check` (0/0), `npm test`, `npm run build`, and a
 release build via `build_all.ps1`. See `docs/BUILD.md`.
 
+## Isolated test instance (safe full click-through)
+
+`tools/iso-test.ps1` spins up Castellyn with its OWN `%APPDATA%`/`%LOCALAPPDATA%` (config isolated
+in a scratch dir) and a dedicated CDP port (9223; the real dev uses 9222), so a Playwright clicker
+can drive the whole UI without corrupting the real Castellyn config or touching the real browser.
+
+```bash
+pwsh -File tools/iso-test.ps1            # start (reuses scratch profile); prints CDP + recipe
+pwsh -File tools/iso-test.ps1 -Fresh     # start with a clean profile (onboarding appears)
+pwsh -File tools/iso-test.ps1 -Build     # cargo build the exe first, then start
+pwsh -File tools/iso-test.ps1 -Stop      # tear down (kills exe + frees vite 1420)
+```
+
+- **Isolation boundary:** only Castellyn's own config lives under `%APPDATA%\castellyn`. The profiles
+  it manages (`~/.claude*`, `~/.ssh/config`, forks under `SCRIPTS_ROOT`, providers, `freeapi.db`) are
+  the REAL filesystem — a test instance still SEES real data. Nothing that WRITES the real system
+  (maintenance scripts, git, registry autostart, paid Claude/codex/opencode sessions) is safe to
+  trigger in a test run.
+- **Port constraint:** vite is pinned to 1420 (`strictPort`) and the debug exe loads `devUrl=1420`,
+  so the isolated instance and your own `npm run tauri dev` CANNOT run at the same time.
+- The full safe click-through procedure (spawn a cheap clicker agent + safety rules + findings
+  format) is the `/max:max-castellyn-iso-audit` skill.
+
 ## Icon / branding
 
 App icon master is `src-tauri/icons/icon.png` (1024). Regenerate all formats with
