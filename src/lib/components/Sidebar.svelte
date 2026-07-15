@@ -459,6 +459,11 @@
     background: var(--sw-warn);
     color: #1a1205;
   }
+  /* Light theme darkens --sw-warn (bright amber → amber-700), so the near-black glyph text drops to
+     ~3.76:1 (fails AA). White on the dark amber is ~5.5:1. Dark theme keeps the dark-on-bright text. */
+  :global(.light) .att-warn {
+    color: #fff;
+  }
   .att-danger {
     background: var(--sw-danger-solid);
     color: #fff;

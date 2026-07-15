@@ -131,6 +131,11 @@
      UNDECLARED --sw-bg-tertiary and silently fall back to this literal. Now a real token so the light
      theme can override it (a white overlay was near-invisible on the light surface). */
   --sw-bg-tertiary: rgba(255, 255, 255, 0.06);
+  /* The subtlest surface tint (below tertiary): table row hover/zebra/expand, checkbox fill and the
+     skeleton base stop. Was referenced UNDECLARED in 14 places → resolved to `transparent`, so every
+     table across the app silently lost its hover/expand surface in BOTH themes. Now a real token with
+     a light override (a white overlay is invisible on the near-white light surface). */
+  --sw-bg-subtle: rgba(255, 255, 255, 0.045);
 
   --sw-space-1: 0.25rem;
   --sw-space-2: 0.5rem;
@@ -201,6 +206,8 @@
   --sw-info: #0284c7;
   /* Dark overlay instead of the dark-theme white overlay — the white tint was invisible on light. */
   --sw-bg-tertiary: rgba(15, 23, 42, 0.06);
+  /* Dark overlay so the table hover/zebra/expand surface is visible on the near-white light theme. */
+  --sw-bg-subtle: rgba(15, 23, 42, 0.05);
 }
 
 @layer base {
