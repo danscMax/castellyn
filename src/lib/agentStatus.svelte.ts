@@ -7,4 +7,7 @@
  *  pane was not focused, cleared once the user looks at it (herdr's Idle+!seen). */
 export type AgentPaneState = 'working' | 'blocked' | 'idle' | 'done' | 'limited' | 'unknown';
 
-export const agentSummary = $state({ blocked: 0, working: 0, done: 0, limited: 0 });
+// `live` is the count of ALL active session panes regardless of tool/status — shell panes and
+// hook-less Claude panes have no semantic state, so blocked+working+done alone undercounts what
+// is really running (clicker-audit #1: Analytics said "no sessions" with 3 shells live).
+export const agentSummary = $state({ blocked: 0, working: 0, done: 0, limited: 0, live: 0 });

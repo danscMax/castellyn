@@ -335,7 +335,9 @@
   });
 
   // --- Sessions panel (Wave C-4): live snapshot from agent_status (no history persisted) ---
-  const sessTotal = $derived(agentSummary.working + agentSummary.blocked + agentSummary.done);
+  // Clicker-audit #1: total = every live pane (shells included), not just the ones with a
+  // semantic agent status — working/blocked/done stay as the breakdown of those that have one.
+  const sessTotal = $derived(agentSummary.live);
 
   const grainLabel = $derived.by(() => {
     const step = data?.stepSec ?? 0;

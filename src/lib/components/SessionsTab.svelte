@@ -604,6 +604,8 @@
     agentSummary.working = statusCounts.working;
     agentSummary.done = statusCounts.done;
     agentSummary.limited = statusCounts.limited;
+    // Clicker-audit #1: total live panes (any tool) so the Analytics snapshot counts shell sessions.
+    agentSummary.live = activePanes.length;
   });
 
   // Agent-status lifecycle hook (Sessions ⚙ settings): wired into every claude profile.
@@ -2745,9 +2747,9 @@
         <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => { layoutBannerDismissed = true; void restoreLayout(); }}>🖥 {t('sessions.restoreOnMonitors')}</button>
         <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={forgetLayout}>{t('sessions.forgetLayout')}</button>
       {/if}
-      {#if restorable.length}
-        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (restorable = [])}>{t('sessions.restoreDismiss')}</button>
-      {/if}
+      <!-- Clicker-audit #4: one «Скрыть» dismisses whatever the bar shows (in-grid offer AND/OR
+           the monitor-layout prompt) for this session — the monitor-only case had no hide button. -->
+      <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => { restorable = []; layoutBannerDismissed = true; }}>{t('sessions.restoreDismiss')}</button>
     </div>
   {/if}
 
