@@ -58,7 +58,7 @@ export default {
   loginTitle: 'Вход в freellmapi',
   loginHint:
     'Введите email+пароль от freellmapi (предпочтительно) — Castellyn войдёт сам. Или вставьте токен сессии дашборда.',
-  loginEmail: 'email freellmapi',
+  loginEmail: 'почта freellmapi',
   loginPassword: 'пароль',
   loginTokenOpt: 'или токен сессии (необязательно)',
   loginSaved: 'Данные входа freellmapi сохранены в Credential Manager.',

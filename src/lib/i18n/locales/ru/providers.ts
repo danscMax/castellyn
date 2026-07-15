@@ -108,7 +108,7 @@ export default {
   dialogTitle: 'Провайдер профиля «{name}»',
   presetLabel: 'Пресет (только Anthropic-совместимые)',
   presetPlaceholder: '— выбрать пресет —',
-  presetCustom: 'Custom: {url}',
+  presetCustom: 'Свой: {url}',
   presetHint:
     'Anthropic-нативные движки (LM Studio, роутер GLM) вешаются на профиль напрямую. Чисто OpenAI-движки (FreeLLMAPI, DeepSeek, Qwen) — только через «Подключить через роутер».',
   baseUrlLabel: 'Base URL',
