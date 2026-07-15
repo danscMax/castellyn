@@ -2244,6 +2244,25 @@
   onCancel={() => (confirmAsk = null)}
 />
 
+<!-- Launchpad chips (one-click ws/favorite/recent) — one definition, rendered in the launch form
+     and both empty states so the three never drift apart (self-review: the main empty state had
+     lost the env-icon tint + stripEnvPrefix the others gained). newOpen=false is harmless when the
+     form is already closed. -->
+{#snippet launchpadChips()}
+  {#each wsNames as name (name)}
+    <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
+      onclick={() => { launchWorkspace(name); newOpen = false; }}>▶ {name} ({workspaces[name].length})</button>
+  {/each}
+  {#each favorites.slice(0, 3) as f (f.id)}
+    <button type="button" class="argchip fr-fav" disabled={atLimit} title={t('sessions.favLaunchTip')}
+      onclick={() => { launchFav(f); newOpen = false; }}>★ <span class="env-ic env-tint-{f.env}">{@html envIcon(f.env)}</span> {stripEnvPrefix(f)}</button>
+  {/each}
+  {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
+    <button type="button" class="argchip" disabled={atLimit}
+      onclick={() => { launchRecent(r); newOpen = false; }}><span class="env-ic env-tint-{r.env}">{@html envIcon(r.env)}</span> {stripEnvPrefix(r)}</button>
+  {/each}
+{/snippet}
+
 <div class="wrap">
   <!-- Redesign 2026-07 (mockup #5 + #1 density): ONE header row — title, launcher split-button,
        status rollup, then search / command / broadcast / layout / overflow / close-all. The old
@@ -2590,20 +2609,7 @@
     {#if favorites.length || menuRecents.length || wsNames.length}
       <div class="form-recents">
         <span class="fld-lbl">{t('sessions.quickRepeat')}</span>
-        <div class="fr-chips">
-          {#each wsNames as name (name)}
-            <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
-              onclick={() => { launchWorkspace(name); newOpen = false; }}>▶ {name} ({workspaces[name].length})</button>
-          {/each}
-          {#each favorites.slice(0, 3) as f (f.id)}
-            <button type="button" class="argchip fr-fav" disabled={atLimit} title={t('sessions.favLaunchTip')}
-              onclick={() => { launchFav(f); newOpen = false; }}>★ <span class="env-ic env-tint-{f.env}">{@html envIcon(f.env)}</span> {stripEnvPrefix(f)}</button>
-          {/each}
-          {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
-            <button type="button" class="argchip" disabled={atLimit}
-              onclick={() => { launchRecent(r); newOpen = false; }}><span class="env-ic env-tint-{r.env}">{@html envIcon(r.env)}</span> {stripEnvPrefix(r)}</button>
-          {/each}
-        </div>
+        <div class="fr-chips">{@render launchpadChips()}</div>
       </div>
     {/if}
     </div>
@@ -3013,18 +3019,7 @@
             actionLabel={t('sessions.newSession')} />
           {#if favorites.length || menuRecents.length || wsNames.length}
             <div class="empty-chips-hdr">{t('sessions.quickRepeat')}</div>
-            <div class="empty-chips">
-              {#each wsNames as name (name)}
-                <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
-                  onclick={() => launchWorkspace(name)}>▶ {name} ({workspaces[name].length})</button>
-              {/each}
-              {#each favorites.slice(0, 3) as f (f.id)}
-                <button type="button" class="argchip fr-fav" disabled={atLimit} onclick={() => launchFav(f)}>★ <span class="env-ic env-tint-{f.env}">{@html envIcon(f.env)}</span> {stripEnvPrefix(f)}</button>
-              {/each}
-              {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
-                <button type="button" class="argchip" disabled={atLimit} onclick={() => launchRecent(r)}><span class="env-ic env-tint-{r.env}">{@html envIcon(r.env)}</span> {stripEnvPrefix(r)}</button>
-              {/each}
-            </div>
+            <div class="empty-chips">{@render launchpadChips()}</div>
           {/if}
         </div>
       {/if}
@@ -3089,18 +3084,7 @@
            (whole fleets) launch one-click next to favorite/recent single recipes. -->
       <div class="empty-launchpad">
         <div class="empty-chips-hdr">{t('sessions.quickRepeat')}</div>
-        <div class="empty-chips">
-          {#each wsNames as name (name)}
-            <button type="button" class="argchip" disabled={atLimit} title={t('sessions.wsLaunchTip', { name })}
-              onclick={() => launchWorkspace(name)}>▶ {name} ({workspaces[name].length})</button>
-          {/each}
-          {#each favorites.slice(0, 3) as f (f.id)}
-            <button type="button" class="argchip fr-fav" disabled={atLimit} onclick={() => launchFav(f)}>★ {f.label}</button>
-          {/each}
-          {#each menuRecents.slice(0, 3) as r (recipeKey(r))}
-            <button type="button" class="argchip" disabled={atLimit} onclick={() => launchRecent(r)}>{r.label}</button>
-          {/each}
-        </div>
+        <div class="empty-chips">{@render launchpadChips()}</div>
       </div>
     {/if}
   {/if}
