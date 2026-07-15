@@ -732,6 +732,7 @@
         claudeSids = restC;
         const { [oldId]: _s, ...restS } = spawnedAt;
         spawnedAt = restS;
+        delete limitMenuById[oldId]; // #21f: id-keyed menu-up flag — prune with the rest
       }
     }
     refreshGlobalCount(); // F16: a spawn/exit here moved the global tally — re-read it
@@ -1032,7 +1033,12 @@
       return null;
     }
     const key = `${v.tool}:${v.profile || 'sh'}#${seq++}`;
-    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space: v.space ?? activeSpace, limitMode: v.limitMode }];
+    // Coerce a restored/re-attached pane's space to a live one: if LIVE_KEY desynced from SPACES_KEY
+    // (orphaned id), the pane would be hidden in the grid AND never render in the rail (which iterates
+    // `spaces`) — a live PTY running invisibly, unreachable and unkillable from the UI. `spaces` is
+    // loaded synchronously on mount before any restore path, so this never collapses a valid space.
+    const space = v.space && spaces.some((s) => s.id === v.space) ? v.space : activeSpace;
+    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space, limitMode: v.limitMode }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
     rememberRecent(v.cwd);
     // EVERY real spawn becomes a "recent" recipe — clones, tab "＋", stack launches and deep-links
@@ -1062,6 +1068,9 @@
   function prunePaneKey(key: string) {
     autoContinued.delete(key);
     switchAttempted.delete(key);
+    sawRateLimit.delete(key);
+    menuDismissed.delete(key);
+    delete menuDismissedAt[key];
     delete contJitterMs[key];
     delete lastUserInputAt[key];
     delete pendingContinue[key];
