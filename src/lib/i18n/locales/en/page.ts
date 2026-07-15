@@ -168,6 +168,7 @@ export default {
   prof_verb_remove: 'removing profile {name}',
   prof_verb_rename: 'renaming {name} → {newName}',
   prof_verb_recolor: 'recoloring {name}',
+  prof_verb_redescribe: 'redescribing {name}',
   prof_verb_setlinks: 'shared folders {name}',
   prof_log: '▶ Profiles: {verb}…',
   prof_verb_check: 'checking',

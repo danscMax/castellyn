@@ -704,6 +704,7 @@
         remove: t('page.prof_verb_remove', { name: args.name }),
         rename: t('page.prof_verb_rename', { name: args.name, newName: args.newName ?? '' }),
         recolor: t('page.prof_verb_recolor', { name: args.name }),
+        redescribe: t('page.prof_verb_redescribe', { name: args.name }),
         'set-links': t('page.prof_verb_setlinks', { name: args.name })
       };
       log = [t('page.prof_log', { verb: verb[args.action] ?? args.action })];

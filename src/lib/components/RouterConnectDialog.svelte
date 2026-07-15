@@ -31,8 +31,12 @@
   let seeded = '';
 
   $effect(() => {
-    const seed = `${open}:${engine?.id ?? ''}`;
-    if (open && engine && seed !== seeded) {
+    if (!open) {
+      seeded = ''; // reset on close so reopening the SAME engine after Cancel reseeds + refetches
+      return;
+    }
+    const seed = engine?.id ?? '';
+    if (engine && seed !== seeded) {
       seeded = seed;
       model = '';
       profile = profiles[0] ?? '';
@@ -94,7 +98,7 @@
         <span>{loading ? t('providers.rcModelLoading') : models.length ? t('providers.rcModelAvailable', { n: models.length }) : t('providers.rcModelManual')}</span>
         <input class="sw-input" list="rc-models" bind:value={model} placeholder={t('providers.rcModelPlaceholder')} spellcheck="false" title={t('providers.rcModelInputTip')} />
         <datalist id="rc-models">
-          {#each models as m (m)}<option value={m}></option>{/each}
+          {#each models as m}<option value={m}></option>{/each}
         </datalist>
       </label>
 

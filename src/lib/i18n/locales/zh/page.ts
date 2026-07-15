@@ -167,6 +167,7 @@ export default {
   prof_verb_remove: '删除配置 {name}',
   prof_verb_rename: '重命名 {name} → {newName}',
   prof_verb_recolor: '更改颜色 {name}',
+  prof_verb_redescribe: '更改描述 {name}',
   prof_verb_setlinks: '共享文件夹 {name}',
   prof_log: '▶ 配置：{verb}…',
   prof_verb_check: '检查中',

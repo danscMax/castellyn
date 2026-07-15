@@ -73,7 +73,7 @@
       [t('settings.view'), t('settings.density'), t('settings.fullWidth'), t('settings.termScrollback')],
       [t('settings.language'), t('settings.languageDesc')],
       [t('settings.scriptsRoot'), t('settings.scriptsRootDesc')],
-      [t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection')],
+      [t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection'), t('settings.stackNative'), t('settings.stackNativeDesc')],
       [t('settings.monitorsSection'), t('settings.limitsMonitor'), t('settings.stackHealthMonitor'), t('settings.updateCheckOnStart')],
       [t('settings.sessionsSection'), t('sessions.statusSound'), t('sessions.statusToast'), t('sessions.limitMode')],
       [t('settings.timeouts'), t('settings.timeoutsDesc')],
@@ -479,7 +479,7 @@
     {/if}
 
     <!-- Launch -->
-    {#if show(t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection'))}
+    {#if show(t('settings.launch'), t('settings.startWithWindows'), t('settings.startHidden'), t('settings.closeToTray'), t('settings.confirmDestructive'), t('settings.statusBar'), t('settings.toggleHotkey'), t('settings.shortcutsSection'), t('settings.stackNative'), t('settings.stackNativeDesc'))}
     <div class="sw-card flex flex-col gap-sw-3" data-highlight-id="settings:launch">
       <div class="font-medium">{t('settings.launch')}</div>
       <label class="flex items-center justify-between gap-sw-4">

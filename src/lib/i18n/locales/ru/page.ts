@@ -168,6 +168,7 @@ export default {
   prof_verb_remove: 'удаление профиля {name}',
   prof_verb_rename: 'переименование {name} → {newName}',
   prof_verb_recolor: 'смена цвета {name}',
+  prof_verb_redescribe: 'смена описания {name}',
   prof_verb_setlinks: 'общие папки {name}',
   prof_log: '▶ Профили: {verb}…',
   prof_verb_check: 'проверка',

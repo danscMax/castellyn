@@ -102,7 +102,10 @@
             {:else}
               <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy} onclick={() => onAction('run', task.id)}
                 title={t('schedule.runNowHint')}>{t('schedule.runNow')}</button>
-              {#if times[task.id] !== task.time}
+              <!-- Compare against the SEEDED value (time ?? defaultTime, see L29), not raw task.time:
+                   a task with time=null seeds to defaultTime, so `!== null` would show a spurious
+                   "Reschedule" that silently rewrites the live schedule on click. -->
+              {#if times[task.id] !== (task.time ?? task.defaultTime)}
                 <button class="sw-btn sw-btn-primary text-sw-xs" disabled={busy} onclick={() => onAction('create', task.id, times[task.id])}
                   title={t('schedule.rescheduleHint')}>{t('schedule.reschedule')}</button>
               {/if}

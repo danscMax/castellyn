@@ -65,7 +65,12 @@
     return n.length > 0 && n.length <= 64 && !CONTROL_CHARS.test(n);
   });
   const canSubmit = $derived(
-    nameValid && isValidHttpUrl(baseUrl.trim()) && (!needsProfile || !!targetProfile)
+    nameValid &&
+      isValidHttpUrl(baseUrl.trim()) &&
+      (!needsProfile || !!targetProfile) &&
+      // direct + openai is an invalid combo (the warning above says it needs the router) — don't
+      // let Save persist a config that would then refuse to Connect.
+      !directOpenaiBlocked
   );
   const viaLabel = $derived(
     connectVia === 'freellmapi' ? t('myProviders.viaFreellmapi') : t('myProviders.viaDirect')

@@ -94,18 +94,25 @@
   let models = $state<string[]>([]);
   let loadingModels = $state(false);
   let modelsMsg = $state(''); // feedback when the fetch returns nothing or errors (was silent)
+  let modelsSeq = 0; // generation guard: only the latest load may write models/loading state
   async function loadModels() {
-    if (!baseUrl.trim()) return;
+    const url = baseUrl.trim();
+    if (!url) return;
+    const seq = ++modelsSeq;
     loadingModels = true;
     modelsMsg = '';
     try {
-      models = await readEngineModels(baseUrl.trim());
+      const m = await readEngineModels(url);
+      if (seq !== modelsSeq) return; // a newer load superseded this one
+      models = m;
       if (!models.length) modelsMsg = t('providers.modelsNone');
     } catch {
+      if (seq !== modelsSeq) return;
       models = [];
       modelsMsg = t('providers.modelsError');
+    } finally {
+      if (seq === modelsSeq) loadingModels = false;
     }
-    loadingModels = false;
   }
 
   function submit() {
