@@ -273,7 +273,12 @@ function Write-StatusJson {
         }
         if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -LiteralPath $Root -Force | Out-Null }
         $path = Join-Path $Root ("{0}.last.json" -f $Component)
-        [System.IO.File]::WriteAllText($path, ($payload | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
+        # Atomic write: full-content temp then a rename, so a crash/power-loss mid-write can't leave a
+        # TORN <id>.last.json (the Rust reader would then show `corrupt:` with no .bak to recover from).
+        # File.Move(...,$true) is MoveFileEx REPLACE_EXISTING under pwsh 7 → an atomic same-volume swap.
+        $tmp = "$path.tmp"
+        [System.IO.File]::WriteAllText($tmp, ($payload | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::Move($tmp, $path, $true)
         return $path
     } catch {
         # Don't fail the caller, but don't fail silently either — a swallowed write means the
