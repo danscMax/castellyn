@@ -1719,9 +1719,10 @@
   );
   // Mockup #3 (owner-picked): live preview card — the EXACT command that will run and the
   // chosen profile's remaining 5h/7d windows, so launching is never a guess.
-  const previewCmd = $derived(lEnv === 'shell' ? 'pwsh' : `${lEnv} ${composeArgs(lEnv, lArgs)}`.trim());
+  const composedArgs = $derived(lEnv === 'shell' ? '' : composeArgs(lEnv, lArgs));
+  const previewCmd = $derived(lEnv === 'shell' ? 'pwsh' : `${lEnv} ${composedArgs}`.trim());
   // Clicker-audit #3: does the composed command carry a safety-skipping flag? Surfaced in the card.
-  const previewRisky = $derived(lEnv !== 'shell' && composeArgs(lEnv, lArgs).split(/\s+/).some(isRiskyFlag));
+  const previewRisky = $derived(composedArgs.split(/\s+/).some(isRiskyFlag));
   const previewLimits = $derived(lEnv === 'claude' ? (limitsByProfile[lProfile] ?? null) : null);
   const barClass = (v: number | null | undefined) => (v == null ? '' : v >= 95 ? 'max' : v >= 70 ? 'hot' : '');
   // Council U-4: when every profile is maxed the advisor used to dead-end — surface WHEN the
