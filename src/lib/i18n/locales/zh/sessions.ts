@@ -289,4 +289,14 @@ export default {
   busMessage: '来自 {from} 的消息：{body}',
   busUnread: '消息：{n}',
   busMarkRead: '标记已读',
+  // W7: schedule a favorite recipe.
+  schedTitle: '定时',
+  schedTime: '时间',
+  schedDays: '星期',
+  schedQuota: '配额超过此值时跳过，%',
+  schedPrecheck: '预检命令',
+  schedEnabled: '启用',
+  schedLaunched: '按计划启动：{label}',
+  schedLaunchFailed: '按计划启动失败：{label}',
+  schedLast: '上次：{outcome}',
 };

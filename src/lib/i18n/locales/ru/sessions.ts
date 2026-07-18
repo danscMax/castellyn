@@ -289,4 +289,14 @@ export default {
   busMessage: 'Сообщение от {from}: {body}',
   busUnread: 'Сообщений: {n}',
   busMarkRead: 'Прочитано',
+  // W7: schedule a favorite recipe.
+  schedTitle: 'Расписание',
+  schedTime: 'Время',
+  schedDays: 'Дни',
+  schedQuota: 'Пропускать при квоте выше, %',
+  schedPrecheck: 'Precheck-команда',
+  schedEnabled: 'Включено',
+  schedLaunched: 'Запущено по расписанию: {label}',
+  schedLaunchFailed: 'Не удалось запустить по расписанию: {label}',
+  schedLast: 'Последний раз: {outcome}',
 };

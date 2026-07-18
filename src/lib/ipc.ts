@@ -1123,6 +1123,41 @@ export type LimitsAlertEvent = {
   resetsAt: string | null;
 };
 
+// --- Scheduled agent-session launches (W7) ---
+// camelCase mirror of Rust agent_schedules.rs. The backend decides WHEN a schedule fires (internal
+// minute tick + grace + quota/precheck gates) and marks it `pending`; the frontend drains pending
+// entries on the `agent-schedule-due` event / on Sessions mount, launches a normal pane, and acks.
+export type ScheduleRecipe = {
+  env: string; // claude | codex | opencode | shell
+  profile: string;
+  folder: string;
+  args: string;
+  worktree: boolean;
+};
+export type AgentSchedule = {
+  id: string;
+  enabled: boolean;
+  label: string;
+  recipe: ScheduleRecipe;
+  time: string; // "HH:MM" local time
+  days: number[]; // ISO weekday 1(Mon)..7(Sun); empty = every day
+  quotaGateMaxPct?: number | null; // skip when the profile's 5h utilization is above this %
+  precheck?: string | null; // shell gate: non-zero exit / timeout skips the run
+  precheckTimeoutSec?: number | null;
+  graceMinutes?: number | null;
+  lastFiredAt?: number | null; // backend bookkeeping — preserve on edit
+  lastOutcome?: string | null; // "<day>|<outcome>" — the outcome word follows the '|'
+  pending?: boolean; // fired, waiting for the frontend to launch + ack
+};
+// Payload of the backend `agent-schedule-due` event.
+export type ScheduleDue = { id: string; label: string; recipe: ScheduleRecipe };
+export const readAgentSchedules = () => invoke<AgentSchedule[]>('read_agent_schedules');
+export const writeAgentSchedules = (schedules: AgentSchedule[]) =>
+  invoke<void>('write_agent_schedules', { schedules });
+export const ackAgentSchedule = (id: string, outcome: string) =>
+  invoke<void>('ack_agent_schedule', { id, outcome });
+export const pendingAgentSchedules = () => invoke<AgentSchedule[]>('pending_agent_schedules');
+
 // --- Settings ---
 export type HubConfig = {
   scriptsRoot?: string | null;

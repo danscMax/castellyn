@@ -289,4 +289,14 @@ export default {
   busMessage: 'Message from {from}: {body}',
   busUnread: 'Messages: {n}',
   busMarkRead: 'Mark read',
+  // W7: schedule a favorite recipe.
+  schedTitle: 'Schedule',
+  schedTime: 'Time',
+  schedDays: 'Days',
+  schedQuota: 'Skip when quota above, %',
+  schedPrecheck: 'Precheck command',
+  schedEnabled: 'Enabled',
+  schedLaunched: 'Launched on schedule: {label}',
+  schedLaunchFailed: 'Failed to launch on schedule: {label}',
+  schedLast: 'Last run: {outcome}',
 };

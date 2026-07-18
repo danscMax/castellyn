@@ -40,6 +40,13 @@
     worktreeIsClean,
     busPollMany,
     busMarkRead,
+    readAgentSchedules,
+    writeAgentSchedules,
+    ackAgentSchedule,
+    pendingAgentSchedules,
+    type AgentSchedule,
+    type ScheduleRecipe,
+    type ScheduleDue,
     type BusMessage,
     type AgentStatusHookState,
     type AgentStatusEvent,
@@ -53,7 +60,7 @@
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
   import { hookHealth } from '$lib/hookHealth';
-  import { parseTsMs } from '$lib/relativeTime';
+  import { parseTsMs, localeTag } from '$lib/relativeTime';
   import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
@@ -2076,6 +2083,170 @@
       /* ignore */
     }
   });
+
+  // ─── W7: schedule a favorite (backend agent_schedules.rs fires it; the frontend launches + acks) ──
+  // A schedule's id == the favorite's id, so one ⏰ popup edits the schedule for that pinned recipe.
+  let schedules = $state<AgentSchedule[]>([]);
+  let schedOpenFor = $state<string | null>(null); // fav id whose ⏰ popup is open, or null
+  // In-flight guard: the `agent-schedule-due` event and the mount-time pending drain can both target
+  // one id — launch it once (ack clears `pending`, but the two paths can race before that lands).
+  const schedLaunching = new Set<string>();
+  // The editing draft (fields are strings so an empty input reads as "gate off").
+  let schedDraft = $state<{ enabled: boolean; time: string; days: number[]; quota: string; precheck: string }>({
+    enabled: true, time: '03:00', days: [], quota: '', precheck: ''
+  });
+  const schedFor = (id: string) => schedules.find((s) => s.id === id);
+  // Weekday chips Mon..Sun (ISO 1..7) — labels from Intl for the active locale, never hardcoded.
+  // 2024-01-01 is a Monday, so day-of-month 1..7 walks Mon→Sun.
+  const weekdayChips = $derived.by(() => {
+    const fmt = new Intl.DateTimeFormat(localeTag(), { weekday: 'short' });
+    return Array.from({ length: 7 }, (_, i) => ({
+      iso: i + 1,
+      label: fmt.format(new Date(Date.UTC(2024, 0, 1 + i)))
+    }));
+  });
+  // The outcome word after the "<day>|<outcome>" separator (backend encodes the fire day there).
+  const lastOutcomeWord = (o?: string | null) => (o ? o.split('|').pop() || '' : '');
+  function openSchedule(f: Fav) {
+    if (schedOpenFor === f.id) {
+      schedOpenFor = null;
+      return;
+    }
+    const ex = schedFor(f.id);
+    schedDraft = ex
+      ? {
+          enabled: ex.enabled,
+          time: ex.time,
+          days: [...ex.days],
+          quota: ex.quotaGateMaxPct != null ? String(ex.quotaGateMaxPct) : '',
+          precheck: ex.precheck ?? ''
+        }
+      : { enabled: true, time: '03:00', days: [], quota: '', precheck: '' };
+    schedOpenFor = f.id;
+  }
+  function toggleSchedDay(iso: number) {
+    schedDraft.days = schedDraft.days.includes(iso)
+      ? schedDraft.days.filter((d) => d !== iso)
+      : [...schedDraft.days, iso].sort((a, b) => a - b);
+  }
+  async function saveSchedule(f: Fav) {
+    const time = schedDraft.time.trim();
+    if (!/^\d{1,2}:\d{2}$/.test(time)) {
+      pushToast({ kind: 'error', title: t('sessions.schedTime') });
+      return;
+    }
+    const quotaN = Number(schedDraft.quota.trim());
+    const quota = schedDraft.quota.trim() && Number.isFinite(quotaN) ? quotaN : null;
+    const recipe: ScheduleRecipe = {
+      env: f.env,
+      profile: f.env === 'claude' ? f.profile : '',
+      folder: f.folder,
+      args: f.args,
+      worktree: false
+    };
+    // ponytail: whole-file write (last-writer-wins). Re-read right before writing so a schedule the
+    // backend tick just touched isn't clobbered, and carry over its backend-owned bookkeeping.
+    let base: AgentSchedule[] = schedules;
+    try {
+      base = await readAgentSchedules();
+      schedules = base;
+    } catch {
+      /* fall back to the in-memory copy */
+    }
+    const prev = base.find((s) => s.id === f.id);
+    const next: AgentSchedule = {
+      id: f.id,
+      enabled: schedDraft.enabled,
+      label: f.label,
+      recipe,
+      time,
+      days: schedDraft.days,
+      quotaGateMaxPct: quota,
+      precheck: schedDraft.precheck.trim() || null,
+      precheckTimeoutSec: prev?.precheckTimeoutSec ?? null,
+      graceMinutes: prev?.graceMinutes ?? null,
+      lastFiredAt: prev?.lastFiredAt ?? null,
+      lastOutcome: prev?.lastOutcome ?? null,
+      pending: prev?.pending ?? false
+    };
+    const merged = [...base.filter((s) => s.id !== f.id), next];
+    try {
+      await writeAgentSchedules(merged);
+      schedules = merged;
+      schedOpenFor = null;
+      pushToast({ kind: 'success', title: t('sessions.schedTitle') });
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+  }
+  async function removeSchedule(id: string) {
+    const merged = schedules.filter((s) => s.id !== id);
+    try {
+      await writeAgentSchedules(merged);
+      schedules = merged;
+    } catch (e) {
+      pushToast({ kind: 'error', title: String(e) });
+    }
+  }
+  // Launch one fired/pending schedule as a NORMAL local pane, then ack the outcome. Mirrors
+  // launchEnvPane's worktree flow (recipe.worktree → its own isolated checkout).
+  async function launchScheduled(id: string, label: string, recipe: ScheduleRecipe) {
+    if (schedLaunching.has(id)) return;
+    schedLaunching.add(id);
+    try {
+      const v = paneFrom(recipe.env as Env, recipe.profile, '', recipe.folder, '', recipe.args);
+      if (!v) {
+        // paneFrom already toasted (it never should here — schedules are local — but stay honest).
+        await ackAgentSchedule(id, 'launch_failed');
+        pushToast({ kind: 'error', title: t('sessions.schedLaunchFailed', { label }) });
+        return;
+      }
+      let cwd = v.cwd;
+      let worktree: WtMeta | undefined;
+      if (recipe.worktree && recipe.folder.trim()) {
+        const repo = recipe.folder.trim();
+        const name = recipe.env === 'claude' && recipe.profile ? `${recipe.env}-${recipe.profile}` : recipe.env;
+        try {
+          const info = await worktreeCreate(repo, name);
+          worktree = { repo, path: info.path, branch: info.branch };
+          cwd = info.path;
+        } catch (e) {
+          await ackAgentSchedule(id, 'launch_failed');
+          pushToast({ kind: 'error', title: t('sessions.schedLaunchFailed', { label }), detail: String(e) });
+          return;
+        }
+      }
+      const key = addPane({ ...v, cwd, worktree });
+      if (!key) {
+        // MAX_PANES / SESSION_LIMIT — addPane already toasted the cap; record the honest outcome.
+        await ackAgentSchedule(id, 'launch_failed');
+        return;
+      }
+      await ackAgentSchedule(id, 'launched');
+      pushToast({ kind: 'success', title: t('sessions.schedLaunched', { label }) });
+    } finally {
+      schedLaunching.delete(id);
+    }
+  }
+  onMount(() => {
+    readAgentSchedules()
+      .then((s) => (schedules = s))
+      .catch(() => {});
+    // Drain schedules that fired while Sessions wasn't mounted.
+    pendingAgentSchedules()
+      .then((list) => {
+        for (const s of list) void launchScheduled(s.id, s.label || s.id, s.recipe);
+      })
+      .catch(() => {});
+    // A schedule firing while we're mounted arrives as an event.
+    track(
+      listen<ScheduleDue>('agent-schedule-due', (e) => {
+        const p = e.payload;
+        if (p?.id) void launchScheduled(p.id, p.label || p.id, p.recipe);
+      })
+    );
+  });
+
   // ─── Launcher C (V9+V3): recents = last 5 unique launch recipes, shown in the ▾ menu ───
   type Recent = { env: Env; profile: string; locId: string; folder: string; remoteDir: string; args: string; label: string; when: number };
   const RECKEY = 'cmh-sessions-recents';
@@ -2573,16 +2744,62 @@
       {#if favorites.length}
         <div class="pm-hdr">{t('sessions.menuFavs')}</div>
         {#each favorites as f (f.id)}
+          {@const sched = schedFor(f.id)}
           <div class="pm-row">
             <button type="button" class="pm-item" role="menuitem" disabled={atLimit}
               onclick={() => { launchFav(f); plusMenuOpen = false; }} title={t('sessions.favLaunchTip')}>
               <span class="pm-star">★</span>
               <span class="env-ic pm-ic env-tint-{f.env}">{@html envIcon(f.env)}</span>
               <span class="pm-label">{stripEnvPrefix(f)}</span>
+              {#if sched?.enabled}<span class="pm-sched-on" title={t('sessions.schedTitle')}>⏰ {sched.time}</span>{/if}
               <span class="pm-path" title={f.locId ? f.remoteDir : f.folder}>{f.locId ? f.remoteDir : f.folder}</span>
             </button>
+            <button type="button" class="pm-x pm-clock" class:on={schedOpenFor === f.id || !!sched?.enabled}
+              onclick={() => openSchedule(f)} title={t('sessions.schedTitle')} aria-label={t('sessions.schedTitle')}
+              aria-expanded={schedOpenFor === f.id}>⏰</button>
             <button type="button" class="pm-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
           </div>
+          {#if schedOpenFor === f.id}
+            <div class="sched-pop" role="group" aria-label={t('sessions.schedTitle')}>
+              <div class="sched-fld">
+                <span class="sched-lbl">{t('sessions.schedTime')}</span>
+                <input class="sw-input text-sw-xs sched-time" type="time" bind:value={schedDraft.time} />
+                <span class="sched-en">
+                  <Toggle bind:checked={schedDraft.enabled} ariaLabel={t('sessions.schedEnabled')} />
+                  {t('sessions.schedEnabled')}
+                </span>
+              </div>
+              <div class="sched-fld">
+                <span class="sched-lbl">{t('sessions.schedDays')}</span>
+                <div class="sched-days">
+                  {#each weekdayChips as d (d.iso)}
+                    <button type="button" class="sched-day" class:on={schedDraft.days.includes(d.iso)}
+                      aria-pressed={schedDraft.days.includes(d.iso)} onclick={() => toggleSchedDay(d.iso)}>{d.label}</button>
+                  {/each}
+                </div>
+              </div>
+              <div class="sched-fld">
+                <span class="sched-lbl">{t('sessions.schedQuota')}</span>
+                <input class="sw-input text-sw-xs sched-quota" type="text" inputmode="numeric"
+                  bind:value={schedDraft.quota} placeholder="—" />
+              </div>
+              <div class="sched-fld">
+                <span class="sched-lbl">{t('sessions.schedPrecheck')}</span>
+                <input class="sw-input font-mono text-sw-xs sched-precheck" bind:value={schedDraft.precheck}
+                  placeholder="—" spellcheck="false" autocomplete="off" />
+              </div>
+              {#if sched?.lastOutcome}
+                <div class="sched-last">{t('sessions.schedLast', { outcome: lastOutcomeWord(sched.lastOutcome) })}</div>
+              {/if}
+              <div class="sched-actions">
+                <button type="button" class="sw-btn sw-btn-primary text-sw-xs" onclick={() => saveSchedule(f)}>{t('common.save')}</button>
+                {#if sched}
+                  <button type="button" class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => removeSchedule(f.id)}>{t('common.delete')}</button>
+                {/if}
+                <button type="button" class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (schedOpenFor = null)}>{t('common.close')}</button>
+              </div>
+            </div>
+          {/if}
         {/each}
       {/if}
       {#if menuRecents.length}
@@ -3951,6 +4168,85 @@
   }
   .pm-x:hover {
     color: var(--sw-danger);
+  }
+  .pm-clock:hover {
+    color: var(--sw-accent-text);
+  }
+  .pm-clock.on {
+    color: var(--sw-accent-text);
+  }
+  /* An enabled schedule's time badge, shown inline in the favorite row. */
+  .pm-sched-on {
+    flex-shrink: 0;
+    color: var(--sw-accent-text);
+    font-family: var(--sw-font-mono);
+    font-size: 10px;
+  }
+  /* W7 inline schedule editor under a favorite row. */
+  .sched-pop {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px 10px;
+    background: var(--sw-bg-tertiary, var(--sw-bg-hover));
+    border-top: 1px solid var(--sw-border);
+  }
+  .sched-fld {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sched-lbl {
+    flex-shrink: 0;
+    min-width: 96px;
+    color: var(--sw-text-muted);
+    font-size: 11px;
+  }
+  .sched-time {
+    width: 120px;
+  }
+  .sched-en {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    color: var(--sw-text-secondary);
+    font-size: 11px;
+  }
+  .sched-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .sched-day {
+    padding: 2px 7px;
+    border: 1px solid var(--sw-border);
+    border-radius: var(--sw-radius-sm);
+    background: transparent;
+    color: var(--sw-text-secondary);
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .sched-day.on {
+    background: var(--sw-accent);
+    border-color: var(--sw-accent);
+    color: var(--sw-accent-contrast, #fff);
+  }
+  .sched-quota {
+    width: 80px;
+  }
+  .sched-precheck {
+    flex: 1;
+    min-width: 0;
+  }
+  .sched-last {
+    color: var(--sw-text-muted);
+    font-size: 10px;
+  }
+  .sched-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
   }
   .pm-custom {
     color: var(--sw-accent-text);
