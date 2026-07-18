@@ -111,6 +111,7 @@ export default {
   closeFind: '关闭搜索',
   copied: '已复制',
   pasteEmpty: '剪贴板为空或不可用',
+  sendNotReady: '代理繁忙 — 粘贴已推迟',
   maximize: '最大化到全屏',
   restore: '还原到网格',
   zoomIn: '放大（Ctrl+滚轮）',
@@ -281,4 +282,11 @@ export default {
   backgroundPane: '最小化到后台',
   backgroundSection: '后台会话（{n}）',
   restoreBg: '恢复',
+  // W6: fan-out — launch the same recipe in several agents at once.
+  fanoutAlso: '同时在：',
+  fanoutTip: '在这些智能体中也启动相同的配方（各占一个面板）。',
+  // W6: inter-session message bus.
+  busMessage: '来自 {from} 的消息：{body}',
+  busUnread: '消息：{n}',
+  busMarkRead: '标记已读',
 };

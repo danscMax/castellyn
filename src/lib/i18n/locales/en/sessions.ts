@@ -111,6 +111,7 @@ export default {
   closeFind: 'Close search',
   copied: 'Copied',
   pasteEmpty: 'Clipboard is empty or unavailable',
+  sendNotReady: 'Agent is busy — paste deferred',
   maximize: 'Maximize to full screen',
   restore: 'Restore into the grid',
   zoomIn: 'Larger (Ctrl+wheel)',
@@ -281,4 +282,11 @@ export default {
   backgroundPane: 'Minimize to background',
   backgroundSection: 'Background sessions ({n})',
   restoreBg: 'Restore',
+  // W6: fan-out — launch the same recipe in several agents at once.
+  fanoutAlso: 'Also in:',
+  fanoutTip: 'Launch the same recipe in these agents too (each in its own pane).',
+  // W6: inter-session message bus.
+  busMessage: 'Message from {from}: {body}',
+  busUnread: 'Messages: {n}',
+  busMarkRead: 'Mark read',
 };

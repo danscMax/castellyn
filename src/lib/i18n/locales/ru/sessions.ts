@@ -111,6 +111,7 @@ export default {
   closeFind: 'Закрыть поиск',
   copied: 'Скопировано',
   pasteEmpty: 'Буфер обмена пуст или недоступен',
+  sendNotReady: 'Агент занят — вставка отложена',
   maximize: 'Развернуть на весь экран',
   restore: 'Свернуть обратно в сетку',
   zoomIn: 'Крупнее (Ctrl+колесо)',
@@ -281,4 +282,11 @@ export default {
   backgroundPane: 'Свернуть в фон',
   backgroundSection: 'Фоновые сессии ({n})',
   restoreBg: 'Вернуть',
+  // W6: fan-out — launch the same recipe in several agents at once.
+  fanoutAlso: 'Также в:',
+  fanoutTip: 'Запустить тот же рецепт ещё и в этих агентах (каждый в своей панели).',
+  // W6: inter-session message bus.
+  busMessage: 'Сообщение от {from}: {body}',
+  busUnread: 'Сообщений: {n}',
+  busMarkRead: 'Прочитано',
 };

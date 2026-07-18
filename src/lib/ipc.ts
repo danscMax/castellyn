@@ -427,6 +427,24 @@ export const worktreeIsClean = (path: string) => invoke<boolean>('worktree_is_cl
 // Cheap .git-existence check — gates the launch-form "isolate in worktree" checkbox.
 export const isGitRepo = (path: string) => invoke<boolean>('is_git_repo', { path });
 
+// --- Inter-session message bus (W6): minimal mail between Sessions panes ---
+// camelCase mirror of Rust BusMessage (session_bus.rs). `to` is a session id, '@all', or '@idle'.
+export type BusMessage = {
+  id: number;
+  from: string;
+  to: string;
+  kind: string;
+  body: string;
+  createdAt: number;
+  deliveredAt: number | null; // stamped on the first poll that returns it
+  readAt: number | null; // stamped on mark-read; read mail is never re-surfaced
+};
+export const busSend = (from: string, to: string, kind: string, body: string) =>
+  invoke<number>('bus_send', { from, to, kind, body });
+export const busPoll = (session: string, isIdle: boolean) =>
+  invoke<BusMessage[]>('bus_poll', { session, isIdle });
+export const busMarkRead = (ids: number[]) => invoke<void>('bus_mark_read', { ids });
+
 // --- Native folder picker (Windows Explorer) ---
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 export const pickFolder = async (defaultPath?: string): Promise<string | null> => {

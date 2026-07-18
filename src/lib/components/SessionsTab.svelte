@@ -38,6 +38,9 @@
     worktreeCreate,
     worktreeRemove,
     worktreeIsClean,
+    busPoll,
+    busMarkRead,
+    type BusMessage,
     type AgentStatusHookState,
     type AgentStatusEvent,
     type LimitsStatusEvent,
@@ -486,6 +489,48 @@
     }
     return m;
   });
+
+  // ── W6: inter-session message bus badge ──────────────────────────────────────────────────────
+  // Poll each live pane's mailbox (30s, only while the tab is visible). A pane's is_idle comes from
+  // its displayState so `@idle`-addressed mail reaches only free panes. New messages toast once (with
+  // a "mark read" action); the union of still-unread ids drives a count badge in the header.
+  let busUnread = $state(0);
+  const busToasted = new Set<number>(); // message ids already surfaced as a toast this session
+  async function pollBus() {
+    if (!visible) return;
+    const seen = new Set<number>(); // unique unread ids across panes (an @all msg hits every pane)
+    for (const p of panes) {
+      const id = sessionIds[p.key];
+      if (!id) continue;
+      const st = displayStateById[p.key];
+      const isIdle = st === 'idle' || st === 'done';
+      let mail: BusMessage[];
+      try {
+        mail = await busPoll(id, isIdle);
+      } catch {
+        continue; // backend hiccup — retry next tick
+      }
+      for (const m of mail) {
+        seen.add(m.id);
+        if (busToasted.has(m.id)) continue; // toast each message once, not every 30s poll
+        busToasted.add(m.id);
+        pushToast({
+          kind: 'info',
+          title: t('sessions.busMessage', { from: m.from, body: m.body.slice(0, 80) }),
+          action: { label: t('sessions.busMarkRead'), onClick: () => void busMarkRead([m.id]) }
+        });
+      }
+    }
+    busUnread = seen.size;
+  }
+  onMount(() => {
+    const timer = setInterval(() => void pollBus(), 30_000);
+    return () => clearInterval(timer);
+  });
+  $effect(() => {
+    if (visible) void pollBus(); // seed on mount + poll each time the tab becomes visible
+  });
+
   function maybeAutoContinue() {
     if (!autoContinueOn) return; // master escape hatch for ALL unattended limit handling (21c + 21e)
     // L11: profiles switched-to during THIS pass — so a second pane that flips limited in the same
@@ -1638,6 +1683,13 @@
     }
   ];
   let lEnv = $state<Env>('claude');
+  // W6 fan-out: additional agents to launch the SAME recipe in, each in its own pane. Only agent
+  // envs (never shell), never the primary env itself (pruned in selectEnv when the primary changes).
+  let lAlso = $state<Env[]>([]);
+  const fanoutEnvs = $derived(ENVS.filter((e) => e.id !== 'shell' && e.id !== lEnv).map((e) => e.id));
+  function toggleAlso(env: Env) {
+    lAlso = lAlso.includes(env) ? lAlso.filter((x) => x !== env) : [...lAlso, env];
+  }
   let lProfile = $state('');
   let lLoc = $state(''); // '' = this PC; else an SSH host id
   let lFolder = $state(''); // local folder (when lLoc==='')
@@ -1824,6 +1876,7 @@
     if (id === lEnv) return;
     lEnv = id;
     argsTouched = false;
+    lAlso = lAlso.filter((x) => x !== id); // can't fan out to the primary env itself
   }
   function rememberRemote(dir: string) {
     const d = dir.trim();
@@ -1891,14 +1944,13 @@
       return `${h.user ? h.user + '@' : ''}${h.host} ⚠`;
     }
   }
-  async function launchPhrase() {
-    // Bake the identity selection (codex --profile / opencode --model) into the args once, so the
-    // pane, the space-recipe and the recorded "recent" all carry it.
-    const finalArgs = composeArgs(lEnv, lArgs);
-    const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs);
-    if (!v) return;
-    if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
-    setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs); // explicit choice
+  // W6: launch ONE env with the current form's folder/loc/worktree settings, baking that env's own
+  // pickers into the args. When an isolated worktree is active each env gets its OWN worktree (distinct
+  // name; the backend's suffix-bump resolves collisions). Returns false if it couldn't launch (bad
+  // host or a failed worktree) — the caller decides whether that aborts (primary) or is skipped (fan-out).
+  async function launchEnvPane(env: Env): Promise<boolean> {
+    const v = paneFrom(env, lProfile, lLoc, lFolder, lRemoteDir, composeArgs(env, lArgs));
+    if (!v) return false; // paneFrom already toasted (host gone / unsafe)
     // W3: an isolated worktree — create it off the chosen repo, run the session in its checkout, and
     // carry {repo,path,branch} on the pane so closing it can clean up. On failure, don't launch (a
     // half-set-up worktree would silently run in the shared copy — surface the error instead).
@@ -1906,19 +1958,37 @@
     let cwd = v.cwd;
     if (worktreeActive) {
       const repo = lFolder.trim();
-      const name = lEnv === 'claude' && lProfile ? `${lEnv}-${lProfile}` : lEnv;
+      const name = env === 'claude' && lProfile ? `${env}-${lProfile}` : env;
       try {
         const info = await worktreeCreate(repo, name);
         worktree = { repo, path: info.path, branch: info.branch };
         cwd = info.path;
       } catch (e) {
         pushToast({ kind: 'error', title: t('common.error'), detail: String(e) });
-        return;
+        return false;
       }
     }
     // Council U-7: carry the per-session limit-policy override ('' = follow the global setting).
-    addPane({ ...v, cwd, worktree, ...(lEnv === 'claude' && lLimitMode ? { limitMode: lLimitMode } : {}) }); // addPane records the recipe into "recents"
-    newOpen = false; // close the launcher popover once a session starts
+    addPane({ ...v, cwd, worktree, ...(env === 'claude' && lLimitMode ? { limitMode: lLimitMode } : {}) }); // addPane records the recipe into "recents"
+    return true;
+  }
+  async function launchPhrase() {
+    // Bake the identity selection (codex --profile / opencode --model) into the args once, so the
+    // pane, the space-recipe and the recorded "recent" all carry it. Only the PRIMARY env writes the
+    // space-recipe / remembers the remote dir; fan-out panes still record their own "recent" via addPane.
+    const finalArgs = composeArgs(lEnv, lArgs);
+    const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs);
+    if (!v) return; // primary invalid (host gone) → nothing launched
+    if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
+    setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs); // explicit choice
+    // Primary first; its worktree failure aborts before any fan-out (nothing launched yet).
+    if (!(await launchEnvPane(lEnv))) return;
+    // W6 fan-out: launch the same recipe in each selected additional agent. A failure on one (bad
+    // worktree) does NOT cancel the already-launched panes — launchEnvPane toasts and we continue.
+    for (const env of fanoutEnvs) {
+      if (lAlso.includes(env)) await launchEnvPane(env);
+    }
+    newOpen = false; // close the launcher popover once the session(s) start
   }
   // ─── Favorites: pin the whole phrase → 1-click relaunch ───
   type Fav = { id: string; env: Env; profile: string; locId: string; folder: string; remoteDir: string; args: string; label: string };
@@ -2368,6 +2438,11 @@
        stack (2-line title + toolbar + separate launcher bar) cost ~3 rows of vertical space. -->
   <header class="mb-sw-2 topbar">
     <h1 class="shrink-0 text-lg font-semibold">{t('sessions.title')}</h1>
+    {#if busUnread}
+      <!-- W6: unread inter-session mail across all live panes. -->
+      <span class="bus-badge" title={t('sessions.busUnread', { n: busUnread })}
+        aria-label={t('sessions.busUnread', { n: busUnread })}>✉ {busUnread}</span>
+    {/if}
     <span class="plus-split" bind:this={splitEl}>
       <button bind:this={newBtnEl} type="button" class="split-main" disabled={atLimit}
         onclick={mainPlus} title={mainLabel ? t('sessions.plusHereTip') : t('sessions.newSession')}>
@@ -2511,6 +2586,19 @@
       <button class="sw-btn sw-btn-ghost text-sw-xs"
         onclick={() => openSettings()} title={t('sessions.settingsTip')}>⚙ {t('sessions.settings')}</button>
     </div>
+
+    {#if lEnv !== 'shell'}
+      <!-- W6 fan-out: launch the same recipe in extra agents too (each in its own pane / worktree). -->
+      <div class="fanout" role="group" aria-label={t('sessions.fanoutAlso')} title={t('sessions.fanoutTip')}>
+        <span class="fanout-lbl">{t('sessions.fanoutAlso')}</span>
+        {#each fanoutEnvs as env (env)}
+          <button type="button" class="also-chip" class:on={lAlso.includes(env)}
+            aria-pressed={lAlso.includes(env)} onclick={() => toggleAlso(env)}>
+            <span class="env-ic env-tint-{env}">{@html envIcon(env)}</span>{ENVS.find((e) => e.id === env)?.label ?? env}
+          </button>
+        {/each}
+      </div>
+    {/if}
 
     <!-- Mockup #3: fields on the left, a live "will launch" preview card on the right — the
          command, the profile's remaining windows, the advisor and the launch buttons live where
@@ -3391,6 +3479,51 @@
   .env-btn.sel {
     background: var(--sw-accent-glow);
     color: var(--sw-accent-text);
+  }
+  /* W6 fan-out chips (launch also in these agents) + unread-mail badge. */
+  .fanout {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: var(--sw-space-2);
+  }
+  .fanout-lbl {
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+  }
+  .also-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border: 1px solid var(--sw-border);
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--sw-text-secondary);
+    font-size: var(--sw-text-xs);
+    cursor: pointer;
+  }
+  .also-chip:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .also-chip.on {
+    background: var(--sw-accent-glow);
+    border-color: var(--sw-accent);
+    color: var(--sw-accent-text);
+  }
+  .bus-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 8px;
+    border-radius: 9999px;
+    background: var(--sw-accent-glow);
+    color: var(--sw-accent-text);
+    font-size: var(--sw-text-xs);
+    font-weight: 600;
+    white-space: nowrap;
   }
   .env-ic {
     display: inline-flex;
