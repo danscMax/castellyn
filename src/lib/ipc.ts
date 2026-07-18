@@ -443,6 +443,9 @@ export const busSend = (from: string, to: string, kind: string, body: string) =>
   invoke<number>('bus_send', { from, to, kind, body });
 export const busPoll = (session: string, isIdle: boolean) =>
   invoke<BusMessage[]>('bus_poll', { session, isIdle });
+// Batched fleet poll: one mailbox read for all panes (results in input order).
+export const busPollMany = (sessions: Array<[string, boolean]>) =>
+  invoke<BusMessage[][]>('bus_poll_many', { sessions });
 export const busMarkRead = (ids: number[]) => invoke<void>('bus_mark_read', { ids });
 
 // --- Native folder picker (Windows Explorer) ---

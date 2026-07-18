@@ -40,17 +40,40 @@ function scrollbackKeys(): string[] {
   return keys;
 }
 
+// Tiny timestamp index (paneId → last-save ms) so the TTL sweep never rehydrates the 256 KiB blobs
+// just to read their age (optimizer F4). The blob keeps its own "<ms>\n" prefix too — the index is a
+// fast path, the prefix the self-contained fallback for a key that somehow missed the index.
+const INDEX_KEY = 'cmh-scrollback-index';
+
+function readIndex(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(INDEX_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return v && typeof v === 'object' ? (v as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
 // TTL prune, run opportunistically on every save so localStorage can't grow unbounded when panes are
 // never restored (SessionsTab owns the live-pane set and is out of this module's scope, so a pane
-// component can't prune by membership at runtime).
+// component can't prune by membership at runtime). Reads only the index — O(index) not O(blobs).
 // ponytail: TTL, not a global-size LRU — cap × MAX_PANES is a few MB. Add an LRU only if that bites.
-function pruneStale(now = Date.now()): void {
+function pruneStale(index: Record<string, number>, now = Date.now()): void {
   try {
     for (const key of scrollbackKeys()) {
-      const raw = localStorage.getItem(key);
-      const nl = raw ? raw.indexOf('\n') : -1;
-      const ts = nl > 0 ? Number(raw!.slice(0, nl)) : NaN;
-      if (!Number.isFinite(ts) || now - ts > STALE_MS) localStorage.removeItem(key);
+      const id = key.slice(PREFIX.length);
+      let ts = index[id];
+      if (!Number.isFinite(ts)) {
+        // Not in the index (legacy/anomaly): one blob read as fallback, then it's indexed or gone.
+        const raw = localStorage.getItem(key);
+        const nl = raw ? raw.indexOf('\n') : -1;
+        ts = nl > 0 ? Number(raw!.slice(0, nl)) : NaN;
+      }
+      if (!Number.isFinite(ts) || now - ts > STALE_MS) {
+        localStorage.removeItem(key);
+        delete index[id];
+      }
     }
   } catch {
     /* ignore */
@@ -61,8 +84,12 @@ function pruneStale(now = Date.now()): void {
 // escaping a 256 KiB control-char payload would bloat it and burn CPU on every 5s save.
 export function saveScrollback(paneId: string, ansi: string): void {
   try {
-    pruneStale();
-    localStorage.setItem(PREFIX + paneId, `${Date.now()}\n${trimStartToCap(ansi)}`);
+    const now = Date.now();
+    const index = readIndex();
+    pruneStale(index, now);
+    index[paneId] = now;
+    localStorage.setItem(INDEX_KEY, JSON.stringify(index));
+    localStorage.setItem(PREFIX + paneId, `${now}\n${trimStartToCap(ansi)}`);
   } catch {
     /* quota exceeded / storage disabled — a missing buffer just means no replay, never fatal */
   }
@@ -86,9 +113,14 @@ export function takeScrollback(paneId: string): string | null {
 export function pruneScrollback(liveIds: string[]): void {
   const live = new Set(liveIds);
   try {
+    const index = readIndex();
     for (const key of scrollbackKeys()) {
-      if (!live.has(key.slice(PREFIX.length))) localStorage.removeItem(key);
+      if (!live.has(key.slice(PREFIX.length))) {
+        localStorage.removeItem(key);
+        delete index[key.slice(PREFIX.length)];
+      }
     }
+    localStorage.setItem(INDEX_KEY, JSON.stringify(index));
   } catch {
     /* ignore */
   }

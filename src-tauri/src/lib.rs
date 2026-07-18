@@ -15962,6 +15962,7 @@ pub fn run() {
             worktree::is_git_repo,
             session_bus::bus_send,
             session_bus::bus_poll,
+            session_bus::bus_poll_many,
             session_bus::bus_mark_read,
             open_in_editor,
             list_subdirs,

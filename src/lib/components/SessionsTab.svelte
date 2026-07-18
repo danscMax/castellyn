@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import TerminalPane from './TerminalPane.svelte';
   import FolderField from './FolderField.svelte';
   import Toggle from './Toggle.svelte';
@@ -38,7 +38,7 @@
     worktreeCreate,
     worktreeRemove,
     worktreeIsClean,
-    busPoll,
+    busPollMany,
     busMarkRead,
     type BusMessage,
     type AgentStatusHookState,
@@ -499,18 +499,26 @@
   const busToasted = new Set<number>(); // message ids already surfaced as a toast this session
   async function pollBus() {
     if (!visible) return;
-    const seen = new Set<number>(); // unique unread ids across panes (an @all msg hits every pane)
+    // Optimizer F1: ONE batched call (one mailbox read backend-side) instead of a call per pane.
+    const fleet: Array<[string, boolean]> = [];
     for (const p of panes) {
       const id = sessionIds[p.key];
       if (!id) continue;
       const st = displayStateById[p.key];
-      const isIdle = st === 'idle' || st === 'done';
-      let mail: BusMessage[];
-      try {
-        mail = await busPoll(id, isIdle);
-      } catch {
-        continue; // backend hiccup — retry next tick
-      }
+      fleet.push([id, st === 'idle' || st === 'done']);
+    }
+    if (!fleet.length) {
+      busUnread = 0;
+      return;
+    }
+    let mailPerPane: BusMessage[][];
+    try {
+      mailPerPane = await busPollMany(fleet);
+    } catch {
+      return; // backend hiccup — retry next tick
+    }
+    const seen = new Set<number>(); // unique unread ids across panes (an @all msg hits every pane)
+    for (const mail of mailPerPane) {
       for (const m of mail) {
         seen.add(m.id);
         if (busToasted.has(m.id)) continue; // toast each message once, not every 30s poll
@@ -528,8 +536,10 @@
     const timer = setInterval(() => void pollBus(), 30_000);
     return () => clearInterval(timer);
   });
+  // Optimizer F3: only `visible` may re-trigger the seed poll — panes/status reads inside pollBus
+  // must not become effect dependencies (they made every pane add/close fire a full fleet poll).
   $effect(() => {
-    if (visible) void pollBus(); // seed on mount + poll each time the tab becomes visible
+    if (visible) untrack(() => void pollBus());
   });
 
   function maybeAutoContinue() {
@@ -1108,8 +1118,11 @@
     // loaded synchronously on mount before any restore path, so this never collapses a valid space.
     const space = v.space && spaces.some((s) => s.id === v.space) ? v.space : activeSpace;
     panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space, limitMode: v.limitMode, worktree: v.worktree }];
-    if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
-    rememberRecent(v.cwd);
+    // Critic #2: a worktree pane's cwd is an ephemeral checkout (removed on close) — remember the
+    // SOURCE repo in folders/recents, or the datalist accumulates dead paths.
+    const recordCwd = v.worktree ? v.worktree.repo : v.cwd;
+    if (v.tool === 'claude') rememberFolder(v.profile, recordCwd);
+    rememberRecent(recordCwd);
     // EVERY real spawn becomes a "recent" recipe — clones, tab "＋", stack launches and deep-links
     // used to bypass the menu memory. Re-attach isn't a new launch; an SSH pane whose host is no
     // longer saved can't round-trip to a recipe (locId lost) — skip it rather than record a
@@ -1151,6 +1164,10 @@
   // W3: a closed session's isolated worktree is removed if clean (branch preserved when it holds
   // commits) or left in place if dirty — the agent's work is never silently lost.
   async function cleanupWorktree(wt: WtMeta) {
+    // Critic #4: the pane's PTY teardown (taskkill of the tree) is async — an immediate removal can
+    // hit a still-held cwd handle on Windows and get refused. A short grace closes most of that race;
+    // a genuinely-refused removal still lands in the catch below with a "kept: <path>" toast.
+    await new Promise((r) => setTimeout(r, 1500));
     try {
       if (!(await worktreeIsClean(wt.path))) {
         pushToast({ kind: 'info', title: t('sessions.worktreeKept', { path: wt.path }) });

@@ -109,23 +109,38 @@ pub fn send(path: &str, from: &str, to: &str, kind: &str, body: &str) -> Result<
 /// unread until `mark_read`, but a restart won't re-notify already-delivered mail (the UI keys
 /// "new" off `delivered_at == None`).
 pub fn poll(path: &str, session: &str, is_idle: bool) -> Result<Vec<BusMessage>, String> {
+    poll_many(path, &[(session.to_string(), is_idle)]).map(|mut v| v.pop().unwrap_or_default())
+}
+
+/// Batched poll: one file read (and at most one write) for the whole pane fleet — the UI polls every
+/// live pane on a cadence, and per-pane calls meant N full-mailbox loads serialized on BUS_LOCK
+/// (optimizer F1). The write fires only when a `delivered_at` actually transitioned (F2): a
+/// steady-state poll of already-delivered unread mail must not rewrite the file.
+pub fn poll_many(path: &str, sessions: &[(String, bool)]) -> Result<Vec<Vec<BusMessage>>, String> {
     let _g = BUS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = load(path);
     let now = now_ms();
-    let mut out = Vec::new();
+    let mut changed = false;
+    let mut out: Vec<Vec<BusMessage>> = vec![Vec::new(); sessions.len()];
     for m in f.messages.iter_mut() {
-        if m.read_at.is_some() || m.from == session {
+        if m.read_at.is_some() {
             continue;
         }
-        let addressed = m.to == session || m.to == "@all" || (m.to == "@idle" && is_idle);
-        if addressed {
-            if m.delivered_at.is_none() {
-                m.delivered_at = Some(now);
+        for (i, (session, is_idle)) in sessions.iter().enumerate() {
+            if m.from == *session {
+                continue;
             }
-            out.push(m.clone());
+            let addressed = m.to == *session || m.to == "@all" || (m.to == "@idle" && *is_idle);
+            if addressed {
+                if m.delivered_at.is_none() {
+                    m.delivered_at = Some(now);
+                    changed = true;
+                }
+                out[i].push(m.clone());
+            }
         }
     }
-    if !out.is_empty() {
+    if changed {
         store(path, &f)?;
     }
     Ok(out)
@@ -163,6 +178,13 @@ pub fn bus_send(from: String, to: String, kind: String, body: String) -> Result<
 #[tauri::command]
 pub fn bus_poll(session: String, is_idle: bool) -> Result<Vec<BusMessage>, String> {
     poll(&bus_path()?, &session, is_idle)
+}
+
+/// Batched variant for the UI's fleet poll: `sessions` = [(sessionId, isIdle), …] → one mailbox
+/// read for all panes instead of N.
+#[tauri::command]
+pub fn bus_poll_many(sessions: Vec<(String, bool)>) -> Result<Vec<Vec<BusMessage>>, String> {
+    poll_many(&bus_path()?, &sessions)
 }
 
 #[tauri::command]
@@ -232,6 +254,22 @@ mod tests {
         let d1 = all.iter().find(|m| m.id == first).unwrap().delivered_at;
         let d2 = again.iter().find(|m| m.id == first).unwrap().delivered_at;
         assert_eq!(d1, d2);
+    }
+
+    #[test]
+    fn poll_many_single_pass_and_write_gating() {
+        let p = tmp("many.json");
+        send(&p, "s1", "@all", "status", "fyi").unwrap();
+        send(&p, "s1", "s2", "note", "direct").unwrap();
+        let sessions = vec![("s2".to_string(), false), ("s3".to_string(), true)];
+        let r = poll_many(&p, &sessions).unwrap();
+        assert_eq!(r[0].len(), 2); // s2: @all + direct
+        assert_eq!(r[1].len(), 1); // s3: @all only
+        // Steady-state re-poll: everything already delivered → identical result, NO file rewrite (F2).
+        let before = std::fs::metadata(&p).unwrap().modified().unwrap();
+        let r2 = poll_many(&p, &sessions).unwrap();
+        assert_eq!(r2[0].len(), 2);
+        assert_eq!(std::fs::metadata(&p).unwrap().modified().unwrap(), before);
     }
 
     #[test]
