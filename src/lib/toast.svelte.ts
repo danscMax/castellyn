@@ -1,5 +1,5 @@
 // Tiny app-wide toast store (Svelte 5 runes). Surfaces operation outcomes so users get a
-// glanceable result without reading the execution log. Errors are sticky (manual dismiss).
+// glanceable result without reading the execution log. Errors linger (15s+) but auto-dismiss.
 export type ToastKind = 'success' | 'warn' | 'error' | 'info';
 export type ToastAction = { label: string; onClick: () => void };
 export type Toast = {
@@ -95,7 +95,10 @@ export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
   }
   const id = ++seq;
   toastStore.items.push({ ...t, id });
-  if (t.kind !== 'error' && ttlMs > 0) arm(id, ttlMs);
+  // Errors linger longer (they matter more) but no longer stick FOREVER — a sticky error survived
+  // navigation across several tabs long after its cause was fixed (iso-audit 2026-07-18). 15s is
+  // ample to read; hover-pause still freezes it while the user reaches for its action button.
+  if (ttlMs > 0) arm(id, t.kind === 'error' ? Math.max(ttlMs, 15000) : ttlMs);
   return id;
 }
 

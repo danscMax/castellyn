@@ -8,8 +8,16 @@
   import { agentSummary } from '$lib/agentStatus.svelte';
   import { peakUtilization } from '$lib/limits.svelte';
   import { uiPrefs } from '$lib/uiPrefs.svelte';
-  import { readConfig } from '$lib/ipc';
+  import { readConfig, isIsoSandbox } from '$lib/ipc';
   import { requestTab } from '$lib/nav.svelte';
+
+  // ISO sandbox marker: the native set_title is invisible under our custom chrome, so badge it here.
+  let isoSandbox = $state(false);
+  onMount(() => {
+    isIsoSandbox()
+      .then((v) => (isoSandbox = v))
+      .catch(() => {});
+  });
 
   // z5_1: opens the command palette (Ctrl+K) — a visible affordance so the palette is discoverable
   // without knowing the shortcut. Wired from +page.
@@ -115,6 +123,9 @@
   <div class="brand" data-tauri-drag-region>
     <img class="logo" src="{base}/favicon.png" alt="" data-tauri-drag-region width="18" height="18" />
     <span class="title" data-tauri-drag-region>{t('titlebar.title')}</span>
+    {#if isoSandbox}
+      <span class="iso-badge" data-tauri-drag-region title="Изолированная тестовая песочница — реальная система не затрагивается">ISO SANDBOX</span>
+    {/if}
     {#if runningStore.op}
       <!-- V13: the indicator is not interactive — keep it a drag region like the rest of the bar -->
       <span class="running" data-tauri-drag-region title={opName(runningStore.op)}>
@@ -218,6 +229,19 @@
     height: 100%;
     flex: 1;
     min-width: 0;
+  }
+  .iso-badge {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #fff;
+    /* Amber — unmistakably not the brand blue. Reuse the degraded-status token for the border
+       (canon CN-2: don't hard-code a value that equals a declared --sw-* token). */
+    background: #b45309;
+    border: 1px solid var(--sw-status-degraded);
   }
   .logo {
     width: 18px;

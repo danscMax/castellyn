@@ -14330,6 +14330,13 @@ fn iso_autostart_flag() -> Option<std::path::PathBuf> {
     std::path::Path::new(&cfg).parent().map(|p| p.join("iso-autostart.flag"))
 }
 
+/// Whether this instance runs in the ISO sandbox — the frontend badges the custom titlebar with it
+/// (the native set_title marker is invisible under our custom chrome / decorations:false).
+#[tauri::command]
+fn is_iso_sandbox() -> bool {
+    iso_mode()
+}
+
 /// Is the app registered to start with Windows (HKCU Run key)?
 #[tauri::command]
 fn get_autostart() -> bool {
@@ -14933,7 +14940,9 @@ fn session_spawn(
     cmd.arg("-NoLogo");
     cmd.env("CASTELLYN_SESSION_ID", &id);
     // Over SSH the local pwsh is only a launcher for ssh.exe — skip the user's profile banner.
-    if ssh.is_some() || tool == "ssh" {
+    // In the ISO sandbox skip it too: the real user's pwsh profile would otherwise run inside the
+    // fake world (observed: a serena MCP spawned there, locking world files against re-gen).
+    if ssh.is_some() || tool == "ssh" || iso_mode() {
         cmd.arg("-NoProfile");
     }
 
@@ -16142,6 +16151,7 @@ read_opencode_models,
             open_terminal,
             get_autostart,
             set_autostart,
+            is_iso_sandbox,
             set_toggle_hotkey,
             read_shortcuts,
             set_shortcuts,

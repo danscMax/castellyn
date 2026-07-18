@@ -1,6 +1,7 @@
 export default {
   title: '计划任务',
   subtitle: '按计划自动运行维护（Windows 计划任务程序）',
+  agentSchedNote: '要按计划运行代理会话？请在「会话」标签页 → 收藏 → ⏰。',
   refreshHint: '重新读取计划任务程序中任务的状态',
   statusNotCreatedBadge: '未创建',
   statusNotCreatedHint: '任务尚未在计划任务程序中创建',

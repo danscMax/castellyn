@@ -1,6 +1,7 @@
 export default {
   title: 'Schedule',
   subtitle: 'Automatically run maintenance on a schedule (Windows Scheduled Tasks)',
+  agentSchedNote: 'Looking to schedule AGENT sessions? That is on the «Sessions» tab → favorite → ⏰.',
   refreshHint: 'Re-read the status of scheduler tasks',
   statusNotCreatedBadge: 'not created',
   statusNotCreatedHint: 'Task is not created in the scheduler',

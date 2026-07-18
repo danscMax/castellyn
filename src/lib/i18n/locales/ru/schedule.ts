@@ -1,6 +1,7 @@
 export default {
   title: 'Расписание',
   subtitle: 'Автоматический запуск обслуживания по расписанию (Windows Scheduled Tasks)',
+  agentSchedNote: 'Ищете запуск АГЕНТ-сессий по расписанию? Это на вкладке «Сессии» → избранное → ⏰.',
   refreshHint: 'Перечитать статус заданий планировщика',
   statusNotCreatedBadge: 'не создано',
   statusNotCreatedHint: 'Задание не создано в планировщике',

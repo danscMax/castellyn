@@ -4,6 +4,7 @@
   import EmptyState from './EmptyState.svelte';
   import NoScriptsBanner from './NoScriptsBanner.svelte';
   import { formatAbsTime } from '$lib/relativeTime';
+  import { requestTab } from '$lib/nav.svelte';
   import { Clock } from '@lucide/svelte';
 
   let {
@@ -40,6 +41,11 @@
       <p class="text-sw-sm text-sw-text-secondary">
         {t('schedule.subtitle')}
       </p>
+      <!-- UX-9: two schedulers exist — point the user at the agent-session one so this tab's -->
+      <!-- "maintenance only" scope isn't mistaken for the whole scheduling story. -->
+      <button type="button" class="link-note text-sw-xs" onclick={() => requestTab('sessions')}>
+        {t('schedule.agentSchedNote')}
+      </button>
     </div>
     <button class="sw-btn sw-btn-ghost shrink-0" disabled={busy} onclick={onRefresh}
       title={t('schedule.refreshHint')}>
@@ -139,5 +145,19 @@
   /* Amber-tinted border marks a card as needing attention (reuses the warn token). */
   .needs-attn {
     border-color: color-mix(in srgb, var(--sw-warn) 45%, var(--sw-border));
+  }
+  /* UX-9: subtle inline link pointing at the agent-session scheduler on another tab. */
+  .link-note {
+    display: inline-block;
+    margin-top: 2px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--sw-accent);
+    cursor: pointer;
+    text-align: left;
+  }
+  .link-note:hover {
+    text-decoration: underline;
   }
 </style>

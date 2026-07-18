@@ -1273,4 +1273,7 @@ export const setToggleHotkey = (accel: string | null) => invoke('set_toggle_hotk
 export const readShortcuts = () => invoke<Record<string, string>>('read_shortcuts');
 export const setShortcuts = (shortcuts: Record<string, string>) => invoke('set_shortcuts', { shortcuts });
 export const getAutostart = () => invoke<boolean>('get_autostart');
+// True only in the ISO test sandbox — the titlebar badges it (the native window title is hidden by
+// our custom chrome). Never true in a real install.
+export const isIsoSandbox = () => invoke<boolean>('is_iso_sandbox');
 export const setAutostart = (enabled: boolean) => invoke('set_autostart', { enabled });

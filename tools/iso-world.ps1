@@ -56,10 +56,33 @@ function Write-Text([string]$path, [string]$text) {
 }
 function Write-Json([string]$path, $obj) { Write-Text $path ($obj | ConvertTo-Json -Depth 12) }
 
+# Robust recursive delete: a running/recently-stopped sandbox can leave a handle on a log
+# (e.g. a stray serena mcp writing under world\home\.serena\logs) that makes a plain Remove-Item
+# throw and abort the whole rebuild, corrupting the world half-way. Retry a few times, and on the
+# last try skip the locked leftovers rather than failing — the important tree (profiles/scripts)
+# always rebuilds. (live find 2026-07-18: a re-gen over a live instance wiped the profiles and died.)
+function Remove-WorldTree([string]$path) {
+  if (-not (Test-Path -LiteralPath $path)) { return }
+  foreach ($attempt in 1..4) {
+    try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop; return }
+    catch {
+      if ($attempt -eq 4) {
+        # Best-effort file-by-file; leave whatever is still locked, warn, continue.
+        Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue |
+          Sort-Object FullName -Descending |
+          ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Recurse -ErrorAction SilentlyContinue }
+        Write-Host "   ⚠ часть файлов залочена (запущенный инстанс?) — пересобираю поверх." -ForegroundColor DarkYellow
+        return
+      }
+      Start-Sleep -Milliseconds (200 * $attempt)
+    }
+  }
+}
+
 # ── -Wipe ────────────────────────────────────────────────────────────────────
 if ($Wipe) {
   if (Test-Path -LiteralPath $World) {
-    Remove-Item -LiteralPath $World -Recurse -Force
+    Remove-WorldTree $World
     Write-Host "🧹 Мир снесён: $World" -ForegroundColor Yellow
   } else {
     Write-Host "   (мир не существовал: $World)" -ForegroundColor DarkGray
@@ -68,7 +91,7 @@ if ($Wipe) {
 }
 
 # Deterministic rebuild: nuke any prior world first so a re-run reproduces the same tree.
-if (Test-Path -LiteralPath $World) { Remove-Item -LiteralPath $World -Recurse -Force }
+Remove-WorldTree $World
 New-Dir $World; New-Dir $HomeDir; New-Dir $Scripts; New-Dir $Bin
 
 Write-Host "▶  Строю мир: $World" -ForegroundColor Cyan
@@ -91,6 +114,12 @@ function New-ProfileHome([string]$dirName, [int]$n, [hashtable]$env) {
   Write-Json (Join-Path $dir '.credentials.json') ([ordered]@{
     claudeAiOauth = [ordered]@{ accessToken = "iso-dummy-token-$n"; refreshToken = "iso-dummy-refresh-$n"; expiresAt = 0 }
   })
+  # .claude.json: the per-profile MCP deployment target. read_mcp enumerates profiles by THIS file's
+  # top-level mcpServers (lib.rs profile_mcp_servers ~7811) — without it the MCP tab shows no profiles
+  # and "Развернуть во все профили" has nowhere to write (live find 2026-07-18). One pre-deployed
+  # server on cc1 so the deployed-count column shows a non-zero state out of the box.
+  $mcp = if ($dirName -eq '.claude-cc1') { [ordered]@{ 'iso-echo' = [ordered]@{ command = 'node'; args = @('iso-echo-server.js') } } } else { [ordered]@{} }
+  Write-Json (Join-Path $dir '.claude.json') ([ordered]@{ mcpServers = $mcp })
 }
 
 # `.claude` — the native/default profile (no provider env, uses login).
@@ -193,6 +222,49 @@ Write-Json (Join-Path $Profiles 'config\profiles.json') ([ordered]@{
   )
 })
 
+# Profiles health: the Profiles tab runs {{PROFILES}}\Get-ProfilesStatus.ps1 and reads
+# profiles.last.json next to it (lib.rs PROFILES_SCRIPT_REL/PROFILES_JSON_REL ~1944; live find
+# 2026-07-18: without the script the tab errors code 64). Shape mirrors the real generator's
+# output: one healthy profile, one with problems, plus the default — so every row-state renders.
+$profilesStatus = {
+  [ordered]@{
+    generatedAt = (Get-Date -Format 'o'); machineName = 'ISO-SANDBOX'; isAdmin = $false
+    profiles = @(
+      [ordered]@{ name = 'cc1'; description = 'ISO sandbox profile 1'; color = 'Blue'
+        exists = $true; credentialsPresent = $true; credentialsValid = $true; settingsPresent = $true
+        onboardingComplete = $true; needsOnboarding = $false; logoutResidue = $false
+        sharedLinks = 3; linksIntact = $true; linksValid = $true; linkProblems = @() }
+      [ordered]@{ name = 'cc2'; description = 'ISO sandbox profile 2'; color = 'Green'
+        exists = $true; credentialsPresent = $true; credentialsValid = $false; settingsPresent = $true
+        onboardingComplete = $false; needsOnboarding = $true; logoutResidue = $true
+        sharedLinks = 3; linksIntact = $false; linksValid = $false; linkProblems = @('settings.json link broken') }
+    )
+    backup = [ordered]@{ lastRun = (Get-Date).AddHours(-20).ToString('o'); lastSnapshot = 'snapshot-iso'
+      ageHours = 20; stale = $false; snapshotPresent = $true }
+    syncConflicts = [ordered]@{ count = 1; files = @('config\.mcp.sync-conflict-iso.json') }
+  }
+}
+Write-Json (Join-Path $Profiles 'profiles.last.json') (& $profilesStatus)
+Write-Text (Join-Path $Profiles 'Get-ProfilesStatus.ps1') @'
+# ISO stub: refresh profiles.last.json with the same fixture the world was built with, bumping
+# generatedAt so the "last run" visibly moves. `-CleanConflicts` (run_profiles clean-conflicts) also
+# zeroes the syncConflicts block so the "clean" action shows a real effect. Exit 0 always (the tab
+# treats non-zero as an error).
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$p = Join-Path $here 'profiles.last.json'
+try {
+  $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+  $j.generatedAt = (Get-Date -Format 'o')
+  if (($args -contains '-CleanConflicts') -and $j.syncConflicts) {
+    $j.syncConflicts.count = 0
+    $j.syncConflicts.files = @()
+    Write-Host 'iso: конфликты синхронизации очищены (песочница)'
+  }
+  $j | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+} catch { }
+exit 0
+'@
+
 # Canonical shared MCP servers (2 fakes) — read_mcp surfaces name+command from mcpServers.
 Write-Json (Join-Path $Profiles 'config\.mcp.json') ([ordered]@{
   mcpServers = [ordered]@{
@@ -203,17 +275,318 @@ Write-Json (Join-Path $Profiles 'config\.mcp.json') ([ordered]@{
 
 # Schedules fixture — covers every ScheduleTab branch + the watcher's failed-transition path:
 # ok / failed / disabled / not-created. lastResult 0=ok, non-zero=fail (schedules_watch task_failed).
-$now = Get-Date
-Write-Json (Join-Path $Profiles 'schedules.last.json') ([ordered]@{
-  schemaVersion = 1
-  timestamp     = (Get-Date -Format 'o')
-  tasks = @(
-    [ordered]@{ id = 'update-all'; label = 'Обновить всё (ночью)'; exists = $true;  enabled = $true;  time = '03:00'; defaultTime = '03:00'; nextRun = $now.AddHours(9).ToString('o');  lastRun = $now.AddHours(-15).ToString('o'); lastResult = 0 }
-    [ordered]@{ id = 'forks-sync'; label = 'Синхронизация форков';  exists = $true;  enabled = $true;  time = '04:30'; defaultTime = '04:30'; nextRun = $now.AddHours(10).ToString('o'); lastRun = $now.AddHours(-14).ToString('o'); lastResult = 1 }
-    [ordered]@{ id = 'plugins';    label = 'Обновление плагинов';   exists = $true;  enabled = $false; time = '05:00'; defaultTime = '05:00'; nextRun = $null;                            lastRun = $null;                             lastResult = $null }
-    [ordered]@{ id = 'cargo';      label = 'Cargo-бинарники';        exists = $false; enabled = $false; time = $null;   defaultTime = '06:00'; nextRun = $null;                            lastRun = $null;                             lastResult = $null }
+# A scriptblock so the self-check can restore it after exercising Schedule-Hub.ps1 (which mutates it).
+$schedulesFixture = {
+  $now = Get-Date
+  [ordered]@{
+    schemaVersion = 1
+    timestamp     = (Get-Date -Format 'o')
+    tasks = @(
+      [ordered]@{ id = 'update-all'; label = 'Обновить всё (ночью)'; exists = $true;  enabled = $true;  time = '03:00'; defaultTime = '03:00'; nextRun = $now.AddHours(9).ToString('o');  lastRun = $now.AddHours(-15).ToString('o'); lastResult = 0 }
+      [ordered]@{ id = 'forks-sync'; label = 'Синхронизация форков';  exists = $true;  enabled = $true;  time = '04:30'; defaultTime = '04:30'; nextRun = $now.AddHours(10).ToString('o'); lastRun = $now.AddHours(-14).ToString('o'); lastResult = 1 }
+      [ordered]@{ id = 'plugins';    label = 'Обновление плагинов';   exists = $true;  enabled = $false; time = '05:00'; defaultTime = '05:00'; nextRun = $null;                            lastRun = $null;                             lastResult = $null }
+      [ordered]@{ id = 'cargo';      label = 'Cargo-бинарники';        exists = $false; enabled = $false; time = $null;   defaultTime = '06:00'; nextRun = $null;                            lastRun = $null;                             lastResult = $null }
+    )
+  }
+}
+Write-Json (Join-Path $Profiles 'schedules.last.json') (& $schedulesFixture)
+
+# Config-drift fixture (links.last.json) — the ConfigDriftStatus shape read_config_drift returns
+# (ipc.ts ConfigDriftStatus ~797): one unlinked + one drifted so the tab's Relink / Sync-now actions
+# have something to fix. Check-Integrity.ps1 rewrites it; Relink-SharedConfig.ps1 clears `unlinked`.
+# A scriptblock for the same restore-after-self-check reason as the schedules fixture.
+$linksFixture = {
+  [ordered]@{
+    generatedAt = (Get-Date -Format 'o'); drifted = 1; unlinked = 1; ok = $false
+    items = @(
+      [ordered]@{ name = '.mcp.json';            state = 'ok' }
+      [ordered]@{ name = 'settings-shared.json'; state = 'unlinked' }
+      [ordered]@{ name = 'keybindings.json';     state = 'drifted' }
+    )
+  }
+}
+Write-Json (Join-Path $Profiles 'links.last.json') (& $linksFixture)
+
+# ── 2c-bis. Control-action stubs ────────────────────────────────────────────
+# Every write/read PS script Castellyn spawns for a button (paths from lib.rs *_SCRIPT_REL, all under
+# {{PROFILES}} except Stack-Procs). Each: catch-all param() so an unknown flag never fails, UTF-8, a
+# progress line, a SAFE in-world mutation (so the UI sees a real effect), exit 0. Args mirror the live
+# run_* callers (run_backup/run_profiles/run_mcp/run_schedule/run_config_drift/run_profile_mgmt/…).
+# Restore point for the two profile-home MCP files Deploy-Mcp.ps1 mutates (self-check reverts to this).
+function Set-ProfileMcp([string]$dirName, $servers) {
+  Write-Json (Join-Path $HomeDir (Join-Path $dirName '.claude.json')) ([ordered]@{ mcpServers = $servers })
+}
+$cc1McpSeed = { [ordered]@{ 'iso-echo' = [ordered]@{ command = 'node'; args = @('iso-echo-server.js') } } }
+
+# Ordered so the self-check runs Deploy-Mcp before probing its effect; also the write order.
+$controlStubNames = @(
+  'Backup-ClaudeSetup.ps1', 'Restore-ClaudeSetup.ps1', 'Install-ClaudeProfiles.ps1',
+  'Repair-ProfileLinks.ps1', 'Repair-Onboarding.ps1', 'Relink-SharedConfig.ps1',
+  'Check-Integrity.ps1', 'Manage-Profiles.ps1', 'Deploy-Mcp.ps1', 'Schedule-Hub.ps1',
+  'Deploy-ManagedSettings.ps1', 'Configure-Syncthing.ps1', 'Assert-Installation.ps1'
+)
+$controlStubs = @{}
+
+# Backup-ClaudeSetup.ps1 — run_backup: -Force [-KeepSnapshots N] | -DeleteSnapshot <id>. Also the
+# config-drift `sync-now` (-Force). WRITE: make/prune real snapshot dirs under Backups (list_backups
+# reads the dir listing + .backup-state.json).
+$controlStubs['Backup-ClaudeSetup.ps1'] = @'
+param([switch]$Force, [int]$KeepSnapshots = 0, [string]$DeleteSnapshot, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$backups = Join-Path $PSScriptRoot 'Backups'
+if (-not (Test-Path -LiteralPath $backups)) { New-Item -ItemType Directory -Path $backups -Force | Out-Null }
+if ($DeleteSnapshot) {
+  if ($DeleteSnapshot -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$') { Write-Host "iso: неверный id снапшота: $DeleteSnapshot"; exit 1 }
+  $d = Join-Path $backups $DeleteSnapshot
+  if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+  Write-Host "iso: снапшот удалён (песочница): $DeleteSnapshot"
+  exit 0
+}
+$ts = Get-Date -Format 'yyyy-MM-dd_HHmmss'
+$snap = Join-Path $backups $ts
+New-Item -ItemType Directory -Path $snap -Force | Out-Null
+'iso sandbox snapshot' | Set-Content -LiteralPath (Join-Path $snap 'MANIFEST.txt') -Encoding utf8NoBOM
+if ($KeepSnapshots -gt 0) {
+  $all = @(Get-ChildItem -LiteralPath $backups -Directory | Where-Object { $_.Name -match '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$' } | Sort-Object Name -Descending)
+  if ($all.Count -gt $KeepSnapshots) { $all[$KeepSnapshots..($all.Count - 1)] | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force } }
+}
+$state = [ordered]@{ lastRun = (Get-Date -Format 'o'); lastManifestHash = 'iso'; lastWeekly = $null; lastSnapshot = $ts }
+$state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $backups '.backup-state.json') -Encoding utf8NoBOM
+Write-Host "iso: снапшот создан (песочница): $ts"
+exit 0
+'@
+
+# Restore-ClaudeSetup.ps1 — run_backup restore/restore-preview: -WhatIf [-Timestamp t] [-Profiles ...]
+# [-IncludeCredentials]. NO-OP by design: overwriting the profile homes from a snapshot is exactly the
+# destructive move a sandbox must not do. Honest log, never fakes a counter.
+$controlStubs['Restore-ClaudeSetup.ps1'] = @'
+param([switch]$WhatIf, [string]$Timestamp, [string[]]$Profiles, [switch]$IncludeCredentials, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+if ($WhatIf) { Write-Host 'iso: предпросмотр восстановления — файлы НЕ менялись (песочница)' }
+else { Write-Host 'iso: восстановление пропущено в песочнице — перезапись профилей небезопасна (no-op)' }
+if ($Timestamp) { Write-Host "iso: снапшот: $Timestamp" }
+exit 0
+'@
+
+# Install-ClaudeProfiles.ps1 — run_profiles reinstall: -Force. WRITE: ensure a ~/.claude-<name> home
+# (settings.json + .claude.json) for every profiles.json name (profile_names / profile_mcp_servers).
+$controlStubs['Install-ClaudeProfiles.ps1'] = @'
+param([switch]$Force, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$names = @()
+try { $names = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'config\profiles.json') -Raw | ConvertFrom-Json).profiles.name } catch { }
+$made = 0
+foreach ($name in $names) {
+  $dir = Join-Path $env:USERPROFILE ".claude-$name"
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null; $made++ }
+  $sj = Join-Path $dir 'settings.json'
+  if (-not (Test-Path -LiteralPath $sj)) { '{ "env": {} }' | Set-Content -LiteralPath $sj -Encoding utf8NoBOM }
+  $cj = Join-Path $dir '.claude.json'
+  if (-not (Test-Path -LiteralPath $cj)) { '{ "mcpServers": {} }' | Set-Content -LiteralPath $cj -Encoding utf8NoBOM }
+}
+Write-Host "iso: профили переустановлены — новых домов: $made (песочница)"
+exit 0
+'@
+
+# Repair-ProfileLinks.ps1 — run_profiles repair/create + repair_all_profiles: -Name <n>. WRITE: flip
+# that profile's link health in profiles.last.json (read_profiles) so the row goes healthy.
+$controlStubs['Repair-ProfileLinks.ps1'] = @'
+param([string]$Name, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$p = Join-Path $PSScriptRoot 'profiles.last.json'
+try {
+  $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+  foreach ($pr in $j.profiles) { if ($pr.name -eq $Name) { $pr.linksIntact = $true; $pr.linksValid = $true; $pr.linkProblems = @() } }
+  $j.generatedAt = (Get-Date -Format 'o')
+  $j | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+} catch { }
+Write-Host "iso: ссылки профиля '$Name' восстановлены (песочница)"
+exit 0
+'@
+
+# Repair-Onboarding.ps1 — run_profiles fix-onboarding: -Name <n>. WRITE: clear the post-/logout
+# onboarding residue for that profile in profiles.last.json.
+$controlStubs['Repair-Onboarding.ps1'] = @'
+param([string]$Name, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$p = Join-Path $PSScriptRoot 'profiles.last.json'
+try {
+  $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+  foreach ($pr in $j.profiles) { if ($pr.name -eq $Name) { $pr.onboardingComplete = $true; $pr.needsOnboarding = $false; $pr.logoutResidue = $false } }
+  $j.generatedAt = (Get-Date -Format 'o')
+  $j | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+} catch { }
+Write-Host "iso: онбординг профиля '$Name' восстановлен (песочница)"
+exit 0
+'@
+
+# Relink-SharedConfig.ps1 — run_config_drift relink: -NonInteractive (real one self-elevates via UAC).
+# WRITE: clear `unlinked` in links.last.json so the drift tab shows the relink took effect.
+$controlStubs['Relink-SharedConfig.ps1'] = @'
+param([switch]$NonInteractive, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$p = Join-Path $PSScriptRoot 'links.last.json'
+try {
+  $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+  foreach ($it in $j.items) { if ($it.state -eq 'unlinked') { $it.state = 'ok' } }
+  $j.unlinked = 0
+  $j.ok = ($j.drifted -eq 0 -and $j.unlinked -eq 0)
+  $j.generatedAt = (Get-Date -Format 'o')
+  $j | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+} catch { }
+Write-Host 'iso: общие конфиг-ссылки восстановлены (песочница)'
+exit 0
+'@
+
+# Check-Integrity.ps1 — run_config_drift check: no args. READ-snapshot: (re)write links.last.json
+# with the drifted+unlinked fixture (read_config_drift consumes it).
+$controlStubs['Check-Integrity.ps1'] = @'
+param([Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$p = Join-Path $PSScriptRoot 'links.last.json'
+$payload = [ordered]@{
+  generatedAt = (Get-Date -Format 'o'); drifted = 1; unlinked = 1; ok = $false
+  items = @(
+    [ordered]@{ name = '.mcp.json';            state = 'ok' }
+    [ordered]@{ name = 'settings-shared.json'; state = 'unlinked' }
+    [ordered]@{ name = 'keybindings.json';     state = 'drifted' }
   )
-})
+}
+$payload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+Write-Host 'iso: целостность ссылок проверена (песочница)'
+exit 0
+'@
+
+# Manage-Profiles.ps1 — run_profile_mgmt: -Action add|remove|rename|recolor|redescribe|set-links
+# -Name <n> [-NewName][-Color][-Description][-Enabled a,b]. WRITE: mutate config\profiles.json
+# (read_profiles_config), the canonical profile list.
+$controlStubs['Manage-Profiles.ps1'] = @'
+param([string]$Action, [string]$Name, [string]$NewName, [string]$Color, [string]$Description, [string]$Enabled, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$p = Join-Path $PSScriptRoot 'config\profiles.json'
+try {
+  $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+  $list = @($j.profiles)
+  switch ($Action) {
+    'add' {
+      if (-not ($list | Where-Object { $_.name -eq $Name })) {
+        $c = if ($Color) { $Color } else { 'White' }
+        $list += [pscustomobject]@{ name = $Name; color = $c; description = $Description; linkedFolders = @() }
+      }
+    }
+    'remove'     { $list = @($list | Where-Object { $_.name -ne $Name }) }
+    'rename'     { foreach ($it in $list) { if ($it.name -eq $Name) { $it.name = $NewName } } }
+    'recolor'    { foreach ($it in $list) { if ($it.name -eq $Name) { $it.color = $Color } } }
+    'redescribe' { foreach ($it in $list) { if ($it.name -eq $Name) { $it.description = $Description } } }
+    'set-links'  {
+      $lf = if ($Enabled) { @($Enabled -split ',') } else { @() }
+      foreach ($it in $list) { if ($it.name -eq $Name) { $it | Add-Member -NotePropertyName linkedFolders -NotePropertyValue $lf -Force } }
+    }
+  }
+  $j.profiles = @($list)
+  $j | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+} catch { }
+Write-Host "iso: профиль '$Name' — действие '$Action' применено (песочница)"
+exit 0
+'@
+
+# Deploy-Mcp.ps1 — run_mcp deploy: [-Only a,b]. WRITE (flagship): copy every canonical server from
+# config\.mcp.json into each targeted profile's ~/.claude-<name>/.claude.json top-level mcpServers, so
+# read_mcp's "развёрнут N/M" column actually grows. Real merge, respects -Only.
+$controlStubs['Deploy-Mcp.ps1'] = @'
+param([string]$Only, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$root = $PSScriptRoot
+$src = $null
+try { $src = (Get-Content -LiteralPath (Join-Path $root 'config\.mcp.json') -Raw | ConvertFrom-Json).mcpServers } catch { }
+if (-not $src) { Write-Host 'iso: канонический .mcp.json пуст — нечего разворачивать'; exit 0 }
+$names = @()
+try { $names = (Get-Content -LiteralPath (Join-Path $root 'config\profiles.json') -Raw | ConvertFrom-Json).profiles.name } catch { }
+if ($Only) { $want = @($Only -split ','); $names = @($names | Where-Object { $want -contains $_ }) }
+$n = 0
+foreach ($name in $names) {
+  $cj = Join-Path $env:USERPROFILE ".claude-$name\.claude.json"
+  $doc = $null
+  if (Test-Path -LiteralPath $cj) { try { $doc = Get-Content -LiteralPath $cj -Raw | ConvertFrom-Json } catch { } }
+  if (-not $doc) { $doc = [pscustomobject]@{} }
+  if (-not $doc.PSObject.Properties['mcpServers']) { $doc | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) -Force }
+  foreach ($prop in $src.PSObject.Properties) { $doc.mcpServers | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force }
+  $dir = Split-Path -Parent $cj
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  $doc | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $cj -Encoding utf8NoBOM
+  $n++
+  Write-Host "iso: MCP -> .claude-$name (песочница)"
+}
+Write-Host "iso: MCP развёрнут в профилей: $n (песочница)"
+exit 0
+'@
+
+# Schedule-Hub.ps1 — read_schedules/run_schedule: -Action query|create|enable|disable|run|delete
+# [-Id <id>][-Time HH:mm]. WRITE: mutate the matching task in schedules.last.json (read_schedules).
+$controlStubs['Schedule-Hub.ps1'] = @'
+param([string]$Action, [string]$Id, [string]$Time, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$p = Join-Path $PSScriptRoot 'schedules.last.json'
+try {
+  $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+  $now = Get-Date
+  $t = $j.tasks | Where-Object { $_.id -eq $Id } | Select-Object -First 1
+  switch ($Action) {
+    'enable'  { if ($t) { $t.exists = $true; $t.enabled = $true; if (-not $t.time) { $t.time = $t.defaultTime }; $t.nextRun = $now.AddHours(6).ToString('o') } }
+    'disable' { if ($t) { $t.enabled = $false } }
+    'run'     { if ($t) { $t.lastRun = $now.ToString('o'); $t.lastResult = 0; $t.nextRun = $now.AddHours(6).ToString('o') } }
+    'create'  { if ($t) { $t.exists = $true; $t.enabled = $true; if ($Time) { $t.time = $Time } elseif (-not $t.time) { $t.time = $t.defaultTime }; $t.nextRun = $now.AddHours(6).ToString('o') } }
+    'delete'  { if ($t) { $t.exists = $false; $t.enabled = $false; $t.time = $null; $t.nextRun = $null; $t.lastRun = $null; $t.lastResult = $null } }
+  }
+  $j.timestamp = (Get-Date -Format 'o')
+  $j | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $p -Encoding utf8NoBOM
+} catch { }
+if ($Action -ne 'query') { Write-Host "iso: расписание '$Id' — '$Action' применено (песочница)" }
+exit 0
+'@
+
+# Deploy-ManagedSettings.ps1 — run_managed_deploy (elevated). NO-OP: the real target is the machine's
+# ProgramData managed-settings.json, outside the sandbox world. Drift is recomputed natively.
+$controlStubs['Deploy-ManagedSettings.ps1'] = @'
+param([Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Host 'iso: managed-settings — системный путь ProgramData вне песочницы, пропущено (no-op)'
+exit 0
+'@
+
+# Configure-Syncthing.ps1 — run_onboarding_step syncthing. NO-OP: Syncthing's REST API isn't running
+# in the sandbox, so there's nothing to harden. Honest log.
+$controlStubs['Configure-Syncthing.ps1'] = @'
+param([Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Host 'iso: Syncthing REST недоступен в песочнице — версионирование пропущено (no-op)'
+exit 0
+'@
+
+# Assert-Installation.ps1 — run_onboarding_step verify. READ: print an assertion report, exit 0
+# (run_onboarding_step just streams stdout to the log; there is no .last.json to write).
+$controlStubs['Assert-Installation.ps1'] = @'
+param([Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Host 'iso: проверка установки (песочница)'
+Write-Host '  ✓ дерево профилей на месте'
+Write-Host '  ✓ манифест обслуживания читается'
+Write-Host '  ✓ CLI-заглушки на PATH'
+exit 0
+'@
+
+foreach ($nm in $controlStubNames) { Write-Text (Join-Path $Profiles $nm) $controlStubs[$nm] }
+
+# Stack-Procs.ps1 — read_stack_procs: -Ports "a,b,c" -> JSON [{port,pid,uptimeSec}]. Lives under
+# Castellyn\tools\stack (NOT {{PROFILES}}). Nothing of the stack listens in the sandbox -> empty array.
+$stackProcsPath = Join-Path $Scripts 'Castellyn\tools\stack\Stack-Procs.ps1'
+Write-Text $stackProcsPath @'
+param([string]$Ports, [Parameter(ValueFromRemainingArguments = $true)]$rest)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+# No stack service actually listens in the sandbox; read_stack_procs tolerates an empty set.
+Write-Output '[]'
+exit 0
+'@
 
 # 2d. Forks — real git repos with a local bare remote. alpha clean, beta dirty + a branch.
 $forks = Join-Path $Scripts 'forks'
@@ -364,6 +737,35 @@ try {
   if ($out -notmatch '\[iso-claude\] echo: hello') { $fail += "claude.cmd echo round failed. Got: $out" }
 } catch { $fail += "claude.cmd: $_" }
 
+# Control-action stubs: each runs blank -> exit 0. USERPROFILE points at the world so the ones that
+# touch profile homes (Deploy-Mcp / Install) write INTO the sandbox, never the real ~/.claude-*.
+$savedUP = $env:USERPROFILE
+try {
+  $env:USERPROFILE = $HomeDir
+  foreach ($nm in $controlStubNames) {
+    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Profiles $nm) *> $null
+    if ($LASTEXITCODE -ne 0) { $fail += "$nm exited $LASTEXITCODE" }
+  }
+  & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $stackProcsPath -Ports '1420,8787' *> $null
+  if ($LASTEXITCODE -ne 0) { $fail += "Stack-Procs.ps1 exited $LASTEXITCODE" }
+  # Deploy-Mcp really wrote the canonical servers into a profile (cc2 started empty).
+  try {
+    $cc2 = Get-Content -LiteralPath (Join-Path $HomeDir '.claude-cc2\.claude.json') -Raw | ConvertFrom-Json
+    if (-not $cc2.mcpServers.'iso-fetch') { $fail += 'Deploy-Mcp did not write iso-fetch into .claude-cc2' }
+  } catch { $fail += "Deploy-Mcp probe: $_" }
+} finally {
+  $env:USERPROFILE = $savedUP
+}
+
+# Restore every fixture the self-check mutated so the world the harness sees is the pristine initial
+# state (cc2 empty again, drifted links, disabled/not-created schedules) — the branches the clicker
+# must exercise. Backups snapshots are left (extra snapshots are harmless + realistic).
+Write-Json (Join-Path $Profiles 'profiles.last.json')  (& $profilesStatus)
+Write-Json (Join-Path $Profiles 'schedules.last.json') (& $schedulesFixture)
+Write-Json (Join-Path $Profiles 'links.last.json')     (& $linksFixture)
+Set-ProfileMcp '.claude-cc1' (& $cc1McpSeed)
+Set-ProfileMcp '.claude-cc2' ([ordered]@{})
+
 if ($fail.Count) {
   Write-Host ''
   Write-Host "✗ Самопроверка провалена:" -ForegroundColor Red
@@ -385,7 +787,8 @@ Write-Host '══════════════════════�
   [pscustomobject]@{ Слой = 'settings (CASTELLYN_SETTINGS_DIR)'; Путь = $Settings }
   [pscustomobject]@{ Слой = 'bin (PATH prepend)'; Путь = $Bin }
 ) | Format-Table -AutoSize | Out-Host
-Write-Host "  Компонентов-заглушек: $stubCount  ·  форки: repo-alpha (clean), repo-beta (dirty)" -ForegroundColor DarkGray
+$ctrlCount = $controlStubNames.Count + 2   # + Stack-Procs + Get-ProfilesStatus
+Write-Host "  Компонентов-заглушек: $stubCount  ·  управляющих скриптов: $ctrlCount  ·  форки: repo-alpha (clean), repo-beta (dirty)" -ForegroundColor DarkGray
 Write-Host ''
 Write-Host 'Env-экспорты для харнесса (iso-test.ps1 -World выставляет их процессу):' -ForegroundColor DarkGray
 Write-Host "  USERPROFILE=$HomeDir" -ForegroundColor Gray
