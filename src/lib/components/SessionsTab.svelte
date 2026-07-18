@@ -531,6 +531,9 @@
       }
     }
     busUnread = seen.size;
+    // Optimizer F8: ids no longer unread (marked read / evicted) can't re-toast — drop them so the
+    // set doesn't grow for the whole session lifetime.
+    for (const tid of busToasted) if (!seen.has(tid)) busToasted.delete(tid);
   }
   onMount(() => {
     const timer = setInterval(() => void pollBus(), 30_000);
@@ -1163,11 +1166,11 @@
   }
   // W3: a closed session's isolated worktree is removed if clean (branch preserved when it holds
   // commits) or left in place if dirty — the agent's work is never silently lost.
-  async function cleanupWorktree(wt: WtMeta) {
+  async function cleanupWorktree(wt: WtMeta, staggerMs = 0) {
     // Critic #4: the pane's PTY teardown (taskkill of the tree) is async — an immediate removal can
     // hit a still-held cwd handle on Windows and get refused. A short grace closes most of that race;
     // a genuinely-refused removal still lands in the catch below with a "kept: <path>" toast.
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 1500 + staggerMs));
     try {
       if (!(await worktreeIsClean(wt.path))) {
         pushToast({ kind: 'info', title: t('sessions.worktreeKept', { path: wt.path }) });
@@ -1425,7 +1428,8 @@
       title: t('sessions.closeSpaceTitle'),
       message: t('sessions.closeSpaceMsg', { n: keys.length }),
       run: () => {
-        for (const p of panes) if (keys.includes(p.key) && p.worktree) void cleanupWorktree(p.worktree);
+        let wtSeq = 0; // F9: stagger, not burst
+        for (const p of panes) if (keys.includes(p.key) && p.worktree) void cleanupWorktree(p.worktree, 400 * wtSeq++);
         panes = panes.filter((p) => !keys.includes(p.key));
         for (const k of keys) {
           delete paneRefs[k];
@@ -1733,15 +1737,19 @@
       return;
     }
     let cancelled = false;
-    isGitRepo(folder)
-      .then((ok) => {
-        if (!cancelled) lFolderIsRepo = ok;
-      })
-      .catch(() => {
-        if (!cancelled) lFolderIsRepo = false;
-      });
+    // Optimizer F6: debounce — typing/pasting a path fires one probe, not one per keystroke.
+    const probe = setTimeout(() => {
+      isGitRepo(folder)
+        .then((ok) => {
+          if (!cancelled) lFolderIsRepo = ok;
+        })
+        .catch(() => {
+          if (!cancelled) lFolderIsRepo = false;
+        });
+    }, 200);
     return () => {
       cancelled = true;
+      clearTimeout(probe);
     };
   });
   // A worktree only makes sense for a local git repo — the checkbox is meaningless (and hidden) for

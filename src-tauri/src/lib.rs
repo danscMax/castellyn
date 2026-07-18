@@ -26,6 +26,7 @@ mod agent_status;
 mod limits;
 mod stack_health;
 mod schedules_watch;
+mod agent_schedules;
 mod session_bus;
 mod worktree;
 mod i18n;
@@ -15964,6 +15965,10 @@ pub fn run() {
             session_bus::bus_poll,
             session_bus::bus_poll_many,
             session_bus::bus_mark_read,
+            agent_schedules::read_agent_schedules,
+            agent_schedules::write_agent_schedules,
+            agent_schedules::ack_agent_schedule,
+            agent_schedules::pending_agent_schedules,
             open_in_editor,
             list_subdirs,
             read_ssh_hosts,
@@ -16101,6 +16106,8 @@ read_opencode_models,
             // Background schedules watcher (every 5 min, file-only): OS-notify when a scheduled
             // maintenance task transitions to failed, so a failed nightly job isn't missed.
             schedules_watch::start(app.handle().clone());
+            // W7: scheduled agent-session launches (internal tick; recipes fired into the frontend).
+            agent_schedules::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
             migrate_autostart();
             // Start minimized to tray if configured.

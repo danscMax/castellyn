@@ -164,10 +164,15 @@ pub fn mark_read(path: &str, ids: &[u64]) -> Result<(), String> {
     Ok(())
 }
 
-/// `%APPDATA%\castellyn\messages.json` — sibling of config.json.
-fn bus_path() -> Result<String, String> {
+/// `%APPDATA%\castellyn\messages.json` — sibling of config.json. Public so in-process producers
+/// (the agent-schedules tick) can post to the bus without going through a tauri command.
+pub fn bus_file_path() -> Result<String, String> {
     let base = std::env::var("APPDATA").map_err(|e| e.to_string())?;
     Ok(format!("{base}\\castellyn\\messages.json"))
+}
+
+fn bus_path() -> Result<String, String> {
+    bus_file_path()
 }
 
 #[tauri::command]

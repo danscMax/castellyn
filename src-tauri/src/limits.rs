@@ -537,6 +537,20 @@ struct CodexLimitsStatus {
     rate_limited: bool,
 }
 
+impl CodexLimitsStatus {
+    /// The numbers are UNKNOWN (401/429): all-None windows, only the reason flag set.
+    fn unknown(expired: bool, rate_limited: bool) -> Self {
+        Self {
+            h5: None,
+            d7: None,
+            h5_reset: None,
+            d7_reset: None,
+            expired,
+            rate_limited,
+        }
+    }
+}
+
 /// `%USERPROFILE%\.codex\auth.json` — the Codex CLI's own credential file (we never write it).
 fn codex_auth_path() -> Option<String> {
     std::env::var("USERPROFILE").ok().map(|h| format!("{h}\\.codex\\auth.json"))
@@ -652,22 +666,8 @@ fn poll_codex(app: &AppHandle) {
                 save_fired(&fired);
             }
         }
-        Err(401) => emit(CodexLimitsStatus {
-            h5: None,
-            d7: None,
-            h5_reset: None,
-            d7_reset: None,
-            expired: true,
-            rate_limited: false,
-        }),
-        Err(429) => emit(CodexLimitsStatus {
-            h5: None,
-            d7: None,
-            h5_reset: None,
-            d7_reset: None,
-            expired: false,
-            rate_limited: true,
-        }),
+        Err(401) => emit(CodexLimitsStatus::unknown(true, false)),
+        Err(429) => emit(CodexLimitsStatus::unknown(false, true)),
         Err(_) => { /* transient — retry next poll */ }
     }
 }

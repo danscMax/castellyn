@@ -12,23 +12,19 @@ const STALE_MS = 14 * 24 * 60 * 60 * 1000; // TTL: drop buffers of panes not res
 const enc = new TextEncoder();
 const byteLen = (s: string): number => enc.encode(s).length;
 
-// Trim from the START (oldest lines) so the newer, more valuable tail survives the cap. Binary-search
-// the cut on a UTF-16 code-unit boundary (safe for ANSI per contract), then step past an orphaned low
-// surrogate so the returned string stays valid.
+// Trim from the START (oldest lines) so the newer, more valuable tail survives the cap. Optimizer F5:
+// no binary search re-encoding O(n log n) — take the last CAP_BYTES UTF-16 units as a fast first cut
+// (ANSI is mostly ASCII, so this is at most 2× over-long in code units), then walk forward from the
+// cheap cut only if the tail still exceeds the byte cap. One encode per iteration over a shrinking
+// tail beats log(n) encodes of the whole slice.
 function trimStartToCap(ansi: string): string {
   if (byteLen(ansi) <= CAP_BYTES) return ansi;
-  let lo = 0;
-  let hi = ansi.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (byteLen(ansi.slice(mid)) > CAP_BYTES) lo = mid + 1;
-    else hi = mid;
-  }
-  if (lo < ansi.length) {
-    const c = ansi.charCodeAt(lo);
-    if (c >= 0xdc00 && c <= 0xdfff) lo++; // don't split a surrogate pair
-  }
-  return ansi.slice(lo);
+  let tail = ansi.slice(-CAP_BYTES); // ≥ the final cut (bytes ≥ code units for any string)
+  let over = byteLen(tail) - CAP_BYTES;
+  if (over > 0) tail = tail.slice(over); // near-exact: multi-byte chars make this a slight over-trim
+  const c = tail.charCodeAt(0);
+  if (c >= 0xdc00 && c <= 0xdfff) tail = tail.slice(1); // don't start on an orphaned low surrogate
+  return tail;
 }
 
 function scrollbackKeys(): string[] {
