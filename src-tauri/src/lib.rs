@@ -26,6 +26,7 @@ mod agent_status;
 mod limits;
 mod stack_health;
 mod schedules_watch;
+mod session_bus;
 mod worktree;
 mod i18n;
 use i18n::{tr, trv, Lang};
@@ -15959,6 +15960,9 @@ pub fn run() {
             worktree::worktree_remove,
             worktree::worktree_is_clean,
             worktree::is_git_repo,
+            session_bus::bus_send,
+            session_bus::bus_poll,
+            session_bus::bus_mark_read,
             open_in_editor,
             list_subdirs,
             read_ssh_hosts,
