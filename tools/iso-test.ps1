@@ -30,6 +30,13 @@
 .PARAMETER Build
   `cargo build` the debug exe first (needed after Rust changes; the frontend hot-reloads via vite).
 
+.PARAMETER World
+  FULL sandbox: build (or reuse) the fake world via tools/iso-world.ps1 and point the instance's
+  USERPROFILE / SCRIPTS_ROOT / CASTELLYN_SETTINGS_DIR / PATH at it, plus CASTELLYN_ISO=1 (file-backed
+  autostart + credential store, "[ISO SANDBOX]" window title). With -World EVERY button is safe to
+  click: profiles/scripts/forks/agent CLIs are sandbox fakes; git/maintenance runs mutate only the
+  world. Without -World the old boundary applies (config-only isolation — real system visible).
+
 .PARAMETER CdpPort
   Remote-debugging port for the isolated WebView2 (default 9223; the real dev instance uses 9222).
 
@@ -38,6 +45,8 @@
 
 .EXAMPLE
   pwsh -File tools/iso-test.ps1              # start isolated instance, reuse scratch profile
+  pwsh -File tools/iso-test.ps1 -World       # FULL sandbox: fake home/scripts/forks/CLIs, all-buttons-safe
+  pwsh -File tools/iso-test.ps1 -World -Fresh -Build  # rebuild exe + fresh world + clean profile
   pwsh -File tools/iso-test.ps1 -Fresh       # start with a clean profile (onboarding)
   pwsh -File tools/iso-test.ps1 -Build       # rebuild the exe, then start
   pwsh -File tools/iso-test.ps1 -Stop        # tear down
@@ -46,6 +55,7 @@ param(
   [switch]$Stop,
   [switch]$Fresh,
   [switch]$Build,
+  [switch]$World,
   [int]$CdpPort = 9223,
   [string]$Repo = (Split-Path -Parent $PSScriptRoot)
 )
@@ -57,6 +67,7 @@ $VitePort = 1420  # pinned in vite.config.js (strictPort) + tauri.conf.json devU
 $IsoRoot  = Join-Path $env:TEMP 'castellyn-iso'
 $IsoApp   = Join-Path $IsoRoot 'Roaming'
 $IsoLocal = Join-Path $IsoRoot 'Local'
+$IsoWorld = Join-Path $IsoRoot 'world'
 $Exe      = Join-Path $Repo 'src-tauri\target\debug\castellyn.exe'
 
 function Test-PortBusy([int]$Port) {
@@ -119,6 +130,20 @@ if ($Fresh -and (Test-Path $IsoRoot)) {
 }
 New-Item -ItemType Directory -Force -Path $IsoApp, $IsoLocal | Out-Null
 
+# ── Full sandbox world (-World): fake home/scripts/bin the instance will live in ─
+if ($World) {
+  $worldScript = Join-Path $PSScriptRoot 'iso-world.ps1'
+  if (-not (Test-Path $worldScript)) { throw "Нет $worldScript — генератор мира не найден." }
+  # Rebuild when asked fresh or when the world is absent; otherwise reuse (fast restarts).
+  if ($Fresh -or -not (Test-Path (Join-Path $IsoWorld 'home'))) {
+    Write-Host '🌍 Строю мир-песочницу (iso-world.ps1)…' -ForegroundColor Cyan
+    & pwsh -NoProfile -File $worldScript
+    if ($LASTEXITCODE -ne 0) { throw "iso-world.ps1 упал (код $LASTEXITCODE)." }
+  } else {
+    Write-Host "🌍 Мир переиспользован: $IsoWorld" -ForegroundColor DarkCyan
+  }
+}
+
 # ── 1) vite FIRST (fixes the chrome-error-then-blank webview: the exe used to load 1420 before
 #       vite was ready). Only once vite answers do we start the exe, which then loads on first try.
 Write-Host "▶  Старт vite на :$VitePort …" -ForegroundColor Cyan
@@ -145,6 +170,21 @@ $psi.UseShellExecute = $false
 $psi.EnvironmentVariables['APPDATA'] = $IsoApp
 $psi.EnvironmentVariables['LOCALAPPDATA'] = $IsoLocal
 $psi.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = "--remote-debugging-port=$CdpPort"
+if ($World) {
+  # Every filesystem discovery path the backend has goes through these envs — the instance now
+  # lives entirely inside the fake world. CASTELLYN_ISO covers the two non-env side channels
+  # (HKCU autostart + OS credential store → file-backed in the isolated APPDATA).
+  $psi.EnvironmentVariables['USERPROFILE']            = Join-Path $IsoWorld 'home'
+  $psi.EnvironmentVariables['HOMEDRIVE']              = (Split-Path -Qualifier $IsoWorld)
+  $psi.EnvironmentVariables['HOMEPATH']               = (Join-Path $IsoWorld 'home').Substring(2)
+  $psi.EnvironmentVariables['SCRIPTS_ROOT']           = Join-Path $IsoWorld 'scripts'
+  $psi.EnvironmentVariables['CASTELLYN_SETTINGS_DIR'] = Join-Path $IsoWorld 'scripts\SettingsMCP'
+  $psi.EnvironmentVariables['CASTELLYN_ISO']          = '1'
+  $psi.EnvironmentVariables['PATH']                   = (Join-Path $IsoWorld 'bin') + ';' + $env:PATH
+  # Never let a sandboxed `gh`/git call fall back to real tokens from the parent env.
+  $psi.EnvironmentVariables['GH_TOKEN']     = ''
+  $psi.EnvironmentVariables['GITHUB_TOKEN'] = ''
+}
 $proc = [System.Diagnostics.Process]::Start($psi)
 
 # ── 3) wait for the CDP endpoint to answer ──────────────────────────────────────
@@ -162,6 +202,11 @@ Write-Host '✓ Изолированный Castellyn готов' -ForegroundColo
 Write-Host "  CDP:        http://127.0.0.1:$CdpPort" -ForegroundColor Green
 Write-Host "  vite:       http://localhost:$VitePort" -ForegroundColor Green
 Write-Host "  Конфиг:     $IsoApp\castellyn  (изолирован)" -ForegroundColor Green
+if ($World) {
+  Write-Host "  Мир:        $IsoWorld  (ПОЛНАЯ песочница — все кнопки безопасны)" -ForegroundColor Green
+} else {
+  Write-Host '  ⚠ Без -World: изолирован только конфиг, реальная система ВИДНА (старые правила).' -ForegroundColor Yellow
+}
 Write-Host "  exe PID:    $($proc.Id)  ·  vite PID: $($vite.Id)" -ForegroundColor Green
 Write-Host '  Стоп:       pwsh -File tools/iso-test.ps1 -Stop' -ForegroundColor Green
 Write-Host '════════════════════════════════════════════════════════════' -ForegroundColor Green
