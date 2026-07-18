@@ -43,6 +43,17 @@ One file holds all commands. Key pieces:
   through `agenthub_config_path()` then `legacy_config_path()` (pre-rename locations) so settings
   survive the renames. Writes always go to the new path (`write_config` → `config_path()`).
 - **`scripts_root()`** — `$SCRIPTS_ROOT` env → `config.scriptsRoot` → default `E:\Scripts`.
+- **`worktree.rs`** — worktree-per-session: an opt-in launch creates an isolated
+  `git worktree` (`.castellyn-worktrees/<repo>/<name>`, branch `castellyn/<name>`) so parallel
+  sessions don't share one working copy. Removal is guarded (provenance mark
+  `branch.<b>.castellynSource` is the authority, dangerous-path + nested-worktree checks first,
+  branch deleted with `-d` only — unmerged agent work survives).
+- **`session_bus.rs`** — minimal inter-session mailbox (`%APPDATA%\castellyn\messages.json`):
+  `bus_send` / `bus_poll` (direct, `@all`, `@idle`) / `bus_mark_read`, with separate
+  delivered/read stamps so a restart never replays already-shown mail. No task-DAG by design.
+- **`limits.rs`** — OAuth usage monitors: per-profile Claude (5h/7d/scoped) AND the Codex plan
+  (`~/.codex/auth.json` → `chatgpt.com/backend-api/wham/usage`, event `codex-limits-status`),
+  sharing one edge-triggered 85/99 alert path.
 - **Tray / window** — `build_tray` (Show / Check-all / Quit), close-to-tray, autostart via
   HKCU\…\Run value `Castellyn` (migrated once from the old `AgentHub` value). Tray menu labels are
   localized via `src-tauri/src/i18n.rs` (`tr("tray.*", lang)`) and relabeled live on a locale change

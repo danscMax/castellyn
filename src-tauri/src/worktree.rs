@@ -7,6 +7,7 @@
 //!   - dangerous-path + nested-worktree guards before any removal (a force-remove would silently
 //!     wipe a nested worktree's files);
 //!   - classify results by FACT (re-read `git worktree list`), not by localized git error text.
+//!
 //! Git is on PATH (already used by clone_repo). Every spawn sets CREATE_NO_WINDOW (crate canon).
 
 use std::path::{Path, PathBuf};

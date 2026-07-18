@@ -589,12 +589,13 @@ fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<serde_json
     }
 }
 
+/// One usage window: (used percent, reset timestamp coerced to a string).
+type UsageWindow = (Option<f64>, Option<String>);
+
 /// Parse the two windows out of a wham/usage response, or None when the shape is not the expected
 /// one (`plan_type` must be a string — the response-shape validator the Codex fetcher uses; an
 /// HTML error page or an API reshape must read as "unknown", never as 0%).
-pub(crate) fn codex_windows(
-    resp: &serde_json::Value,
-) -> Option<((Option<f64>, Option<String>), (Option<f64>, Option<String>))> {
+pub(crate) fn codex_windows(resp: &serde_json::Value) -> Option<(UsageWindow, UsageWindow)> {
     if !resp.get("plan_type").is_some_and(|v| v.is_string()) {
         return None;
     }

@@ -49,6 +49,7 @@
   } from '$lib/ipc';
   import { pickResumeCandidate, isProfileExhausted } from '$lib/limitSwitch';
   import { decideMenuContinue, pickBindingResetMs } from '$lib/menuContinue';
+  import { guardedSend } from '$lib/guardedSend';
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
   import { hookHealth } from '$lib/hookHealth';
@@ -613,7 +614,16 @@
         pushToast({ kind: 'info', title: t('sessions.autoContinuePress1', { name: p.name ?? p.profile }) });
       } else if (action === 'continue') {
         autoContinued.add(p.key);
-        sessionWrite(id, continuationText() + '\r');
+        // W5b: two-phase guarded delivery — bracketed-paste the continuation (multiline-safe), let the
+        // freshly-reset TUI settle, then a separate Enter. The busy DECISION already happened in
+        // decideMenuContinue, so no extra gate here (getBusy=false); this only de-races paste vs repaint.
+        void guardedSend(
+          async (d) => {
+            await sessionWrite(id, d);
+          },
+          continuationText(),
+          () => false
+        );
         console.debug('[auto-continue] sent continuation', p.key); // #15
 
         pushToast({ kind: 'info', title: t('sessions.autoContinueDone', { name: p.name ?? p.profile }) });
