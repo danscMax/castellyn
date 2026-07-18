@@ -5899,6 +5899,41 @@ const MYPROVIDERS_CONFIG_REL: &str = "{{PROFILES}}\\config\\myproviders.json";
 const KR_PROVIDERS: &str = "castellyn.providers";
 const KR_FREELLMAPI: &str = "castellyn.freellmapi";
 
+/// Full-sandbox test mode (tools/iso-test.ps1 with the sandbox world): the two real-system side
+/// channels that env redirection CANNOT cover — the HKCU autostart Run key and the OS credential
+/// store — go file-backed under %APPDATA%\castellyn instead, which the iso harness already
+/// isolates. Never enabled outside the harness; a normal launch has no CASTELLYN_ISO in its env.
+pub(crate) fn iso_mode() -> bool {
+    std::env::var("CASTELLYN_ISO").is_ok_and(|v| v == "1")
+}
+
+/// ISO-mode keyring file (plaintext JSON — it only ever holds the sandbox's FAKE secrets; real
+/// secrets never enter an iso run). Sibling of config.json inside the isolated APPDATA.
+fn iso_keyring_path() -> Option<std::path::PathBuf> {
+    let cfg = config_path()?;
+    std::path::Path::new(&cfg).parent().map(|p| p.join("iso-keyring.json"))
+}
+
+fn iso_kr_load() -> std::collections::HashMap<String, String> {
+    iso_keyring_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn iso_kr_store(map: &std::collections::HashMap<String, String>) -> Result<(), String> {
+    let p = iso_keyring_path().ok_or("no appdata")?;
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&p, serde_json::to_string(map).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+fn iso_kr_key(service: &str, user: &str) -> String {
+    format!("{service}\u{1f}{user}")
+}
+
 /// Pre-Castellyn keyring service for a current one: `castellyn.X` → `agenthub.X`. Used only for
 /// one-time lazy migration of secrets stored under the old brand. None for non-castellyn services.
 fn legacy_kr_service(service: &str) -> Option<String> {
@@ -5908,6 +5943,9 @@ fn legacy_kr_service(service: &str) -> Option<String> {
 }
 
 fn kr_get(service: &str, user: &str) -> Option<String> {
+    if iso_mode() {
+        return iso_kr_load().get(&iso_kr_key(service, user)).cloned();
+    }
     if let Some(v) = keyring::Entry::new(service, user)
         .ok()
         .and_then(|e| e.get_password().ok())
@@ -5930,12 +5968,23 @@ fn kr_get(service: &str, user: &str) -> Option<String> {
     Some(v)
 }
 fn kr_set(service: &str, user: &str, secret: &str) -> Result<(), String> {
+    if iso_mode() {
+        let mut m = iso_kr_load();
+        m.insert(iso_kr_key(service, user), secret.to_string());
+        return iso_kr_store(&m);
+    }
     keyring::Entry::new(service, user)
         .map_err(|e| format!("credential store: {e}"))?
         .set_password(secret)
         .map_err(|e| format!("save credential: {e}"))
 }
 fn kr_delete(service: &str, user: &str) {
+    if iso_mode() {
+        let mut m = iso_kr_load();
+        m.remove(&iso_kr_key(service, user));
+        let _ = iso_kr_store(&m);
+        return;
+    }
     if let Ok(e) = keyring::Entry::new(service, user) {
         let _ = e.delete_credential();
     }
@@ -14274,9 +14323,19 @@ fn migrate_autostart() {
     }
 }
 
+/// ISO-mode autostart marker (a file inside the isolated APPDATA instead of the real Run key —
+/// a sandbox click-through must be able to toggle the switch without touching HKCU).
+fn iso_autostart_flag() -> Option<std::path::PathBuf> {
+    let cfg = config_path()?;
+    std::path::Path::new(&cfg).parent().map(|p| p.join("iso-autostart.flag"))
+}
+
 /// Is the app registered to start with Windows (HKCU Run key)?
 #[tauri::command]
 fn get_autostart() -> bool {
+    if iso_mode() {
+        return iso_autostart_flag().is_some_and(|p| p.exists());
+    }
     std::process::Command::new("reg")
         .args(["query", AUTOSTART_KEY, "/v", AUTOSTART_NAME])
         .creation_flags(CREATE_NO_WINDOW)
@@ -14291,6 +14350,17 @@ fn get_autostart() -> bool {
 /// registry value orphaned while the UI believed "off" had taken effect.
 #[tauri::command]
 fn set_autostart(enabled: bool) -> Result<(), String> {
+    if iso_mode() {
+        let p = iso_autostart_flag().ok_or("no appdata")?;
+        if enabled {
+            if let Some(dir) = p.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            return std::fs::write(&p, "1").map_err(|e| e.to_string());
+        }
+        let _ = std::fs::remove_file(&p);
+        return Ok(());
+    }
     if enabled {
         let exe = std::env::current_exe()
             .map_err(|e| e.to_string())?
@@ -16109,7 +16179,13 @@ read_opencode_models,
             // W7: scheduled agent-session launches (internal tick; recipes fired into the frontend).
             agent_schedules::start(app.handle().clone());
             // One-time brand-rename migration of the autostart Run entry (AgentHub → Castellyn).
-            migrate_autostart();
+            // ISO sandbox: never touch the real HKCU — the file-backed flag covers the toggle.
+            if !iso_mode() {
+                migrate_autostart();
+            } else if let Some(w) = app.get_webview_window("main") {
+                // Unmissable marker so an iso window is never mistaken for the real instance.
+                let _ = w.set_title("Castellyn [ISO SANDBOX]");
+            }
             // Start minimized to tray if configured.
             if cfg.start_hidden {
                 if let Some(w) = app.get_webview_window("main") {
