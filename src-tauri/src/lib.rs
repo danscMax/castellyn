@@ -12947,17 +12947,25 @@ async fn run_gc_delete(ids: Vec<String>) -> Result<GcDeleteReport, String> {
 //
 // castellyn_status.py reports Claude Code lifecycle events (working/blocked/idle) into
 // %APPDATA%\castellyn\agent-status; the agent_status module turns them into pane badges.
-// Wired into five events of every profile; a session without CASTELLYN_SESSION_ID in its
-// env makes the hook a no-op, so regular (non-Castellyn) Claude use is unaffected.
+// Wired into the lifecycle events of every profile; a session without CASTELLYN_SESSION_ID
+// in its env makes the hook a no-op, so regular (non-Castellyn) Claude use is unaffected.
+// v2 added the tool-use heartbeat events (working stays fresh through a quiet tool call)
+// and the explicit waiting-on-human ones; an event name a given Claude build doesn't know
+// is simply never fired — wiring it is harmless.
 
 const STATUS_HOOK_SCRIPT: &str = include_str!("../assets/castellyn_status.py");
 const STATUS_HOOK_CMD: &str = "py -X utf8 ~/.claude/hooks/castellyn_status.py";
 const STATUS_HOOK_MARKER: &str = "castellyn_status.py";
-const STATUS_HOOK_EVENTS: [&str; 5] = [
+const STATUS_HOOK_EVENTS: [&str; 10] = [
     "SessionStart",
     "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
     "Notification",
+    "PermissionRequest",
     "Stop",
+    "StopFailure",
     "SessionEnd",
 ];
 
@@ -13091,11 +13099,11 @@ struct ProfileHookGaps {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentStatusHookState {
-    /// Profile dir names with ALL five lifecycle events wired.
+    /// Profile dir names with ALL lifecycle events wired.
     wired: Vec<String>,
     unwired: Vec<String>,
     /// Profiles wired for SOME but not all events, with the exact events still missing. Separates
-    /// drift/partial wiring from a profile that was simply never enabled (all five missing — that
+    /// drift/partial wiring from a profile that was simply never enabled (all events missing — that
     /// one stays only in `unwired`). Read-only diagnostic.
     partial: Vec<ProfileHookGaps>,
     /// Whether the hook script exists on disk. `false` while any profile is `wired` means the command
@@ -13414,7 +13422,7 @@ mod plugin_sync_tests {
 
     #[test]
     fn status_hook_wires_all_events_and_unwires_cleanly() {
-        // Wiring all five lifecycle events must be idempotent and reversible without
+        // Wiring every lifecycle event must be idempotent and reversible without
         // touching an unrelated hook that shares one of the events.
         let mut v = json!({ "hooks": { "Stop": [
             { "hooks": [{ "type": "command", "command": "py other.py" }] }
@@ -13453,7 +13461,7 @@ mod plugin_sync_tests {
             super::status_hook_missing_events(&bad),
             super::STATUS_HOOK_EVENTS.to_vec()
         );
-        // Wire three of the five events → the diagnostic names exactly the two still missing,
+        // Wire three of the events → the diagnostic names exactly the ones still missing,
         // preserving STATUS_HOOK_EVENTS order (not the order they were wired in).
         let mut v = json!({});
         for ev in ["Stop", "SessionStart", "UserPromptSubmit"] {
@@ -13461,10 +13469,26 @@ mod plugin_sync_tests {
         }
         assert_eq!(
             super::status_hook_missing_events(&v),
-            vec!["Notification", "SessionEnd"]
+            vec![
+                "PreToolUse",
+                "PostToolUse",
+                "PostToolUseFailure",
+                "Notification",
+                "PermissionRequest",
+                "StopFailure",
+                "SessionEnd"
+            ]
         );
         // Fully wired → nothing missing.
-        for ev in ["Notification", "SessionEnd"] {
+        for ev in [
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "Notification",
+            "PermissionRequest",
+            "StopFailure",
+            "SessionEnd",
+        ] {
             super::hook_cmd_wire(&mut v, ev, super::STATUS_HOOK_CMD, super::STATUS_HOOK_MARKER);
         }
         assert!(super::status_hook_missing_events(&v).is_empty());
