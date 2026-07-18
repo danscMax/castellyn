@@ -39,6 +39,7 @@
   import { copyText, pasteText } from '$lib/clipboard';
   import { pushToast } from '$lib/toast.svelte';
   import { saveScrollback, takeScrollback } from '$lib/scrollbackStore';
+  import { guardedSend } from '$lib/guardedSend';
 
   let {
     profile,
@@ -392,11 +393,22 @@
   function zoom(delta: number) {
     setFontSize(fontSize + delta);
   }
-  // Snippets: insert a templated first message into THIS pane (#57). No auto-Enter — user reviews
-  // then sends. Default templates live in sessionPresets; rendered via the shared DropdownMenu (so it
-  // escapes the toolbar overflow, gets roving focus + Esc, instead of a hand-rolled clipped popover).
-  function insertSnippet(text: string) {
-    if (id && !exited) term?.paste(text); // bracketed-paste aware; routes via onData (broadcast too)
+  // Snippets: two-phase guarded send of a templated message into THIS pane (#57 / W5b). Don't paste
+  // into a busy/blocked TUI — gate on the pane's agent status, bracketed-paste the text, settle, then
+  // send Enter only if the agent is still idle (guardedSend). Not-ready → a toast, text left unsent.
+  // Templates live in sessionPresets; rendered via the shared DropdownMenu (overflow-safe + roving focus).
+  async function insertSnippet(text: string) {
+    if (!id || exited) return;
+    const sid = id; // pin: id can go null in the settle gap (child exit); onData-style routing below
+    const busy = () => agentState === 'working' || agentState === 'blocked';
+    const write = async (d: string): Promise<void> => {
+      if (broadcast && onInput) onInput(d);
+      else await sessionWrite(sid, d).catch(() => {}); // child may exit in the write gap
+    };
+    // enter:false — a snippet is a draft the user reviews and submits themselves (#57 stays intact);
+    // the guard only refuses to splatter it over a busy/blocked TUI.
+    const r = await guardedSend(write, text, busy, { enter: false });
+    if (r === 'not-ready') pushToast({ kind: 'info', title: t('sessions.sendNotReady') }, 2500);
     term?.focus();
   }
   const snipItems = $derived(MSG_SNIPPETS.map((s) => ({ label: s, onClick: () => insertSnippet(s) })));
