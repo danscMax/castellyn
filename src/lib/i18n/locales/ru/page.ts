@@ -307,6 +307,7 @@ export default {
   toast_stack_down_title: 'Сервис стека упал',
   toast_stack_down_detail: 'Сервис «{name}» остановился неожиданно.',
   toast_generic_error: 'Что-то пошло не так',
+  plugins_load_error: 'Не удалось прочитать плагины',
 
   // Misc
   load_error: 'Ошибка загрузки: {e}',

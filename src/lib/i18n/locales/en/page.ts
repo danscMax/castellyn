@@ -307,6 +307,7 @@ export default {
   toast_stack_down_title: 'Stack service went down',
   toast_stack_down_detail: 'Service “{name}” stopped unexpectedly.',
   toast_generic_error: 'Something went wrong',
+  plugins_load_error: 'Could not read plugins',
 
   // Misc
   load_error: 'Load error: {e}',

@@ -502,12 +502,17 @@
     </div>
   {/if}
 
-  {#if data === null}
+  {#if data === null && running === 'profiles'}
+    <!-- Skeleton ONLY while a check is actually running. -->
     <div class="flex flex-col gap-sw-2">
       {#each Array(4) as _, i (i)}
         <div class="skeleton" style="height:2.4rem"></div>
       {/each}
     </div>
+  {:else if data === null}
+    <!-- U6: never-checked yet — an actionable empty state, not a frozen skeleton that reads as "loading forever". -->
+    <EmptyState icon={Users} title={t('profiles.noData')} description={t('profiles.noDataHint')}
+      action={busy ? undefined : () => onAction('check')} actionLabel={t('common.check')} />
   {:else if profiles.length}
     <DataTable
       columns={COLS}

@@ -1807,7 +1807,9 @@
       })
       .catch((e) => {
         pluginsData = [];
-        pushToast({ kind: 'error', title: String(e) });
+        // U8/U3: a localized title + the raw error in `detail` (was: the raw serde string dumped
+        // straight into a Russian-UI toast title). The empty-state already explains "no plugins".
+        toastErr(e, t('page.plugins_load_error'));
       });
     const pS = listSkills()
       .then((v) => {

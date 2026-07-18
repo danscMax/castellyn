@@ -12054,7 +12054,9 @@ fn classify_wiring(unwired: &[String], managed_double: bool) -> (String, String,
         parts.push(format!("profiles missing SessionStart wiring: {}", unwired.join(", ")));
     }
     if managed_double {
-        parts.push("managed-settings.json also wires plugin_sync (double-wiring)".to_string());
+        // "deployed" is explicit: a SEPARATE managed-settings health item reports the SOURCE file
+        // (under scripts_root); naming both "managed-settings.json" made the two read contradictory.
+        parts.push("the deployed managed-settings.json also wires plugin_sync (double-wiring)".to_string());
     }
     if parts.is_empty() {
         return ("ok".into(), "every profile wired; managed settings clean".into(), None);
@@ -12108,7 +12110,9 @@ fn managed_settings_drift_item() -> StackDriftItem {
     let src = match std::fs::read_to_string(source_managed_path()) {
         Ok(s) => s,
         Err(e) => {
-            return StackDriftItem { id, state: "error".into(), detail: format!("read source: {e}"), fix: None }
+            // "source" managed-settings under scripts_root — distinct from the DEPLOYED copy the
+            // wiring item mentions; spell it out so the two items don't look self-contradictory.
+            return StackDriftItem { id, state: "error".into(), detail: format!("read source managed-settings: {e}"), fix: None }
         }
     };
     if parse_json_bom(&src).is_err() {

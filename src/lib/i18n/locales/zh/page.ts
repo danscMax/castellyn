@@ -301,6 +301,7 @@ export default {
   toast_stack_down_title: '堆栈服务已停止',
   toast_stack_down_detail: '服务「{name}」意外停止。',
   toast_generic_error: '出错了',
+  plugins_load_error: '无法读取插件',
 
   // Misc
   load_error: '加载错误：{e}',
