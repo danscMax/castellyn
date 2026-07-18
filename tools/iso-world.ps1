@@ -245,6 +245,34 @@ function New-ForkRepo([string]$name, [bool]$dirty) {
 New-ForkRepo 'alpha' $false
 New-ForkRepo 'beta'  $true
 
+# fork-sync.last.json — the payload the Forks tab actually renders (ForkStatus shape, src/lib/ipc.ts:
+# ForkRepo fields). Without it the tab shows "Нет данных" even after a stub run (live find 2026-07-18).
+# Paths point at the REAL sandbox repos so per-repo actions (status/plan) operate on real git.
+$forkUpdater = Join-Path $Scripts 'fork-updater'
+New-Dir $forkUpdater
+$forkRepo = {
+  param([string]$name, [bool]$dirty, [bool]$own)
+  [ordered]@{
+    Name = "repo-$name"; Path = (Join-Path $forks "repo-$name")
+    upstream = if ($own) { $null } else { "https://github.com/upstream/$name" }
+    fork = if ($own) { $null } else { "https://github.com/iso-user/$name" }
+    forkOwnerRepo = if ($own) { $null } else { "iso-user/$name" }
+    parentOwnerRepo = if ($own) { $null } else { "upstream/$name" }
+    defaultBranch = 'main'; behindBy = if ($own) { 0 } else { 2 }; defaultAhead = 0
+    ffSafe = -not $dirty; dirty = $dirty; untracked = $dirty; midOp = $false; opName = $null
+    detached = $false; currentBranch = 'main'; isOwn = $own; rolesGuessed = $false
+    wipLocal = $null; upstreamUpdated = (Get-Date).AddDays(-3).ToString('o')
+    upstreamArchived = $false; upstreamDefaultBranch = 'main'
+    branches = @(); Skipped = $null
+  }
+}
+Write-Json (Join-Path $forkUpdater 'fork-sync.last.json') ([ordered]@{
+  schemaVersion = 1; status = 'ok'; timestamp = (Get-Date).ToString('o')
+  generatedAt = (Get-Date).ToString('o'); mode = 'check'; ghAvailable = $true; durationSec = 4
+  summary = [ordered]@{ repos = 2; merged = 0; open = 0; conflict = 0; needHands = 1 }
+  repos = @((& $forkRepo 'alpha' $false $false), (& $forkRepo 'beta' $true $true))
+})
+
 # ════════════════════════════════════════════════════════════════════════════
 # LAYER 3 — bin\  (prepended to PATH; git/pwsh/node stay REAL)
 # ════════════════════════════════════════════════════════════════════════════

@@ -169,6 +169,11 @@ $psi.FileName = $Exe
 $psi.UseShellExecute = $false
 $psi.EnvironmentVariables['APPDATA'] = $IsoApp
 $psi.EnvironmentVariables['LOCALAPPDATA'] = $IsoLocal
+# Explicit UDF: without it WebView2 falls back to the exe-adjacent `castellyn.exe.WebView2`
+# folder, and Chromium 150+ silently DISABLES --remote-debugging-port for that "default"
+# location (observed live 2026-07-18: the arg was on the command line, no listener). An
+# explicit non-default folder inside the isolated Local restores CDP.
+$psi.EnvironmentVariables['WEBVIEW2_USER_DATA_FOLDER'] = (Join-Path $IsoLocal 'castellyn-webview')
 $psi.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = "--remote-debugging-port=$CdpPort"
 if ($World) {
   # Every filesystem discovery path the backend has goes through these envs — the instance now

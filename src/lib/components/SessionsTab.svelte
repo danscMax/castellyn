@@ -1140,7 +1140,7 @@
     if (!v.attachId) {
       const loc = locIdFor(v.sshTarget);
       if (!v.sshTarget || loc) {
-        recordRecent(v.tool as Env, v.profile, loc, v.cwd, v.remoteDir ?? '', v.args);
+        recordRecent(v.tool as Env, v.profile, loc, recordCwd, v.remoteDir ?? '', v.args);
       }
     }
     // Auto-focus the new pane's terminal so the user can type immediately (the obvious next action
