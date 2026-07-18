@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renumberHistory, pushToast, dismiss, toastStore } from './toast.svelte';
+import { renumberHistory, pushToast, dismiss, clearHistory, toastStore } from './toast.svelte';
 
 // RT-001: the notification panel keys its {#each} by `item.id`, and Svelte throws on a duplicate key.
 // `seq` restarts at 0 on every load, so a history persisted across several runs carries colliding ids
@@ -45,5 +45,28 @@ describe('pushToast dedup (×N)', () => {
     const c = pushToast({ kind: 'error', title: 'boom', detail: 'y' });
     expect(new Set([a, b, c]).size).toBe(3);
     [a, b, c].forEach(dismiss);
+  });
+});
+
+// A background error that keeps re-firing (e.g. list_plugins failing on every reloadExtensions) dismisses
+// a fresh toast every ~15s — each landing in history. Without a merge, the panel fills with identical
+// entries and buries everything else. History collapses consecutive identical dismissals into one ×N.
+describe('pushToHistory dedup (×N across dismissals)', () => {
+  it('merges a consecutive identical dismissed toast into the newest history entry', () => {
+    clearHistory();
+    dismiss(pushToast({ kind: 'error', title: 'plug', detail: 'z' }));
+    dismiss(pushToast({ kind: 'error', title: 'plug', detail: 'z' }));
+    const hits = toastStore.history.items.filter((x) => x.title === 'plug' && x.detail === 'z');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].count).toBe(2);
+  });
+
+  it('keeps a different notification as its own timeline entry', () => {
+    clearHistory();
+    dismiss(pushToast({ kind: 'error', title: 'plug', detail: 'z' }));
+    dismiss(pushToast({ kind: 'info', title: 'other', detail: 'q' }));
+    dismiss(pushToast({ kind: 'error', title: 'plug', detail: 'z' }));
+    // The interleaved 'other' breaks the run, so the second 'plug' can't merge into the first.
+    expect(toastStore.history.items).toHaveLength(3);
   });
 });

@@ -114,6 +114,20 @@ export function resumeToasts(): void {
 }
 
 function pushToHistory(t: Toast): void {
+  // A persistently-flapping background error (a broken plugins file failing every reloadExtensions,
+  // an unreachable service polled on a timer) would otherwise unshift an identical entry every ~15s
+  // toast lifecycle and bury the rest of the log. Collapse a consecutive identical arrival into the
+  // newest entry's ×N count + refreshed timestamp — the same dedup pushToast does for visible toasts,
+  // extended to the persisted history. Only index 0 is checked: interleaved notifications still get
+  // their own timeline entry; only pure back-to-back repeats merge.
+  const [newest] = toastStore.history.items;
+  if (newest && newest.kind === t.kind && newest.title === t.title && newest.detail === t.detail) {
+    newest.count = (newest.count ?? 1) + (t.count ?? 1);
+    newest.timestamp = Date.now();
+    toastStore.history.unread++;
+    saveHistory();
+    return;
+  }
   toastStore.history.items = [{ ...t, timestamp: Date.now() }, ...toastStore.history.items].slice(0, 50);
   toastStore.history.unread++;
   saveHistory();
