@@ -34,6 +34,10 @@
     readConfig,
     saveConfig,
     pollLimitsNow,
+    isGitRepo,
+    worktreeCreate,
+    worktreeRemove,
+    worktreeIsClean,
     type AgentStatusHookState,
     type AgentStatusEvent,
     type LimitsStatusEvent,
@@ -91,6 +95,8 @@
     onFolderReqConsumed?: () => void;
   } = $props();
 
+  // W3: an isolated git worktree backing one session (repo it branched from, its checkout path, branch).
+  type WtMeta = { repo: string; path: string; branch: string };
   type Pane = {
     key: string;
     profile: string;
@@ -106,6 +112,9 @@
     space?: string; // herdr W3: project space this pane belongs to (undefined = default space)
     // Council U-7: per-session override of the global "at limit" policy (undefined = global).
     limitMode?: 'wait' | 'switchProfile';
+    // W3: this session runs in an isolated git worktree; carried so closing the pane can clean it up
+    // (remove if clean, preserve the branch if it holds commits). undefined = plain shared checkout.
+    worktree?: WtMeta;
   };
   function renamePane(key: string, name: string) {
     panes = panes.map((p) => (p.key === key ? { ...p, name: name || undefined } : p));
@@ -219,7 +228,7 @@
           const alive = new Set(await sessionList());
           for (const s of savedLive) {
             if (alive.has(s.id)) {
-              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name, space: s.space, limitMode: s.limitMode });
+              addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args: s.args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, attachId: s.id, ownsSession: true, name: s.name, space: s.space, limitMode: s.limitMode, worktree: s.worktree });
             }
           }
           // Dead entries = a full app restart (the PTYs died with it). Offer to rebuild
@@ -751,7 +760,7 @@
   }
   // ── Reload survival (#5): persist spawned-here sessions, re-attach the ones still alive on mount ──
   const LIVE_KEY = 'cmh-sessions-live';
-  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string; space?: string; limitMode?: 'wait' | 'switchProfile' };
+  type LivePane = { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; id: string; claudeSid?: string; name?: string; space?: string; limitMode?: 'wait' | 'switchProfile'; worktree?: WtMeta };
   // Captured synchronously at init — BEFORE the persist effect first runs and overwrites it with the
   // (empty) fresh panes — so a webview reload still sees the pre-reload session list.
   const savedLive: LivePane[] = (() => {
@@ -771,7 +780,7 @@
         .filter((p) => (!p.attachId || p.ownsSession) && (p.attachId ?? sessionIds[p.key]))
         .map((p) => {
           const id = (p.attachId ?? sessionIds[p.key])!;
-          return { tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id, claudeSid: claudeSids[id], name: p.name, space: p.space, limitMode: p.limitMode };
+          return { tool: p.tool, profile: p.profile, cwd: p.cwd, args: p.args, remoteDir: p.remoteDir, sshTarget: p.sshTarget, id, claudeSid: claudeSids[id], name: p.name, space: p.space, limitMode: p.limitMode, worktree: p.worktree };
         });
       // #3: keep the pending restore set (last run's dead sessions) in LIVE_KEY until the user
       // accepts or dismisses the bar — else a second webview reload before they act loses the offer.
@@ -1029,7 +1038,7 @@
       /* ignore */
     }
   }
-  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string; space?: string; limitMode?: 'wait' | 'switchProfile' }) {
+  function addPane(v: { tool: SessionTool; profile: string; cwd: string; args: string; remoteDir?: string; sshTarget?: string; attachId?: string; ownsSession?: boolean; name?: string; space?: string; limitMode?: 'wait' | 'switchProfile'; worktree?: WtMeta }) {
     // Don't block re-attaching an EXISTING session (e.g. a pane returned from a monitor) on the cap —
     // it's not a new spawn. Only new spawns count against MAX_PANES. Toast, not just null: several
     // callers (space "＋", Ctrl+Shift+D clone) have no disabled affordance of their own.
@@ -1043,7 +1052,7 @@
     // `spaces`) — a live PTY running invisibly, unreachable and unkillable from the UI. `spaces` is
     // loaded synchronously on mount before any restore path, so this never collapses a valid space.
     const space = v.space && spaces.some((s) => s.id === v.space) ? v.space : activeSpace;
-    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space, limitMode: v.limitMode }];
+    panes = [...panes, { key, profile: v.profile, tool: v.tool, cwd: v.cwd, args: v.args, remoteDir: v.remoteDir, sshTarget: v.sshTarget, attachId: v.attachId, ownsSession: v.ownsSession, name: v.name, space, limitMode: v.limitMode, worktree: v.worktree }];
     if (v.tool === 'claude') rememberFolder(v.profile, v.cwd);
     rememberRecent(v.cwd);
     // EVERY real spawn becomes a "recent" recipe — clones, tab "＋", stack launches and deep-links
@@ -1084,6 +1093,25 @@
       unread = rest;
     }
   }
+  // W3: a closed session's isolated worktree is removed if clean (branch preserved when it holds
+  // commits) or left in place if dirty — the agent's work is never silently lost.
+  async function cleanupWorktree(wt: WtMeta) {
+    try {
+      if (!(await worktreeIsClean(wt.path))) {
+        pushToast({ kind: 'info', title: t('sessions.worktreeKept', { path: wt.path }) });
+        return;
+      }
+      const r = await worktreeRemove(wt.repo, wt.path);
+      if (r.preservedBranch) {
+        pushToast({ kind: 'info', title: t('sessions.worktreeBranchKept', { branch: r.preservedBranch }) });
+      } else {
+        pushToast({ kind: 'success', title: t('sessions.worktreeRemoved') });
+      }
+    } catch {
+      // Removal refused (dirty/locked/guard) — the worktree stays; point at it rather than lose it.
+      pushToast({ kind: 'info', title: t('sessions.worktreeKept', { path: wt.path }) });
+    }
+  }
   function closePane(key: string) {
     const closed = panes.find((p) => p.key === key);
     const movedOut = peekMoved(sessionIds[key] ?? '');
@@ -1094,17 +1122,22 @@
     // Broadcast is meaningless with one pane and its toggle is hidden — reset so input doesn't
     // keep getting mirrored invisibly.
     if (panes.length <= 1) broadcast = false;
+    // A live MOVE keeps the session (and its worktree) alive in the monitor window — only clean up on
+    // a real close.
+    if (closed?.worktree && !movedOut) void cleanupWorktree(closed.worktree);
     // Offer a one-click reopen (same tool/profile/folder/args). The old PTY is gone, so this
     // relaunches a fresh session rather than restoring scrollback. Skip for a live MOVE — the
     // session isn't closed, it just relocated to a monitor window.
     if (closed && !movedOut) {
+      // A worktree pane's cwd is the (now-removed) checkout — reopen from the source repo instead.
+      const reopenCwd = closed.worktree ? closed.worktree.repo : closed.cwd;
       pushToast({
         kind: 'info',
         title: t('sessions.paneClosed', { name: paneLabel(closed) }),
         action: {
           label: t('sessions.reopen'),
           onClick: () =>
-            addPane({ tool: closed.tool, profile: closed.profile, cwd: closed.cwd, args: closed.args })
+            addPane({ tool: closed.tool, profile: closed.profile, cwd: reopenCwd, args: closed.args })
         }
       });
     }
@@ -1120,7 +1153,10 @@
     });
   }
   function doCloseAll() {
-    for (const p of panes) prunePaneKey(p.key);
+    for (const p of panes) {
+      if (p.worktree) void cleanupWorktree(p.worktree);
+      prunePaneKey(p.key);
+    }
     panes = [];
     maximized = null;
     broadcast = false;
@@ -1317,6 +1353,7 @@
       title: t('sessions.closeSpaceTitle'),
       message: t('sessions.closeSpaceMsg', { n: keys.length }),
       run: () => {
+        for (const p of panes) if (keys.includes(p.key) && p.worktree) void cleanupWorktree(p.worktree);
         panes = panes.filter((p) => !keys.includes(p.key));
         for (const k of keys) {
           delete paneRefs[k];
@@ -1606,6 +1643,31 @@
   let lFolder = $state(''); // local folder (when lLoc==='')
   let lRemoteDir = $state(''); // remote start dir (when lLoc!=='')
   let remoteRecent = $state<string[]>([]); // recent remote dirs → datalist for the remote-dir input (#19)
+  // W3: run the session in an isolated git worktree. Only offered for a LOCAL folder that is a git
+  // repo; the checkbox self-hides otherwise. `lFolderIsRepo` is probed whenever the folder changes.
+  let lWorktree = $state(false);
+  let lFolderIsRepo = $state(false);
+  $effect(() => {
+    const folder = lFolder.trim();
+    if (lLoc || !folder) {
+      lFolderIsRepo = false;
+      return;
+    }
+    let cancelled = false;
+    isGitRepo(folder)
+      .then((ok) => {
+        if (!cancelled) lFolderIsRepo = ok;
+      })
+      .catch(() => {
+        if (!cancelled) lFolderIsRepo = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+  });
+  // A worktree only makes sense for a local git repo — the checkbox is meaningless (and hidden) for
+  // SSH or a non-repo folder, so treat it as off there.
+  const worktreeActive = $derived(lWorktree && !lLoc && lFolderIsRepo);
   let lArgs = $state('');
   // The args field mirrors the ⚙ default-args until the user edits it (then it's theirs). This is
   // what makes editing "default args" in settings actually flow into the phrase (#16 — was seeded once).
@@ -1829,18 +1891,34 @@
       return `${h.user ? h.user + '@' : ''}${h.host} ⚠`;
     }
   }
-  function launchPhrase() {
+  async function launchPhrase() {
     // Bake the identity selection (codex --profile / opencode --model) into the args once, so the
     // pane, the space-recipe and the recorded "recent" all carry it.
     const finalArgs = composeArgs(lEnv, lArgs);
     const v = paneFrom(lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs);
-    if (v) {
-      if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
-      setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs); // explicit choice
-      // Council U-7: carry the per-session limit-policy override ('' = follow the global setting).
-      addPane(lEnv === 'claude' && lLimitMode ? { ...v, limitMode: lLimitMode } : v); // addPane records the recipe into "recents"
-      newOpen = false; // close the launcher popover once a session starts
+    if (!v) return;
+    if (lLoc && lRemoteDir.trim()) rememberRemote(lRemoteDir); // SSH: keep the remote dir for next time
+    setSpaceRecipe(activeSpace, lEnv, lProfile, lLoc, lFolder, lRemoteDir, finalArgs); // explicit choice
+    // W3: an isolated worktree — create it off the chosen repo, run the session in its checkout, and
+    // carry {repo,path,branch} on the pane so closing it can clean up. On failure, don't launch (a
+    // half-set-up worktree would silently run in the shared copy — surface the error instead).
+    let worktree: WtMeta | undefined;
+    let cwd = v.cwd;
+    if (worktreeActive) {
+      const repo = lFolder.trim();
+      const name = lEnv === 'claude' && lProfile ? `${lEnv}-${lProfile}` : lEnv;
+      try {
+        const info = await worktreeCreate(repo, name);
+        worktree = { repo, path: info.path, branch: info.branch };
+        cwd = info.path;
+      } catch (e) {
+        pushToast({ kind: 'error', title: t('common.error'), detail: String(e) });
+        return;
+      }
     }
+    // Council U-7: carry the per-session limit-policy override ('' = follow the global setting).
+    addPane({ ...v, cwd, worktree, ...(lEnv === 'claude' && lLimitMode ? { limitMode: lLimitMode } : {}) }); // addPane records the recipe into "recents"
+    newOpen = false; // close the launcher popover once a session starts
   }
   // ─── Favorites: pin the whole phrase → 1-click relaunch ───
   type Fav = { id: string; env: Env; profile: string; locId: string; folder: string; remoteDir: string; args: string; label: string };
@@ -2500,6 +2578,12 @@
           <span class="fld-lbl">{t('sessions.phIn')}</span>
           {#if lLoc === ''}
             <div class="pfolder"><FolderField bind:value={lFolder} placeholder={t('sessions.cwdShort')} /></div>
+            {#if lFolderIsRepo}
+              <label class="wt-check" title={t('sessions.worktreeIsolateTip')}>
+                <input type="checkbox" bind:checked={lWorktree} />
+                <span>{t('sessions.worktreeIsolate')}</span>
+              </label>
+            {/if}
           {:else}
             <input class="sw-input grow font-mono text-sw-xs pfolder" bind:value={lRemoteDir}
               list="remote-dirs" placeholder={t('sessions.dlgSshRemoteDirPlaceholder')} spellcheck="false" autocomplete="off" />
@@ -3359,6 +3443,20 @@
   .phrase .pfolder {
     min-width: 0;
     flex: 1;
+  }
+  /* W3: "run in an isolated worktree" — a compact opt-in under the folder field. */
+  .phrase .wt-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+    font-size: var(--sw-text-xs);
+    color: var(--sw-text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .phrase .wt-check input {
+    cursor: pointer;
   }
   .argsrow {
     display: flex;

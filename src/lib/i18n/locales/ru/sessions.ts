@@ -261,6 +261,12 @@ export default {
   relaunchConfirmMsg: 'Запустит новую сессию и очистит текущий вывод (историю).',
   paneClosed: 'Панель закрыта: {name}',
   reopen: 'Открыть снова',
+  worktreeIsolate: 'В отдельном worktree',
+  worktreeIsolateTip:
+    'Запустить сессию в изолированном git-worktree со своей веткой — параллельные сессии не мешают друг другу. При закрытии чистый worktree убирается, ветка с коммитами сохраняется.',
+  worktreeKept: 'Worktree оставлен: {path}',
+  worktreeRemoved: 'Worktree убран',
+  worktreeBranchKept: 'Worktree убран, ветка сохранена: {branch}',
   searchAllPlaceholder: 'Поиск во всех ⏎',
   searchAllTip: 'Искать во всех панелях сразу',
   snippets: 'Вставить шаблон',

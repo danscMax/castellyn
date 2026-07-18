@@ -261,6 +261,12 @@ export default {
   relaunchConfirmMsg: 'Starts a fresh session and clears the current output (scrollback).',
   paneClosed: 'Closed: {name}',
   reopen: 'Reopen',
+  worktreeIsolate: 'In a separate worktree',
+  worktreeIsolateTip:
+    'Run the session in an isolated git worktree on its own branch — parallel sessions no longer touch one working copy. A clean worktree is removed on close; a branch with commits is kept.',
+  worktreeKept: 'Worktree kept: {path}',
+  worktreeRemoved: 'Worktree removed',
+  worktreeBranchKept: 'Worktree removed, branch kept: {branch}',
   searchAllPlaceholder: 'Search all ⏎',
   searchAllTip: 'Search across every pane at once',
   snippets: 'Insert template',

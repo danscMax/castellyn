@@ -414,6 +414,19 @@ export const sessionResize = (id: string, cols: number, rows: number) =>
   invoke('session_resize', { id, cols, rows });
 export const sessionKill = (id: string) => invoke('session_kill', { id });
 
+// --- Worktree-per-session (W3): run a session in an isolated git worktree/branch ---
+export type WorktreeInfo = { path: string; branch: string };
+// Create an isolated worktree off the repo's current HEAD; name collisions bump a suffix (feat-2…).
+export const worktreeCreate = (repo: string, name: string) =>
+  invoke<WorktreeInfo>('worktree_create', { repo, name });
+// Remove one of OUR worktrees (guarded). preservedBranch set = branch kept (unmerged commits).
+export const worktreeRemove = (repo: string, path: string) =>
+  invoke<{ preservedBranch: string | null }>('worktree_remove', { repo, path });
+// git status --porcelain empty. Any error → false (never remove what we can't prove clean).
+export const worktreeIsClean = (path: string) => invoke<boolean>('worktree_is_clean', { path });
+// Cheap .git-existence check — gates the launch-form "isolate in worktree" checkbox.
+export const isGitRepo = (path: string) => invoke<boolean>('is_git_repo', { path });
+
 // --- Native folder picker (Windows Explorer) ---
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 export const pickFolder = async (defaultPath?: string): Promise<string | null> => {

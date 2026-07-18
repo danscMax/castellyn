@@ -261,6 +261,12 @@ export default {
   relaunchConfirmMsg: '将启动一个新会话并清除当前输出（回滚缓冲）。',
   paneClosed: '已关闭：{name}',
   reopen: '重新打开',
+  worktreeIsolate: '在独立的 worktree 中',
+  worktreeIsolateTip:
+    '在独立的 git worktree 及其专属分支中运行会话——并行会话不再共用同一个工作副本。关闭时干净的 worktree 会被移除，含有提交的分支会被保留。',
+  worktreeKept: 'worktree 已保留：{path}',
+  worktreeRemoved: 'worktree 已移除',
+  worktreeBranchKept: 'worktree 已移除，分支已保留：{branch}',
   searchAllPlaceholder: '搜索全部 ⏎',
   searchAllTip: '同时在所有面板中搜索',
   snippets: '插入模板',
