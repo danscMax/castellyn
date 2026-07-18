@@ -6,6 +6,7 @@
   import { WebglAddon } from '@xterm/addon-webgl';
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import { Unicode11Addon } from '@xterm/addon-unicode11';
+  import { SerializeAddon } from '@xterm/addon-serialize';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Channel } from '@tauri-apps/api/core';
   import '@xterm/xterm/css/xterm.css';
@@ -37,6 +38,7 @@
   import ProfileUsageBadge from './ProfileUsageBadge.svelte';
   import { copyText, pasteText } from '$lib/clipboard';
   import { pushToast } from '$lib/toast.svelte';
+  import { saveScrollback, takeScrollback } from '$lib/scrollbackStore';
 
   let {
     profile,
@@ -145,6 +147,20 @@
     [label, cwd, args].filter(Boolean).join(' · ') || t('sessions.paneTitle', { profile: label })
   );
 
+  // Stable-across-restart identity for the persisted scrollback (W2). paneKey (`tool:profile#seq`)
+  // is NOT stable — seq resets every app start — but the LAUNCH RECIPE is: layout-restore recreates
+  // a pane from exactly this tuple (tool/profile/cwd/target/args). The one volatile bit is the
+  // `--resume <sid>` restore appends to a claude pane's args, so strip it to match the original save.
+  const scrollbackId = $derived(
+    [
+      tool,
+      profile,
+      sshTarget ?? '',
+      cwd ?? '',
+      args.replace(/--resume\s+[\w-]+/g, '').replace(/\s+/g, ' ').trim()
+    ].join('|')
+  );
+
   // Multi-monitor: a non-attached pane can be opened (mirrored) on another monitor. The session keeps
   // running in this window; the monitor window attaches to it (fan-out) and replays scrollback.
   let monitors = $state<MonitorInfo[]>([]);
@@ -178,6 +194,27 @@
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
   let search: SearchAddon | undefined;
+  // W2: serialize the buffer to ANSI for cold-restore. Saved on a trailing debounce after output and
+  // on dispose; replayed as inert scrollback before the fresh PTY attaches (see onMount / onDestroy).
+  let serialize: SerializeAddon | undefined;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function saveScrollbackNow() {
+    // Attached mirrors don't own persisted scrollback — the backend replays it on attach, and the
+    // owning window is the one that persists. Only a self-spawned pane writes here.
+    if (attachId || !term || !serialize) return;
+    try {
+      // excludeAltBuffer: a dead full-screen TUI's alt-screen is gone on restart — restore the normal
+      // scrollback that led up to it. scrollback omitted → full history (capped in the store).
+      saveScrollback(scrollbackId, serialize.serialize({ excludeAltBuffer: true }));
+    } catch {
+      /* serialize/storage failure → no persisted buffer this round; dispose save retries */
+    }
+  }
+  function scheduleScrollbackSave() {
+    if (attachId) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveScrollbackNow, 5000);
+  }
   // P2: keep a handle so a hidden pane can release its GPU context (WebView2 caps ~16 live contexts —
   // dozens of panes otherwise starve the visible ones back into the slow DOM renderer).
   let webgl: WebglAddon | undefined;
@@ -421,6 +458,7 @@
         if (pendingBytes > PENDING_CAP) drainPending(); // cap memory: flush once, keep buffering
         onActivity?.(paneKey); // mark unread
       }
+      scheduleScrollbackSave(); // W2: persist ~5s after output settles (also on dispose)
     };
     try {
       if (attachId) {
@@ -529,6 +567,8 @@
     if (visible) loadWebgl();
     search = new SearchAddon();
     term.loadAddon(search);
+    serialize = new SerializeAddon(); // W2: buffer → ANSI for cold-restore
+    term.loadAddon(serialize);
     // Unicode 11 widths (#19): xterm defaults to v6, mismeasuring modern emoji / CJK and drifting the
     // cursor inside hosted TUIs (Claude's UI, ru/zh output).
     term.loadAddon(new Unicode11Addon());
@@ -643,6 +683,14 @@
     // Report keyboard focus up so the tab can mark the active pane (#14). xterm's hidden textarea
     // is inside host, so focusin bubbles here.
     host.addEventListener('focusin', () => onFocus?.(paneKey));
+    // W2: cold-restore — replay the previous buffer as INERT scrollback BEFORE start() spawns/attaches
+    // the PTY. The channel doesn't exist yet, so xterm's query auto-replies (DA/DSR) physically cannot
+    // reach a shell. One scrollToBottom once the replay is parsed; no marker line (a clean buffer).
+    // Attached mirrors skip this — the backend replays their scrollback on attach.
+    if (!attachId) {
+      const saved = takeScrollback(scrollbackId);
+      if (saved) term.write(saved, () => term?.scrollToBottom());
+    }
     await start();
   });
 
@@ -665,6 +713,8 @@
     }
     onIdChange?.(paneKey, null);
     if (webglDisposeTimer) clearTimeout(webglDisposeTimer);
+    clearTimeout(saveTimer);
+    saveScrollbackNow(); // W2: final persist while term + serialize addon are still alive
     term?.dispose();
   });
 
