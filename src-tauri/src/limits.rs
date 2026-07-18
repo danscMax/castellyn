@@ -43,24 +43,32 @@ static USAGE_CACHE: LazyLock<Mutex<HashMap<String, (Instant, String, Result<serd
 /// do have. `Some(Err(429))` = rate-limited; `Some(Err(0))` = transport failure.
 pub(crate) fn usage_cached(cred_path: &str) -> Option<Result<serde_json::Value, u16>> {
     let token = read_access_token(cred_path)?;
+    Some(cached_fetch(cred_path, token, fetch_usage))
+}
+
+/// Shared cache-or-fetch used by both providers (Claude by cred path, Codex by auth.json path).
+/// Invalidate on re-auth: a fresh token for the same key must not keep reading the old (e.g. 401)
+/// verdict from the cache until the TTL elapses. A transient transport failure (Err(0)) is NOT
+/// cached — network recovery should take effect on the next poll, not 5 minutes later; Ok/401/429 ARE.
+fn cached_fetch(
+    key: &str,
+    token: String,
+    fetch: impl Fn(&str) -> Result<serde_json::Value, u16>,
+) -> Result<serde_json::Value, u16> {
     {
         let cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((at, cached_token, res)) = cache.get(cred_path) {
-            // Invalidate on re-auth: a fresh token for the same profile must not keep reading the old
-            // (e.g. 401) verdict from the cache until the TTL elapses.
+        if let Some((at, cached_token, res)) = cache.get(key) {
             if *cached_token == token && at.elapsed().as_secs() < CACHE_TTL_SECS {
-                return Some(res.clone());
+                return res.clone();
             }
         }
     }
-    let res = fetch_usage(&token);
-    // Don't cache a transient transport failure (Err(0)) — a network recovery should take effect on
-    // the next poll, not 5 minutes later. Ok / 401 / 429 ARE cached.
+    let res = fetch(&token);
     if !matches!(res, Err(0)) {
         let mut cache = USAGE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        cache.insert(cred_path.to_string(), (Instant::now(), token, res.clone()));
+        cache.insert(key.to_string(), (Instant::now(), token, res.clone()));
     }
-    Some(res)
+    res
 }
 
 /// Raw per-profile utilization pushed to the UI every poll (never includes the token).
@@ -470,6 +478,8 @@ pub fn start(app: AppHandle) {
                     }
                 });
             }
+            // Codex rides the same round: one cheap request per 5 minutes, cached like the rest.
+            poll_codex(&app);
         });
         }
     });
@@ -500,6 +510,165 @@ pub fn poll_profile_now(app: &AppHandle, bare_key: &str) {
         .unwrap_or_else(|e| e.into_inner())
         .remove(&cred);
     poll_profile(app, bare_key, &cred);
+}
+
+// ─── Codex (ChatGPT backend) usage monitor ──────────────────────────────────────────────────────
+//
+// Mirrors the Claude monitor above for the Codex CLI plan: token comes from the CLI's own
+// `~/.codex/auth.json` (`tokens.access_token` + `tokens.account_id`), usage from the same endpoint
+// the Codex client itself calls. Same trust posture as Claude: the token is read, sent to the
+// vendor's OWN API over TLS with redirects disabled, never logged or emitted. Source of the
+// endpoint/headers/shape: Orca `src/main/rate-limits/codex-fetcher.ts` (live-verified 2026-07-18).
+
+const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+
+/// Pushed to the UI as `codex-limits-status`. Field names deliberately match `LimitsStatus`
+/// (`h5`/`d7`) so the launch-preview meters render either provider unchanged: Codex's
+/// `primary_window` IS a 5-hour window and `secondary_window` a weekly one.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CodexLimitsStatus {
+    h5: Option<f64>,
+    d7: Option<f64>,
+    h5_reset: Option<String>,
+    d7_reset: Option<String>,
+    /// ChatGPT rejected the token (401) — the user must re-run `codex` login.
+    expired: bool,
+    rate_limited: bool,
+}
+
+/// `%USERPROFILE%\.codex\auth.json` — the Codex CLI's own credential file (we never write it).
+fn codex_auth_path() -> Option<String> {
+    std::env::var("USERPROFILE").ok().map(|h| format!("{h}\\.codex\\auth.json"))
+}
+
+/// Pull `tokens.access_token` (+ optional `tokens.account_id`) from auth.json. None = Codex not
+/// logged in (skip silently). Returned by value, never logged — same posture as read_access_token.
+fn read_codex_auth(path: &str) -> Option<(String, Option<String>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    let tokens = v.get("tokens")?;
+    let access = tokens
+        .get("access_token")?
+        .as_str()
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let account = tokens.get("account_id").and_then(|x| x.as_str()).map(str::to_string);
+    Some((access, account))
+}
+
+/// GET the ChatGPT usage endpoint. Same error contract as `fetch_usage`: Ok(json) / Err(status) /
+/// Err(0) on transport. Headers per the Codex client itself (User-Agent/beta/originator) — the
+/// endpoint rejects requests without them.
+fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<serde_json::Value, u16> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(HTTP_TIMEOUT_SECS)))
+        // Same as V-12 above: bearer token in flight — never follow a redirect to another host.
+        .max_redirects(0)
+        .build()
+        .into();
+    let mut req = agent
+        .get(CODEX_USAGE_URL)
+        .header("Accept", "application/json")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("User-Agent", "codex-cli")
+        .header("OpenAI-Beta", "codex-1")
+        .header("originator", "Codex Desktop");
+    if let Some(acc) = account_id.filter(|s| !s.is_empty()) {
+        req = req.header("ChatGPT-Account-Id", acc);
+    }
+    match req.call() {
+        Ok(mut resp) => resp
+            .body_mut()
+            .read_to_string()
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .ok_or(0),
+        Err(ureq::Error::StatusCode(code)) => Err(code),
+        Err(_) => Err(0),
+    }
+}
+
+/// Parse the two windows out of a wham/usage response, or None when the shape is not the expected
+/// one (`plan_type` must be a string — the response-shape validator the Codex fetcher uses; an
+/// HTML error page or an API reshape must read as "unknown", never as 0%).
+pub(crate) fn codex_windows(
+    resp: &serde_json::Value,
+) -> Option<((Option<f64>, Option<String>), (Option<f64>, Option<String>))> {
+    if !resp.get("plan_type").is_some_and(|v| v.is_string()) {
+        return None;
+    }
+    let win = |name: &str| {
+        let w = resp.get("rate_limit").and_then(|r| r.get(name));
+        (
+            w.and_then(|x| x.get("used_percent")).and_then(|x| x.as_f64()),
+            w.and_then(|x| x.get("reset_at")).and_then(json_scalar_str),
+        )
+    };
+    Some((win("primary_window"), win("secondary_window")))
+}
+
+/// Poll Codex once per round: read auth.json, fetch (through the shared cache), emit
+/// `codex-limits-status`, and run the SAME edge-triggered threshold alerts as Claude under the
+/// pseudo-profile "codex" (windows "5h"/"7d" — FIRED/persistence keys are naturally distinct).
+fn poll_codex(app: &AppHandle) {
+    let Some(path) = codex_auth_path() else { return };
+    let Some((token, account)) = read_codex_auth(&path) else {
+        return; // Codex not logged in — N/A, no emit
+    };
+    let result = cached_fetch(&path, token, |t| fetch_codex_usage(t, account.as_deref()));
+    let emit = |st: CodexLimitsStatus| {
+        let _ = app.emit("codex-limits-status", st);
+    };
+    match result {
+        Ok(resp) => {
+            let Some(((h5, h5_reset), (d7, d7_reset))) = codex_windows(&resp) else {
+                return; // unexpected shape — unknown, not zero; skip this round
+            };
+            emit(CodexLimitsStatus {
+                h5,
+                d7,
+                h5_reset: h5_reset.clone(),
+                d7_reset: d7_reset.clone(),
+                expired: false,
+                rate_limited: false,
+            });
+            let mut fired = FIRED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut changed = false;
+            if let Some(u) = h5 {
+                if let Some(level) = take_alert(&mut fired, "codex", "5h", u) {
+                    fire_alert(app, "codex", "5h", level, u, h5_reset.as_deref());
+                    changed = true;
+                }
+            }
+            if let Some(u) = d7 {
+                if let Some(level) = take_alert(&mut fired, "codex", "7d", u) {
+                    fire_alert(app, "codex", "7d", level, u, d7_reset.as_deref());
+                    changed = true;
+                }
+            }
+            if changed {
+                save_fired(&fired);
+            }
+        }
+        Err(401) => emit(CodexLimitsStatus {
+            h5: None,
+            d7: None,
+            h5_reset: None,
+            d7_reset: None,
+            expired: true,
+            rate_limited: false,
+        }),
+        Err(429) => emit(CodexLimitsStatus {
+            h5: None,
+            d7: None,
+            h5_reset: None,
+            d7_reset: None,
+            expired: false,
+            rate_limited: true,
+        }),
+        Err(_) => { /* transient — retry next poll */ }
+    }
 }
 
 #[cfg(test)]
@@ -586,6 +755,53 @@ mod tests {
         let empty = serde_json::json!({});
         assert_eq!(scoped_max(&empty), (None, None, None));
         assert_eq!(extra_of(&empty), (false, None));
+    }
+
+    #[test]
+    fn codex_windows_parsing() {
+        // Shape per the wham/usage contract (primary=5h, secondary=weekly windows).
+        let resp = serde_json::json!({
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window":   { "used_percent": 37.5, "limit_window_seconds": 18000, "reset_at": 1_752_800_000i64 },
+                "secondary_window": { "used_percent": 12,   "limit_window_seconds": 604800, "reset_at": "2026-07-25T05:00:00Z" }
+            }
+        });
+        let ((h5, h5r), (d7, d7r)) = codex_windows(&resp).expect("valid shape");
+        assert_eq!((h5, d7), (Some(37.5), Some(12.0)));
+        // Numeric epoch is coerced to a string; ISO passes through.
+        assert_eq!(h5r.as_deref(), Some("1752800000"));
+        assert_eq!(d7r.as_deref(), Some("2026-07-25T05:00:00Z"));
+
+        // Missing windows are tolerated (None percentages), as long as the shape validator holds.
+        let sparse = serde_json::json!({ "plan_type": "free", "rate_limit": {} });
+        let ((h5, _), (d7, _)) = codex_windows(&sparse).expect("plan_type present");
+        assert_eq!((h5, d7), (None, None));
+
+        // No string plan_type → NOT the expected response (HTML error page, API reshape) → None,
+        // never "0%".
+        assert!(codex_windows(&serde_json::json!({})).is_none());
+        assert!(codex_windows(&serde_json::json!({ "plan_type": 5, "rate_limit": {} })).is_none());
+    }
+
+    #[test]
+    fn read_codex_auth_shape() {
+        let dir = std::env::temp_dir().join("castellyn-limits-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("codex-auth.json");
+        std::fs::write(&p, r#"{"tokens":{"access_token":"tok-x","account_id":"acc-1"}}"#).unwrap();
+        assert_eq!(
+            read_codex_auth(p.to_str().unwrap()),
+            Some(("tok-x".to_string(), Some("acc-1".to_string())))
+        );
+        // account_id optional; empty access token = not logged in.
+        std::fs::write(&p, r#"{"tokens":{"access_token":"tok-y"}}"#).unwrap();
+        assert_eq!(read_codex_auth(p.to_str().unwrap()), Some(("tok-y".to_string(), None)));
+        std::fs::write(&p, r#"{"tokens":{"access_token":""}}"#).unwrap();
+        assert_eq!(read_codex_auth(p.to_str().unwrap()), None);
+        std::fs::write(&p, r#"{"auth_mode":"chatgpt"}"#).unwrap();
+        assert_eq!(read_codex_auth(p.to_str().unwrap()), None);
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]

@@ -1067,6 +1067,18 @@ export type LimitsStatusEvent = {
   // Distinct from `expired` (token rejected) and from a plain network error (no event at all).
   rateLimited: boolean;
 };
+/** Backend `codex-limits-status` event: Codex (ChatGPT plan) usage from the CLI's own auth.json.
+ * Field names mirror LimitsStatusEvent (`h5` = primary 5-hour window, `d7` = secondary weekly) so
+ * the launch-preview meters render either provider unchanged. Emitted only when Codex is logged in. */
+export type CodexLimitsStatusEvent = {
+  h5: number | null;
+  d7: number | null;
+  h5Reset: string | null;
+  d7Reset: string | null;
+  // ChatGPT rejected the token (401): re-login with `codex` is needed; numbers are unknown.
+  expired: boolean;
+  rateLimited: boolean;
+};
 /** Backend `limits-alert` event: a window newly crossed a threshold (85 or 99). The UI toasts it;
  * the backend also rings + OS-notifies at 99. `window` is "5h" | "7d". */
 export type LimitsAlertEvent = {

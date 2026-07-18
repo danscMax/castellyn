@@ -37,6 +37,7 @@
     type AgentStatusHookState,
     type AgentStatusEvent,
     type LimitsStatusEvent,
+    type CodexLimitsStatusEvent,
     type ProfileInfo
   } from '$lib/ipc';
   import { pickResumeCandidate, isProfileExhausted } from '$lib/limitSwitch';
@@ -374,6 +375,7 @@
   // limit episode. Config-gated (autoContinueOn) for rollback. (A pane whose session actually EXITED
   // is not the limit case — Claude waits, it doesn't die — so respawn-resume is deliberately omitted.)
   let limitsByProfile = $state<Record<string, LimitsStatusEvent>>({});
+  let codexLimits = $state<CodexLimitsStatusEvent | null>(null);
   const autoContinued = new Set<string>(); // pane keys already handled this limit episode
   const switchAttempted = new Set<string>(); // #21e: switch tried once per episode (else fall to wait)
   // #21f: the interactive limit MENU is up for this session id (from agent-status.limitMenu). Newer
@@ -394,6 +396,9 @@
   const ON_DEMAND_POLL_MS = 90_000;
   onMount(() => {
     // L118: track() instead of a local `un` var — see the agent-status listener above.
+    // Codex (ChatGPT plan) usage — single global reading, shown in the launch preview when the
+    // codex agent is selected (same meters the claude profiles use).
+    track(listen<CodexLimitsStatusEvent>('codex-limits-status', (e) => (codexLimits = e.payload)));
     track(
       listen<LimitsStatusEvent>('limits-status', (e) => {
         limitsByProfile = { ...limitsByProfile, [e.payload.profile]: e.payload };
@@ -1732,7 +1737,9 @@
   const previewCmd = $derived(lEnv === 'shell' ? 'pwsh' : `${lEnv} ${composedArgs}`.trim());
   // Clicker-audit #3: does the composed command carry a safety-skipping flag? Surfaced in the card.
   const previewRisky = $derived(composedArgs.split(/\s+/).some(isRiskyFlag));
-  const previewLimits = $derived(lEnv === 'claude' ? (limitsByProfile[lProfile] ?? null) : null);
+  const previewLimits = $derived(
+    lEnv === 'claude' ? (limitsByProfile[lProfile] ?? null) : lEnv === 'codex' ? codexLimits : null
+  );
   const barClass = (v: number | null | undefined) => (v == null ? '' : v >= 95 ? 'max' : v >= 70 ? 'hot' : '');
   // Council U-4: when every profile is maxed the advisor used to dead-end — surface WHEN the
   // nearest 5h window resets so "wait or switch" becomes an informed decision.
