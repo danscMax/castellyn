@@ -105,16 +105,24 @@ can drive the whole UI without corrupting the real Castellyn config or touching 
 
 ```bash
 pwsh -File tools/iso-test.ps1            # start (reuses scratch profile); prints CDP + recipe
+pwsh -File tools/iso-test.ps1 -World     # FULL sandbox: fake home/scripts/forks/agent-CLIs — ALL buttons safe
 pwsh -File tools/iso-test.ps1 -Fresh     # start with a clean profile (onboarding appears)
 pwsh -File tools/iso-test.ps1 -Build     # cargo build the exe first, then start
 pwsh -File tools/iso-test.ps1 -Stop      # tear down (kills exe + frees vite 1420)
 ```
 
-- **Isolation boundary:** only Castellyn's own config lives under `%APPDATA%\castellyn`. The profiles
-  it manages (`~/.claude*`, `~/.ssh/config`, forks under `SCRIPTS_ROOT`, providers, `freeapi.db`) are
-  the REAL filesystem — a test instance still SEES real data. Nothing that WRITES the real system
-  (maintenance scripts, git, registry autostart, paid Claude/codex/opencode sessions) is safe to
-  trigger in a test run.
+- **Isolation boundary (default, БЕЗ `-World`):** only Castellyn's own config lives under
+  `%APPDATA%\castellyn`. The profiles it manages (`~/.claude*`, `~/.ssh/config`, forks under
+  `SCRIPTS_ROOT`, providers) are the REAL filesystem — nothing that WRITES the real system is safe.
+- **`-World` (full sandbox):** `tools/iso-world.ps1` builds a fake world (`%TEMP%\castellyn-iso\world`:
+  three `.claude*` profiles with dummy creds, stub maintenance scripts emitting real envelopes with
+  `ISO_OUTCOME=ok|changes|error|held`, SettingsMCP tree, two real git fork repos + `fork-sync.last.json`
+  fixture, echo-TUI stubs `claude`/`codex`/`opencode` + fixture `gh`) and the harness redirects
+  USERPROFILE/SCRIPTS_ROOT/CASTELLYN_SETTINGS_DIR/PATH into it, with `CASTELLYN_ISO=1` making the two
+  non-env side channels file-backed (HKCU autostart + OS credential store; window titles
+  "[ISO SANDBOX]"). In this mode EVERY button/action is safe — maintenance runs, git actions,
+  session launches all hit only the sandbox. Gotcha: WebView2 150+ needs the explicit
+  `WEBVIEW2_USER_DATA_FOLDER` the harness sets, or CDP silently never opens.
 - **Port constraint:** vite is pinned to 1420 (`strictPort`) and the debug exe loads `devUrl=1420`,
   so the isolated instance and your own `npm run tauri dev` CANNOT run at the same time.
 - The full safe click-through procedure (spawn a cheap clicker agent + safety rules + findings
