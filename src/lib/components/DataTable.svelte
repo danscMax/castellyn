@@ -402,10 +402,14 @@
      wrapper is content-height, its vertical overflow is zero, and sticky never engages — the page's
      <main> is the element that scrolls, and it's an ancestor of the scrollport so it can't drive the
      offset. Cap the height here so the header stays put while long tables scroll inside the card. */
+  /* Subtract a constant rather than taking a fraction of the viewport: the chrome above the table
+     (page header, toolbar, banners) is roughly fixed in px, so `70vh` measured 83px — 1.6 rows —
+     PAST the window bottom on a 720px-tall window, and those rows were unreachable at full scroll.
+     A fraction also fails the other way on a short window. Erring small only costs scrolling. */
   .dt-scroll {
     overflow-x: auto;
     overflow-y: auto;
-    max-height: 70vh;
+    max-height: calc(100vh - 20rem);
   }
   table.dt {
     width: 100%;
