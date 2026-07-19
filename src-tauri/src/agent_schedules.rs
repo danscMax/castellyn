@@ -179,6 +179,19 @@ fn set_outcome(s: &mut AgentSchedule, day_key: &str, outcome: &str) {
     s.last_outcome = Some(format!("{day_key}|{outcome}"));
 }
 
+/// Keep the last `cap` BYTES of `s`, snapped forward to a char boundary. `s[s.len()-cap..]` alone
+/// panics when the byte offset lands inside a multi-byte UTF-8 char (Cyrillic/emoji precheck output).
+fn tail_capped(s: &str, cap: usize) -> String {
+    if s.len() <= cap {
+        return s.to_string();
+    }
+    let mut start = s.len() - cap;
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    s[start..].to_string()
+}
+
 /// Run the precheck command through pwsh with a timeout; kill the tree on expiry. Returns
 /// Ok(tail) on exit 0, Err(reason+tail) otherwise. Blocking — called from the tick thread only.
 fn run_precheck(cmd: &str, cwd: &str, timeout_sec: u64) -> Result<String, String> {
@@ -193,22 +206,33 @@ fn run_precheck(cmd: &str, cwd: &str, timeout_sec: u64) -> Result<String, String
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("precheck spawn: {e}"))?;
+    // Drain both pipes on their OWN threads: reading them only after the child exits deadlocks a
+    // chatty precheck (>~64 KB fills the OS pipe buffer, the child blocks writing, never exits, and
+    // dies only at the timeout — a false failure). Threads read to EOF; the child closes the pipes
+    // on exit (or when the tree-kill lands), so both joins return.
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_t = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(p) = out_pipe.as_mut() {
+            let _ = p.read_to_string(&mut s);
+        }
+        s
+    });
+    let err_t = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_string(&mut s);
+        }
+        s
+    });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_sec);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut tail = String::new();
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_string(&mut tail);
-                }
-                if let Some(mut err) = child.stderr.take() {
-                    let mut e = String::new();
-                    let _ = err.read_to_string(&mut e);
-                    tail.push_str(&e);
-                }
-                if tail.len() > PRECHECK_OUTPUT_CAP {
-                    tail = tail[tail.len() - PRECHECK_OUTPUT_CAP..].to_string();
-                }
+                let mut tail = out_t.join().unwrap_or_default();
+                tail.push_str(&err_t.join().unwrap_or_default());
+                let tail = tail_capped(&tail, PRECHECK_OUTPUT_CAP);
                 return if status.success() {
                     Ok(tail)
                 } else {
@@ -218,12 +242,13 @@ fn run_precheck(cmd: &str, cwd: &str, timeout_sec: u64) -> Result<String, String
             Ok(None) => {
                 if std::time::Instant::now() > deadline {
                     // Tree-kill: the precheck may have spawned children (git, node…).
-                    if let Some(pid) = Some(child.id()) {
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/T", "/F", "/PID", &pid.to_string()])
-                            .creation_flags(crate::CREATE_NO_WINDOW)
-                            .output();
-                    }
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/T", "/F", "/PID", &child.id().to_string()])
+                        .creation_flags(crate::CREATE_NO_WINDOW)
+                        .output();
+                    // The kill closes the pipes → reader threads reach EOF; join so they don't leak.
+                    let _ = out_t.join();
+                    let _ = err_t.join();
                     return Err("precheck timed out".to_string());
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -465,5 +490,17 @@ mod tests {
         assert!(run_precheck("exit 0", "", 30).is_ok());
         let err = run_precheck("Write-Output boom; exit 3", "", 30).unwrap_err();
         assert!(err.contains("boom"), "tail should carry output: {err}");
+    }
+
+    #[test]
+    fn tail_capped_never_panics_on_multibyte_boundary() {
+        // "щ" is 2 bytes; a cap that lands mid-char must snap forward, not panic (the old
+        // byte-slice `s[s.len()-cap..]` crashed the scheduler tick on Cyrillic/emoji output).
+        let s = "щ".repeat(3000); // 6000 bytes, all multi-byte
+        let out = tail_capped(&s, PRECHECK_OUTPUT_CAP);
+        assert!(out.len() <= PRECHECK_OUTPUT_CAP);
+        assert!(out.chars().all(|c| c == 'щ')); // never a split/replacement char
+        // Short input is returned whole.
+        assert_eq!(tail_capped("ok", PRECHECK_OUTPUT_CAP), "ok");
     }
 }

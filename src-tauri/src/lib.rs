@@ -677,10 +677,22 @@ impl Drop for RunSlot<'_> {
 // holds the live stack-child pid so a Stop can PREEMPT (kill) an in-flight start — teardown is a
 // recovery action that must never be blocked (the single-slot design rejected Stop with
 // err.run_in_progress for the whole ~25s×service startup window).
+// (generation, pid): pid 0 = reserved/starting. The generation lets a guard's Drop clear ONLY the
+// slot it still owns — preemption (reserve_preempt) hands the slot to a NEW guard, and the preempted
+// start's late Drop must not wipe the successor's reservation (the bug that let two starts overlap).
 #[derive(Default)]
-struct StackRun(Mutex<Option<u32>>);
+struct StackRun(Mutex<Option<(u64, u32)>>);
 
-struct StackSlot<'a>(&'a StackRun);
+/// Monotonic source of slot generations (never reused), so ownership is unambiguous across preemption.
+static STACK_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn next_stack_gen() -> u64 {
+    STACK_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
+struct StackSlot<'a> {
+    run: &'a StackRun,
+    generation: u64,
+}
 impl<'a> StackSlot<'a> {
     /// Claim the stack slot; Err if a stack op is already running (start/restart must not overlap).
     fn reserve(s: &'a StackRun) -> Result<Self, String> {
@@ -688,33 +700,46 @@ impl<'a> StackSlot<'a> {
         if g.is_some() {
             return Err(tr("err.run_in_progress", cur_lang()).into());
         }
-        *g = Some(0);
-        Ok(StackSlot(s))
+        let generation = next_stack_gen();
+        *g = Some((generation, 0));
+        Ok(StackSlot { run: s, generation })
     }
     /// Claim the slot for a STOP, preempting any in-flight start (kill its tree first). Stop always
     /// proceeds; stop-stack then tears down by port, so aborting a half-done start is safe.
     fn reserve_preempt(s: &'a StackRun) -> Self {
-        // Take the in-flight pid and claim the slot UNDER the lock, then drop the guard BEFORE the
+        // Bump the generation and claim the slot UNDER the lock, then drop the guard BEFORE the
         // blocking kill_tree (~600ms grace) — holding the StackRun mutex across the kill would block
-        // every other stack op, and this runs from an async command.
+        // every other stack op, and this runs from an async command. The new generation makes the
+        // preempted start's later Drop a no-op (it no longer owns the slot), so a fresh start stays
+        // blocked until THIS stop guard drops instead of slipping in mid-teardown.
+        let generation = next_stack_gen();
         let victim = {
             let mut g = s.0.lock().unwrap_or_else(|e| e.into_inner());
-            let victim = g.take().filter(|&pid| pid != 0);
-            *g = Some(0);
+            let victim = g.take().map(|(_, pid)| pid).filter(|&pid| pid != 0);
+            *g = Some((generation, 0));
             victim
         };
         if let Some(pid) = victim {
             let _ = kill_tree(pid);
         }
-        StackSlot(s)
+        StackSlot { run: s, generation }
     }
     fn set_pid(&self, pid: u32) {
-        *self.0 .0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
+        let mut g = self.run.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Only if we still own the slot — a preempting stop may have taken over (its generation wins).
+        if matches!(*g, Some((generation, _)) if generation == self.generation) {
+            *g = Some((self.generation, pid));
+        }
     }
 }
 impl Drop for StackSlot<'_> {
     fn drop(&mut self) {
-        *self.0 .0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let mut g = self.run.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Clear ONLY if we still own it: a preempting stop bumps the generation and takes over, so a
+        // preempted start's late Drop must not wipe the successor's reservation.
+        if matches!(*g, Some((generation, _)) if generation == self.generation) {
+            *g = None;
+        }
     }
 }
 
@@ -10147,8 +10172,29 @@ mod probe_url_tests {
 
 #[cfg(test)]
 mod fork_slot_tests {
-    use super::{ForkRepoSlot, ForkRuns, ForksGlobalSlot, FORKS_GLOBAL};
+    use super::{ForkRepoSlot, ForkRuns, ForksGlobalSlot, StackRun, StackSlot, FORKS_GLOBAL};
     use std::sync::atomic::Ordering;
+
+    // Regression: a Stop that preempts an in-flight start must own the slot outright. The preempted
+    // start's late Drop used to clear the slot unconditionally, letting a fresh start slip in during
+    // teardown and overlap it. The generation token makes that Drop a no-op.
+    #[test]
+    fn stack_preempt_keeps_slot_owned_by_the_preemptor() {
+        let run = StackRun::default();
+        // Start reserves (pid stays 0 = "starting", so preempt won't try to kill a real process).
+        let start = StackSlot::reserve(&run).expect("start reserves");
+        // Stop preempts: bumps the generation and takes over the slot.
+        let stop = StackSlot::reserve_preempt(&run);
+        // The preempted start's late Drop must NOT clear the slot the stop now owns.
+        drop(start);
+        assert!(run.0.lock().unwrap().is_some(), "preempted start's drop wiped the stop's slot");
+        // While the stop guard lives, a new start is correctly blocked — no overlap.
+        assert!(StackSlot::reserve(&run).is_err(), "a start slipped in during stop teardown");
+        // Stop finishes → its drop clears → a fresh start can reserve.
+        drop(stop);
+        assert!(run.0.lock().unwrap().is_none());
+        assert!(StackSlot::reserve(&run).is_ok());
+    }
 
     // One test: FORKS_GLOBAL is a shared static, so keep all its mutations sequential in a single fn.
     #[test]
@@ -14456,7 +14502,7 @@ fn cancel_all(
         }
     }
     // 1b. The LLM-stack run (its own domain now) — kill whichever start/stop/restart phase is live.
-    let stack_pid = { *stack.0.lock().unwrap_or_else(|e| e.into_inner()) };
+    let stack_pid = { stack.0.lock().unwrap_or_else(|e| e.into_inner()).map(|(_, pid)| pid) };
     if let Some(p) = stack_pid {
         if p != 0 {
             let _ = kill_tree(p);
