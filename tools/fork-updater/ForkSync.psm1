@@ -468,11 +468,22 @@ function Get-ForkSyncConfig {
             Write-Status "repos.json : не разобрал ($cfgFile) — $($_.Exception.Message)" 'WARN'
         }
     }
-    $r = if ($Roots) { $Roots } elseif ($cfg -and $cfg.roots) { @($cfg.roots) } else { @('E:\Scripts\External') }
-    $p = if ($Paths) { $Paths } elseif ($cfg -and $cfg.paths) { @($cfg.paths) } else { @('C:\Users\User\rtk-windows-hook-pr\rtk') }
-    $op = if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'ownPaths') -and $cfg.ownPaths) { @($cfg.ownPaths) } else { @() }
-    $ft = if ($FetchTimeoutSec) { $FetchTimeoutSec } elseif ($cfg -and $cfg.fetchTimeoutSec) { [int]$cfg.fetchTimeoutSec } else { 120 }
-    $gt = if ($GhTimeoutSec) { $GhTimeoutSec } elseif ($cfg -and $cfg.ghTimeoutSec) { [int]$cfg.ghTimeoutSec } else { 60 }
+    # Read by key PRESENCE, not truthiness — two distinct reasons, both live:
+    #  * roots/paths: an empty array is falsy in PowerShell, so a registry the user emptied in the
+    #    Forks tab used to fall through to the hardcoded developer defaults and keep scanning (and
+    #    MUTATING, under -FfMain/-DeleteMerged) repos that were de-registered. Absent = defaults,
+    #    present-but-empty = scan nothing.
+    #  * timeouts: Set-StrictMode makes reading a missing property a TERMINATING error, and
+    #    Castellyn's writer omits fetchTimeoutSec/ghTimeoutSec whenever they are unset — that threw
+    #    before any status envelope was written, leaving the Forks card frozen on its last state.
+    # Falsy ELEMENTS are still dropped (a JSON null lands as a one-null array under @()).
+    $keys = if ($cfg) { @($cfg.PSObject.Properties.Name) } else { @() }
+    $r = if ($Roots) { $Roots } elseif ($keys -contains 'roots') { @($cfg.roots | Where-Object { $_ }) } else { @('E:\Scripts\External') }
+    $p = if ($Paths) { $Paths } elseif ($keys -contains 'paths') { @($cfg.paths | Where-Object { $_ }) } else { @('C:\Users\User\rtk-windows-hook-pr\rtk') }
+    $op = if ($keys -contains 'ownPaths') { @($cfg.ownPaths | Where-Object { $_ }) } else { @() }
+    # Timeouts keep the truthiness check on top of presence: a configured 0 is not a usable timeout.
+    $ft = if ($FetchTimeoutSec) { $FetchTimeoutSec } elseif (($keys -contains 'fetchTimeoutSec') -and $cfg.fetchTimeoutSec) { [int]$cfg.fetchTimeoutSec } else { 120 }
+    $gt = if ($GhTimeoutSec) { $GhTimeoutSec } elseif (($keys -contains 'ghTimeoutSec') -and $cfg.ghTimeoutSec) { [int]$cfg.ghTimeoutSec } else { 60 }
     return [pscustomobject]@{ Roots = $r; Paths = $p; OwnPaths = $op; FetchTimeoutSec = $ft; GhTimeoutSec = $gt }
 }
 
@@ -649,10 +660,17 @@ function Write-ForkSyncJson {
 # separately), or branches deleted on the fork (a `push --delete` is undone by
 # re-pushing the backed-up SHA, not by this snapshot).
 function New-BackupRefs {
+    # ShouldProcess so -WhatIf really stops the ref writes. ConfirmImpact stays default (Medium),
+    # below the default $ConfirmPreference of High, so the unattended runs Castellyn launches
+    # (-Yes -Unattended) never get a prompt here.
+    [CmdletBinding(SupportsShouldProcess)]
     param([string]$RepoPath, [string]$Stamp)
     if (-not $Stamp) { $Stamp = (Get-Date -Format 'yyyyMMdd_HHmmss') }
     $ns = "refs/fork-sync/pre-sync/$Stamp"
     $made = New-Object System.Collections.Generic.List[object]
+    if (-not $PSCmdlet.ShouldProcess($RepoPath, "snapshot local branch heads into $ns")) {
+        return [pscustomobject]@{ Namespace = $ns; Stamp = $Stamp; Refs = @() }
+    }
     foreach ($b in (Get-LocalBranches -RepoPath $RepoPath)) {
         $sha = Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('rev-parse', '--verify', '--quiet', "refs/heads/$b")
         if ($sha.Ok -and $sha.Out) {
@@ -665,12 +683,15 @@ function New-BackupRefs {
 
 # Keep only the last $Keep backup snapshots (by timestamp segment).
 function Remove-OldBackups {
+    # See New-BackupRefs: -WhatIf must not delete refs; Medium impact keeps unattended runs silent.
+    [CmdletBinding(SupportsShouldProcess)]
     param([string]$RepoPath, [int]$Keep = 10)
     $r = Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('for-each-ref', '--format=%(refname)', 'refs/fork-sync/pre-sync/')
     if (-not $r.Ok -or -not $r.Out) { return }
     $refs = @($r.Out -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $stamps = @($refs | ForEach-Object { ($_ -split '/')[3] } | Select-Object -Unique | Sort-Object -Descending)
     foreach ($s in @($stamps | Select-Object -Skip $Keep)) {
+        if (-not $PSCmdlet.ShouldProcess($RepoPath, "delete backup snapshot $s")) { continue }
         foreach ($ref in @($refs | Where-Object { ($_ -split '/')[3] -eq $s })) {
             Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('update-ref', '-d', $ref) | Out-Null
         }
@@ -736,12 +757,19 @@ function Invoke-FfDefault {
 
 # Delete a merged topic branch locally (+ on the fork, outward → push --delete).
 function Remove-MergedBranch {
+    # -DryRun is this module's own preview path (it RETURNS the plan text the caller prints);
+    # SupportsShouldProcess additionally makes the standard -WhatIf real. Impact stays Medium so
+    # the unattended `-Yes -Unattended` runs Castellyn launches are never prompted — the human
+    # gate for this destructive path is Confirm-Step in Invoke-RepoActions, not $ConfirmPreference.
+    [CmdletBinding(SupportsShouldProcess)]
     param([string]$RepoPath, [string]$Branch, [string]$ForkRemote, [switch]$DeleteRemote, [switch]$DryRun)
     if ($DryRun) {
         $m = "БУДЕТ: удалить ветку '$Branch' локально"
         if ($DeleteRemote -and $ForkRemote) { $m += " и на форке ($ForkRemote)" }
         return $m
     }
+    $target = if ($DeleteRemote -and $ForkRemote) { "'$Branch' (локально + форк $ForkRemote)" } else { "'$Branch' (локально)" }
+    if (-not $PSCmdlet.ShouldProcess($RepoPath, "delete branch $target")) { return "пропущено '$Branch' (-WhatIf)" }
     # `--` ends option parsing so a (pathological) branch name starting with '-' is
     # treated as a ref, not a flag (argv option-injection hardening; git supports `--` here).
     $d = Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('branch', '-D', '--', $Branch)
@@ -766,7 +794,7 @@ function Invoke-NormalizeRemotes {
     # snapshot the prior remote set to the log → reconstructable if rename misbehaves.
     $remBefore = Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('remote', '-v')
     if ($remBefore.Ok -and $remBefore.Out) {
-        Write-Log -Msg "normalize $($Rep.Name): remote ДО выравнивания:`n$($remBefore.Out)" -Level 'INFO' -NoConsole
+        Write-SkLog -Msg "normalize $($Rep.Name): remote ДО выравнивания:`n$($remBefore.Out)" -Level 'INFO' -NoConsole
     }
     # Stage 1: park both remotes under temp names (collision-free).
     $r1 = Invoke-GitLocal -RepoPath $RepoPath -GitArgs @('remote', 'rename', $upName, '__fs_up')
@@ -960,6 +988,51 @@ function Invoke-RepoActions {
     return $did.ToArray()
 }
 
+# Summary counters over a report set. Called twice: for the console box right after the analysis,
+# and again after the action phase — so the JSON envelope's counts describe the repos as they are
+# NOW, not as they were before fork-sync mutated them.
+function Get-ForkSyncCounts {
+    param($Reports)
+    # .Where() intrinsics + explicit flatten instead of @(...) subexpressions: the @() binder throws
+    # "Argument types do not match" on a generic List in PS7 interpreted mode (cf. PowerShell #8661).
+    $managed = @($Reports.Where({ -not $_.Skipped }))
+    $branches = [System.Collections.Generic.List[object]]::new()
+    foreach ($m in $managed) { foreach ($br in $m.branches) { if ($br) { $branches.Add($br) } } }
+    $conflict = $branches.Where({ $_.outcome -eq 'conflict' }).Count
+    return [pscustomobject]@{
+        Managed   = $managed
+        Merged    = $branches.Where({ $_.outcome -eq 'merged' }).Count
+        Open      = $branches.Where({ $_.outcome -eq 'clean' }).Count
+        Conflict  = $conflict
+        NeedHands = $managed.Where({ $_.midOp -or $_.detached }).Count + $conflict
+    }
+}
+
+# Re-analyze ONE repo after it was mutated and swap the fresh report into $Reports, which is what
+# the envelope is written from. Without this the UI keeps the "needs sync" recommendation for a
+# repo that was JUST synced. Shared by the flag path and the interactive menu — the menu used to
+# mutate without any refresh and overwrite the shared fork-sync.last.json with the stale snapshot.
+# -NoFetch: the actions ff/rebase onto the already-fetched upstream, so no new network fetch.
+function Sync-ReportAfterActions {
+    param($Rep, $Acts, $Config, [bool]$GhAvailable, $Reports)
+    try {
+        $fresh = Get-RepoReport -RepoPath $Rep.Path -Config $Config -NoFetch -GhAvailable:$GhAvailable -IsOwn:([bool]$Rep.isOwn)
+    } catch {
+        # The mutation already happened on disk; a re-analysis failure must NOT abort the run
+        # ($ErrorActionPreference='Stop') and discard every repo's status. Fall back to the
+        # pre-action report + actionsTaken (mirrors the guarded initial analysis pass).
+        Write-Status "$($Rep.Path): повторный анализ после действий не удался — $($_.Exception.Message)" 'FAIL'
+        $fresh = $null
+    }
+    if (-not $fresh -or $fresh.Skipped) {
+        $Rep | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $Acts -Force
+        return
+    }
+    $fresh | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $Acts -Force
+    $ri = $Reports.IndexOf($Rep)
+    if ($ri -ge 0) { $Reports[$ri] = $fresh } else { $Rep | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $Acts -Force }
+}
+
 function Invoke-ForkSync {
     [CmdletBinding()]
     param(
@@ -1033,16 +1106,9 @@ function Invoke-ForkSync {
     $repoTotal = $reports.Count; $repoIdx = 0
     foreach ($rep in $reports) { $repoIdx++; Write-RepoHuman -Rep $rep -Index $repoIdx -Total $repoTotal }
 
-    # Summary — use .Where() intrinsics + an explicit flatten instead of @(...) array
-    # subexpressions. The @() binder throws "Argument types do not match" on a generic
-    # List in PS7 interpreted mode (PowerShell DLR binder bug; cf. PowerShell #8661).
-    $managed = @($reports.Where({ -not $_.Skipped }))
-    $allBranches = [System.Collections.Generic.List[object]]::new()
-    foreach ($m in $managed) { foreach ($br in $m.branches) { if ($br) { $allBranches.Add($br) } } }
-    $cMerged   = $allBranches.Where({ $_.outcome -eq 'merged' }).Count
-    $cConf     = $allBranches.Where({ $_.outcome -eq 'conflict' }).Count
-    $cOpen     = $allBranches.Where({ $_.outcome -eq 'clean' }).Count
-    $needHands = $managed.Where({ $_.midOp -or $_.detached }).Count + $cConf
+    $sum = Get-ForkSyncCounts -Reports $reports
+    $managed = $sum.Managed
+    $cMerged = $sum.Merged; $cConf = $sum.Conflict; $cOpen = $sum.Open; $needHands = $sum.NeedHands
     $dur = (Get-Date) - $start
     $durStr = '{0:m\:ss}' -f $dur
 
@@ -1060,9 +1126,10 @@ function Invoke-ForkSync {
     Write-Host ("  $($script:SK_V)  {0,-12} {1}" -f 'нужны руки',   $needHands)     -ForegroundColor $(if ($needHands -gt 0) { 'Yellow' } else { 'White' })
     Write-Host ("  $($script:SK_V)  {0,-12} {1}" -f 'время',        $durStr)        -ForegroundColor White
     Write-Host "  $($script:SK_BL)$sumBar$($script:SK_BR)" -ForegroundColor $sumColor
-    Write-Log -Msg ("Итог: {0} репо | влито {1}, открыто {2}, конфликтов {3}, нужны руки {4} | {5}" -f $managed.Count, $cMerged, $cOpen, $cConf, $needHands, $durStr) -Level 'INFO' -NoConsole
+    Write-SkLog -Msg ("Итог: {0} репо | влито {1}, открыто {2}, конфликтов {3}, нужны руки {4} | {5}" -f $managed.Count, $cMerged, $cOpen, $cConf, $needHands, $durStr) -Level 'INFO' -NoConsole
 
     # --- Action phase (Phase 2: safe mutations) ---
+    $mutated = $false   # set by either action path; drives the post-phase counter refresh
     $doFf = [bool]($Apply -or $FfMain); $doDel = [bool]($Apply -or $DeleteMerged); $doNorm = [bool]$NormalizeRemotes; $doReb = [bool]$Rebase; $doWip = [bool]$SyncWipLocal; $doDelWip = [bool]$DeleteWip; $doPrune = [bool]$Prune
     if ($doFf -or $doDel -or $doNorm -or $doReb -or $doWip -or $doDelWip -or $doPrune) {
         $dry = [bool]$DryRun
@@ -1075,32 +1142,8 @@ function Invoke-ForkSync {
                 if ($dry) {
                     $rep | Add-Member -NotePropertyName 'actionsPlanned' -NotePropertyValue $acts -Force
                 } else {
-                    # Re-analyze AFTER the mutation so the written status (behindBy / wipLocal / branches)
-                    # reflects reality — not the pre-action snapshot. Without this the UI keeps the
-                    # "needs sync" recommendation for a repo that was JUST synced. -NoFetch: the actions
-                    # rebase/ff onto the already-fetched upstream, so no new network fetch is needed.
-                    try {
-                        $fresh = Get-RepoReport -RepoPath $rep.Path -Config $cfg -NoFetch -GhAvailable:$ghAvailable -IsOwn:([bool]$rep.isOwn)
-                    } catch {
-                        # The mutation already happened on disk; a re-analysis failure must NOT abort the run
-                        # ($ErrorActionPreference='Stop') and discard every repo's status. Fall back to the
-                        # pre-action report + actionsTaken (mirrors the guarded initial analysis pass above).
-                        Write-Status "$($rep.Path): повторный анализ после действий не удался — $($_.Exception.Message)" 'FAIL'
-                        $fresh = $null
-                    }
-                    if ($fresh -and -not $fresh.Skipped) {
-                        $fresh | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $acts -Force
-                        $i = [array]::IndexOf($managed, $rep)
-                        if ($i -ge 0) { $managed[$i] = $fresh } else { $rep | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $acts -Force }
-                        # The JSON envelope is written from $reports (repos = $reports.ToArray()), and
-                        # $managed only holds references INTO it — swapping $managed[$i] doesn't replace
-                        # the $reports slot, so without this the written report keeps the pre-action
-                        # (stale) snapshot for a repo that was just synced.
-                        $ri = $reports.IndexOf($rep)
-                        if ($ri -ge 0) { $reports[$ri] = $fresh }
-                    } else {
-                        $rep | Add-Member -NotePropertyName 'actionsTaken' -NotePropertyValue $acts -Force
-                    }
+                    $mutated = $true
+                    Sync-ReportAfterActions -Rep $rep -Acts $acts -Config $cfg -GhAvailable $ghAvailable -Reports $reports
                 }
             }
         }
@@ -1123,9 +1166,27 @@ function Invoke-ForkSync {
             if (-not ($ff -or $del -or $norm -or $reb -or $wip)) { Write-Host '    ? неизвестный выбор' -ForegroundColor Yellow; continue }
             foreach ($rep in $managed) {
                 $acts = Invoke-RepoActions -Rep $rep -Ff:$ff -Del:$del -Norm:$norm -Reb:$reb -Wip:$wip -PushReb:$false -DryRun:$plan -Yes:$Yes
-                if (@($acts).Count) { Write-Host "    $($rep.Name):" -ForegroundColor White; foreach ($a in $acts) { Write-Status $a $(if ($plan) { 'INFO' } else { 'OK' }) } }
+                if (@($acts).Count) {
+                    Write-Host "    $($rep.Name):" -ForegroundColor White
+                    foreach ($a in $acts) { Write-Status $a $(if ($plan) { 'INFO' } else { 'OK' }) }
+                    if (-not $plan) {
+                        $mutated = $true
+                        Sync-ReportAfterActions -Rep $rep -Acts $acts -Config $cfg -GhAvailable $ghAvailable -Reports $reports
+                    }
+                }
             }
+            # Refresh the working set so the NEXT menu round acts on the post-mutation reports
+            # instead of re-offering work that the previous round already did.
+            if ($mutated) { $managed = (Get-ForkSyncCounts -Reports $reports).Managed }
         }
+    }
+
+    # Recompute after the action phase: the envelope below must report the repos as they are now.
+    # Both action paths mutate, so counts taken before the phase would describe the pre-action world.
+    if ($mutated) {
+        $sum = Get-ForkSyncCounts -Reports $reports
+        $managed = $sum.Managed
+        $cMerged = $sum.Merged; $cConf = $sum.Conflict; $cOpen = $sum.Open; $needHands = $sum.NeedHands
     }
 
     # Unified status envelope (schemaVersion/component/status/counts/durationSec) is

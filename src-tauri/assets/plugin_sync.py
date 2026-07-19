@@ -1,4 +1,4 @@
-# plugin-sync-version: 4
+# plugin-sync-version: 5
 # SessionStart hook: propagate newly-installed plugins across all CC profiles.
 #
 # There is no native "plugin installed" event, so we reconcile at session start:
@@ -30,7 +30,9 @@ PROFILES = [".claude"]  # castellyn:profiles
 
 def load(fp):
     try:
-        return json.load(open(fp, encoding="utf-8"))
+        # utf-8-sig: PowerShell writers leave a BOM, and a BOM'd settings.json must not be silently
+        # dropped (that profile would stop being reconciled). Matches parse_json_bom on the Rust side.
+        return json.load(open(fp, encoding="utf-8-sig"))
     except Exception:
         return None
 

@@ -1,4 +1,4 @@
-# castellyn-notify-version: 1
+# castellyn-notify-version: 2
 # Codex `notify` program -> Castellyn agent-status file.
 #
 # Codex has no lifecycle hook we can wire without editing the user's ~/.codex/config.toml, but it
@@ -35,6 +35,9 @@ try {
     [System.IO.File]::WriteAllText($tmp, $payload, (New-Object System.Text.UTF8Encoding $false))
     [System.IO.File]::Move($tmp, $fp, $true)
 } catch {
-    # A broken notifier must never break the agent.
+    # A broken notifier must never break the agent: codex runs this program synchronously at the end
+    # of a turn, so anything thrown here would surface as a turn-level failure. The cost of losing
+    # one status write is a pane that self-heals from PTY quiet; the cost of throwing is the turn.
+    Write-Verbose "castellyn-notify: status write skipped: $_"
 }
 exit 0

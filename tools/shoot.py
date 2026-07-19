@@ -22,6 +22,9 @@ NAV_INDEX = {
     "envs": 5, "extensions": 6, "agents": 7, "updates": 8, "forks": 9,
     "backup": 10, "sync": 11, "schedule": 12, "analytics": 13, "settings": 14,
 }
+# Same guard shoot-all.py carries: indices must be a contiguous 0..N-1 run, so a mis-edit fails
+# loudly instead of silently screenshotting the WRONG tab under the right README filename.
+assert list(NAV_INDEX.values()) == list(range(len(NAV_INDEX))), "NAV_INDEX out of sync with the sidebar"
 
 # tab id -> output filename stem
 SHOTS = {
@@ -35,6 +38,7 @@ SHOTS = {
     "sessions": "screenshot-sessions",
     "forks": "screenshot-forks",
 }
+assert SHOTS.keys() <= NAV_INDEX.keys(), "SHOTS names a tab the sidebar map doesn't know"
 
 # Seed localStorage so first-run UI (onboarding) is skipped and theme/order are deterministic.
 INIT = """

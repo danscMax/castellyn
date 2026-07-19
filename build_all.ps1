@@ -23,7 +23,9 @@ param(
     [switch]$NoOpen
 )
 
-try { chcp 65001 | Out-Null } catch { }
+# Cosmetic: a host without an attached console has no code page to set. Mojibake in the build log
+# beats refusing to build, so degrade quietly.
+try { chcp 65001 | Out-Null } catch { Write-Verbose "chcp unavailable in this host: $_" }
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

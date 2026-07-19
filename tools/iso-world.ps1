@@ -47,7 +47,18 @@ $Settings = Join-Path $Scripts 'SettingsMCP'
 $Profiles = Join-Path $Settings 'ClaudeProfiles'
 $RepoRoot = Split-Path -Parent $PSScriptRoot   # tools\ -> repo root
 
-function New-Dir([string]$p) { if (-not (Test-Path -LiteralPath $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null } }
+# The world-building helpers below declare SupportsShouldProcess because their verbs promise state
+# change. Impact stays default (Medium < the default $ConfirmPreference of High) so building the
+# world never prompts. NOTE: -WhatIf is deliberately NOT wired into this script's own param block —
+# a half-applied preview (dirs skipped, file writes still attempted) would crash mid-build, so the
+# gates exist for a caller that dot-sources these helpers, not for a script-level dry run.
+function New-Dir {
+  [CmdletBinding(SupportsShouldProcess)]
+  param([string]$p)
+  if (-not (Test-Path -LiteralPath $p) -and $PSCmdlet.ShouldProcess($p, 'create directory')) {
+    New-Item -ItemType Directory -Path $p -Force -Confirm:$false | Out-Null
+  }
+}
 
 # UTF-8 WITHOUT BOM — Castellyn's own writers never emit a BOM (CLAUDE.md convention).
 function Write-Text([string]$path, [string]$text) {
@@ -61,16 +72,19 @@ function Write-Json([string]$path, $obj) { Write-Text $path ($obj | ConvertTo-Js
 # throw and abort the whole rebuild, corrupting the world half-way. Retry a few times, and on the
 # last try skip the locked leftovers rather than failing — the important tree (profiles/scripts)
 # always rebuilds. (live find 2026-07-18: a re-gen over a live instance wiped the profiles and died.)
-function Remove-WorldTree([string]$path) {
+function Remove-WorldTree {
+  [CmdletBinding(SupportsShouldProcess)]
+  param([string]$path)
   if (-not (Test-Path -LiteralPath $path)) { return }
+  if (-not $PSCmdlet.ShouldProcess($path, 'delete the sandbox world tree')) { return }
   foreach ($attempt in 1..4) {
-    try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop; return }
+    try { Remove-Item -LiteralPath $path -Recurse -Force -Confirm:$false -ErrorAction Stop; return }
     catch {
       if ($attempt -eq 4) {
         # Best-effort file-by-file; leave whatever is still locked, warn, continue.
         Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue |
           Sort-Object FullName -Descending |
-          ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Recurse -ErrorAction SilentlyContinue }
+          ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Recurse -Confirm:$false -ErrorAction SilentlyContinue }
         Write-Host "   ⚠ часть файлов залочена (запущенный инстанс?) — пересобираю поверх." -ForegroundColor DarkYellow
         return
       }
@@ -101,8 +115,11 @@ Write-Host "▶  Строю мир: $World" -ForegroundColor Cyan
 # ════════════════════════════════════════════════════════════════════════════
 
 # One profile home: settings.json (env block, dummy token), .credentials.json (expired), hooks\.
-function New-ProfileHome([string]$dirName, [int]$n, [hashtable]$env) {
+function New-ProfileHome {
+  [CmdletBinding(SupportsShouldProcess)]
+  param([string]$dirName, [int]$n, [hashtable]$env)
   $dir = Join-Path $HomeDir $dirName
+  if (-not $PSCmdlet.ShouldProcess($dir, 'create a fake profile home')) { return }
   New-Dir $dir
   New-Dir (Join-Path $dir 'hooks')
   Write-Json (Join-Path $dir 'settings.json') ([ordered]@{
@@ -313,8 +330,12 @@ Write-Json (Join-Path $Profiles 'links.last.json') (& $linksFixture)
 # progress line, a SAFE in-world mutation (so the UI sees a real effect), exit 0. Args mirror the live
 # run_* callers (run_backup/run_profiles/run_mcp/run_schedule/run_config_drift/run_profile_mgmt/…).
 # Restore point for the two profile-home MCP files Deploy-Mcp.ps1 mutates (self-check reverts to this).
-function Set-ProfileMcp([string]$dirName, $servers) {
-  Write-Json (Join-Path $HomeDir (Join-Path $dirName '.claude.json')) ([ordered]@{ mcpServers = $servers })
+function Set-ProfileMcp {
+  [CmdletBinding(SupportsShouldProcess)]
+  param([string]$dirName, $servers)
+  $target = Join-Path $HomeDir (Join-Path $dirName '.claude.json')
+  if (-not $PSCmdlet.ShouldProcess($target, 'write mcpServers')) { return }
+  Write-Json $target ([ordered]@{ mcpServers = $servers })
 }
 $cc1McpSeed = { [ordered]@{ 'iso-echo' = [ordered]@{ command = 'node'; args = @('iso-echo-server.js') } } }
 
@@ -596,9 +617,12 @@ New-Dir (Join-Path $Scripts 'External')   # present but empty
 
 function Invoke-Git { param([string[]]$GitArgs) & git @GitArgs 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') failed ($LASTEXITCODE)" } }
 
-function New-ForkRepo([string]$name, [bool]$dirty) {
+function New-ForkRepo {
+  [CmdletBinding(SupportsShouldProcess)]
+  param([string]$name, [bool]$dirty)
   $bareRepo = Join-Path $bare "$name.git"
   $work     = Join-Path $forks "repo-$name"
+  if (-not $PSCmdlet.ShouldProcess($work, 'create a sandbox git repo + bare remote')) { return }
   Invoke-Git @('init', '--bare', '--initial-branch=main', $bareRepo)
   Invoke-Git @('init', '--initial-branch=main', $work)
   # Repo-local identity so commits don't depend on (or touch) the user's global git config.

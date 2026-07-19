@@ -107,7 +107,11 @@ if ($Action -eq 'start') {
     try {
         $pids = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
                 Select-Object -ExpandProperty OwningProcess -Unique)
-    } catch {}
+    } catch {
+        # Get-NetTCPConnection is absent on non-Windows and can fail without the TCP/IP WMI provider.
+        # Treat it as "nothing listening" — the branch below reports the engine as already stopped.
+        Write-Verbose "не удалось опросить порт ${port}: $_"
+    }
     if (-not $pids -or $pids.Count -eq 0) {
         Write-Host "  На порту $port никто не слушает — движок уже остановлен." -ForegroundColor Yellow
         exit 0

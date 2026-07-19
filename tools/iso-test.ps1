@@ -75,22 +75,29 @@ function Test-PortBusy([int]$Port) {
 }
 
 function Stop-Iso {
+  # ShouldProcess so `-WhatIf` previews the teardown instead of killing processes and wiping the
+  # scratch profile. Impact stays default (Medium < $ConfirmPreference High) → no interactive
+  # prompt in a scripted run; the inner calls carry -Confirm:$false for the same reason.
+  [CmdletBinding(SupportsShouldProcess)]
+  param()
   Write-Host '⏹  Останавливаю изолированный экземпляр…' -ForegroundColor Yellow
   # Only kill the ISOLATED (debug-build) exe, matched by its full path — never the user's real
   # release/dev Castellyn that happens to share the process name.
   $iso = @(Get-Process castellyn -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $Exe })
   if ($iso.Count) {
-    $iso | Stop-Process -Force -ErrorAction SilentlyContinue
-    # Free the vite port only because WE had an iso instance up — otherwise this would nuke a real
-    # `npm run tauri dev`'s vite (port 1420 is shared; the two can never run at once).
-    Get-NetTCPConnection -State Listen -LocalPort $VitePort -ErrorAction SilentlyContinue |
-      Select-Object -ExpandProperty OwningProcess -Unique |
-      ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    if ($PSCmdlet.ShouldProcess($Exe, 'kill the isolated instance and free the vite port')) {
+      $iso | Stop-Process -Force -Confirm:$false -ErrorAction SilentlyContinue
+      # Free the vite port only because WE had an iso instance up — otherwise this would nuke a real
+      # `npm run tauri dev`'s vite (port 1420 is shared; the two can never run at once).
+      Get-NetTCPConnection -State Listen -LocalPort $VitePort -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique |
+        ForEach-Object { Stop-Process -Id $_ -Force -Confirm:$false -ErrorAction SilentlyContinue }
+    }
   } else {
     Write-Host '   (изолированный debug-экземпляр не запущен — ничего не тронуто)' -ForegroundColor DarkGray
   }
-  if ($Fresh -and (Test-Path $IsoRoot)) {
-    Remove-Item -LiteralPath $IsoRoot -Recurse -Force -ErrorAction SilentlyContinue
+  if ($Fresh -and (Test-Path $IsoRoot) -and $PSCmdlet.ShouldProcess($IsoRoot, 'delete the scratch profile')) {
+    Remove-Item -LiteralPath $IsoRoot -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
     Write-Host "🧹 Профиль удалён: $IsoRoot" -ForegroundColor Yellow
   }
   Write-Host '✓ Остановлено.' -ForegroundColor Green
@@ -180,6 +187,13 @@ if ($World) {
   # lives entirely inside the fake world. CASTELLYN_ISO covers the two non-env side channels
   # (HKCU autostart + OS credential store → file-backed in the isolated APPDATA).
   $psi.EnvironmentVariables['USERPROFILE']            = Join-Path $IsoWorld 'home'
+  # HOME too, not just HOMEDRIVE/HOMEPATH: git-for-Windows resolves `~` from HOME FIRST and only
+  # falls back to HOMEDRIVE+HOMEPATH when it is unset. Launched from a shell that exports HOME
+  # (git-bash does), a sandboxed git would otherwise read the REAL ~/.gitconfig and ~/.ssh.
+  # GIT_CONFIG_GLOBAL pins it regardless of resolution order.
+  $psi.EnvironmentVariables['HOME']                   = Join-Path $IsoWorld 'home'
+  $psi.EnvironmentVariables['GIT_CONFIG_GLOBAL']      = (Join-Path $IsoWorld 'home\.gitconfig')
+  $psi.EnvironmentVariables['XDG_CONFIG_HOME']        = (Join-Path $IsoWorld 'home\.config')
   $psi.EnvironmentVariables['HOMEDRIVE']              = (Split-Path -Qualifier $IsoWorld)
   $psi.EnvironmentVariables['HOMEPATH']               = (Join-Path $IsoWorld 'home').Substring(2)
   $psi.EnvironmentVariables['SCRIPTS_ROOT']           = Join-Path $IsoWorld 'scripts'
@@ -196,7 +210,10 @@ $proc = [System.Diagnostics.Process]::Start($psi)
 $cdpUrl = "http://127.0.0.1:$CdpPort/json/version"
 $deadline = (Get-Date).AddSeconds(60)
 while ($true) {
-  try { Invoke-RestMethod -Uri $cdpUrl -TimeoutSec 2 | Out-Null; break } catch {}
+  # Expected until the WebView2 debugger binds — poll, don't report. The real failure is the
+  # deadline below; surfacing every connection refusal here would bury it in noise.
+  try { Invoke-RestMethod -Uri $cdpUrl -TimeoutSec 2 | Out-Null; break }
+  catch { Write-Verbose "CDP ещё не отвечает ($cdpUrl): $_" }
   if ((Get-Date) -gt $deadline) { throw "CDP не ответил за 60с на $cdpUrl" }
   Start-Sleep -Milliseconds 500
 }

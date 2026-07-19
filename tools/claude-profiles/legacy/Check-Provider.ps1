@@ -41,7 +41,9 @@ try {
     elseif ($r -is [System.Array]) { $n = $r.Count }
     @{ ok = $true; detail = "ответил (моделей: $n)"; count = $n } | ConvertTo-Json -Compress
 } catch {
-    $st = $null; try { $st = [int]$_.Exception.Response.StatusCode } catch {}
+    # A transport-level failure (DNS, TLS, timeout) carries no .Response — leave the status unknown
+    # so the message below reports "не отвечает" instead of a bogus HTTP code.
+    $st = $null; try { $st = [int]$_.Exception.Response.StatusCode } catch { $st = $null }
     $detail =
     if ($st -eq 401 -or $st -eq 403) { "ключ отклонён ($st)" }
     elseif ($st) { "ответ HTTP $st" }

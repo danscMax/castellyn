@@ -19,7 +19,7 @@
 #     drift between copies is visible (Sync-ScriptKit.ps1 -Check).
 # ============================================================================
 
-$script:SK_Version = 3   # drift marker -- Sync-ScriptKit.ps1 compares this
+$script:SK_Version = 4   # drift marker -- Sync-ScriptKit.ps1 compares this
 
 # --- UTF-8 console (box glyphs + check marks render instead of mojibake) ----
 # Non-intrusive: merely dot-sourcing this helper must NOT permanently flip the
@@ -30,11 +30,18 @@ try {
     $sk_cp = try { [System.Console]::OutputEncoding.CodePage } catch { -1 }
     if ($sk_cp -ne 65001) { chcp 65001 | Out-Null }
     Remove-Variable sk_cp -ErrorAction SilentlyContinue
-} catch { }
+} catch {
+    # Cosmetic only: a host with no attached console (service, redirected stdio) has no code page
+    # to set. Mojibake in that host beats refusing to dot-source, so degrade quietly.
+    Write-Verbose "ScriptKit: chcp unavailable, keeping the host code page: $_"
+}
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
-} catch { }
+} catch {
+    # Same reason: InputEncoding in particular throws when stdin is a pipe rather than a console.
+    Write-Verbose "ScriptKit: console encoding not settable in this host: $_"
+}
 
 # --- Box-drawing glyphs (script scope -> visible to callers after dot-source) -
 $script:SK_H       = ([char]0x2500).ToString()  # horizontal
@@ -127,23 +134,32 @@ function Show-Notification {
         Start-Sleep -Milliseconds 1200   # let Windows capture the icon + render
         $tray.Visible = $false
         $tray.Dispose()
-    } catch { }
+    } catch {
+        # A tray balloon is a nicety, never the job: WinForms/Drawing are absent on a headless or
+        # non-Windows host, and Server Core has no shell to show it. Silently skip the notification.
+        Write-Verbose "Show-Notification: tray balloon unavailable: $_"
+    }
 }
 
 # ============================================================================
 # Process / command helpers
 # ============================================================================
 
+# The body both timed-command helpers run in their background job. ONE named scriptblock instead of
+# two identical inline copies that could drift. $exe/$a arrive via -ArgumentList, and the (, $ArgList)
+# wrapper at each call site stops PowerShell unrolling the array into separate arguments.
+$script:SK_JobRunner = {
+    param($exe, $a)
+    $out = & $exe @a 2>&1 | Out-String
+    [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
+}
+
 # Run an external command in a background job with a hard timeout. Returns
 # @{ Ok; Code; Out }. Code -2 == killed on timeout. No process ever hangs.
 function Invoke-TimedCommand {
     param([Parameter(Mandatory)][string]$FilePath, [string[]]$ArgList = @(), [int]$TimeoutSec = 120)
     if ($TimeoutSec -lt 1) { $TimeoutSec = 60 }
-    $job = Start-Job -ScriptBlock {
-        param($exe, $a)
-        $out = & $exe @a 2>&1 | Out-String
-        [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
-    } -ArgumentList $FilePath, (, $ArgList)
+    $job = Start-Job -ScriptBlock $script:SK_JobRunner -ArgumentList $FilePath, (, $ArgList)
     if (Wait-Job $job -Timeout $TimeoutSec) {
         $res = Receive-Job $job; Remove-Job $job -Force -ErrorAction SilentlyContinue
         $code = if ($res -and $null -ne $res.Code) { [int]$res.Code } else { 1 }
@@ -157,11 +173,7 @@ function Invoke-TimedCommand {
 function Invoke-TimedCommandWithSpinner {
     param([Parameter(Mandatory)][string]$FilePath, [string[]]$ArgList = @(), [int]$TimeoutSec = 120, [string]$Activity = 'Working')
     if ($TimeoutSec -lt 1) { $TimeoutSec = 60 }
-    $job = Start-Job -ScriptBlock {
-        param($exe, $a)
-        $out = & $exe @a 2>&1 | Out-String
-        [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
-    } -ArgumentList $FilePath, (, $ArgList)
+    $job = Start-Job -ScriptBlock $script:SK_JobRunner -ArgumentList $FilePath, (, $ArgList)
     $spin = '|/-\'; $k = 0; $t0 = Get-Date
     while ($null -eq (Wait-Job $job -Timeout 1)) {
         $el = [int]((Get-Date) - $t0).TotalSeconds
@@ -181,11 +193,16 @@ function Invoke-TimedCommandWithSpinner {
 
 # Stop a running process by name (frees a locked exe before replacing it).
 function Stop-NamedProcess {
+    # SupportsShouldProcess makes -WhatIf real for a genuinely destructive call. ConfirmImpact stays
+    # at the default (Medium < the default $ConfirmPreference of High), so an unattended run never
+    # prompts; the Stop-Process below is called with -Confirm:$false for the same reason.
+    [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$ProcessName)
     $running = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
     if (-not $running) { return $true }
+    if (-not $PSCmdlet.ShouldProcess($ProcessName, 'Stop-Process -Force')) { return $true }
     try {
-        $running | Stop-Process -Force -ErrorAction Stop
+        $running | Stop-Process -Force -Confirm:$false -ErrorAction Stop
         Start-Sleep -Seconds 1
         return $true
     } catch {
@@ -211,7 +228,12 @@ function Get-AppVersion {
     param([string]$Root = $PSScriptRoot)
     $pkg = Join-Path $Root 'package.json'
     if (Test-Path -LiteralPath $pkg) {
-        try { $j = Get-Content -LiteralPath $pkg -Raw -ErrorAction Stop | ConvertFrom-Json; if ($j.version) { return [string]$j.version } } catch { }
+        try { $j = Get-Content -LiteralPath $pkg -Raw -ErrorAction Stop | ConvertFrom-Json; if ($j.version) { return [string]$j.version } }
+        catch {
+            # An unreadable/malformed package.json must not abort version discovery — fall through
+            # to the Cargo.toml sources below, which is exactly what the '?' contract promises.
+            Write-Verbose "Get-AppVersion: package.json unusable ($pkg): $_"
+        }
     }
     foreach ($rel in @('Cargo.toml', 'src-tauri\Cargo.toml')) {
         $c = Join-Path $Root $rel
@@ -248,6 +270,11 @@ function Write-StatusJson {
         [string]$Summary = '',
         [hashtable]$Extra
     )
+    # Initialized BEFORE the try: the catch below cleans up $tmp, and PowerShell's dynamic scoping
+    # would otherwise resolve an unassigned $tmp to the CALLER's variable of that name — deleting a
+    # file the calling script still owns whenever the try fails before the assignment (e.g. on an
+    # unwritable -Root). ScriptKit deliberately runs without Set-StrictMode, so this is silent.
+    $tmp = $null
     try {
         $payload = [ordered]@{
             schemaVersion = 1
@@ -265,13 +292,18 @@ function Write-StatusJson {
             $reserved = @('schemaVersion','component','status','timestamp','mode','durationSec','counts','summary')
             foreach ($k in $Extra.Keys) {
                 if ($reserved -contains $k) {
-                    try { Write-Log ("Write-StatusJson: ignoring -Extra key '{0}' (reserved envelope key)" -f $k) -Level 'WARN' -Color 'Yellow' } catch { }
+                    try { Write-Log ("Write-StatusJson: ignoring -Extra key '{0}' (reserved envelope key)" -f $k) -Level 'WARN' -Color 'Yellow' }
+                    catch { Write-Verbose "Write-StatusJson: could not report the ignored -Extra key '$k': $_" }
                     continue
                 }
                 $payload[$k] = $Extra[$k]
             }
         }
-        if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -LiteralPath $Root -Force | Out-Null }
+        # NOT New-Item: it has no -LiteralPath (verified on pwsh 7.6), so the old call threw
+        # "A parameter cannot be found that matches parameter name 'LiteralPath'" on EVERY run where
+        # -Root did not already exist — the envelope was then silently never written. CreateDirectory
+        # also takes the path literally (a '[' in it is not a wildcard) and no-ops when it exists.
+        [System.IO.Directory]::CreateDirectory($Root) | Out-Null
         $path = Join-Path $Root ("{0}.last.json" -f $Component)
         # Atomic write: full-content temp then a rename, so a crash/power-loss mid-write can't leave a
         # TORN <id>.last.json (the Rust reader would then show `corrupt:` with no .bak to recover from).
@@ -288,7 +320,8 @@ function Write-StatusJson {
         # Don't fail the caller, but don't fail silently either — a swallowed write means the
         # dashboard would keep showing a stale status.
         if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-        try { Write-Log ("Write-StatusJson failed: {0}" -f $_.Exception.Message) -Level 'WARN' -Color 'Yellow' } catch { }
+        try { Write-Log ("Write-StatusJson failed: {0}" -f $_.Exception.Message) -Level 'WARN' -Color 'Yellow' }
+        catch { Write-Verbose "Write-StatusJson: could not report its own failure: $_" }
         return $null
     }
 }
@@ -337,17 +370,32 @@ function Initialize-Logging {
     param([string]$Root, [string]$Prefix = 'script', [int]$Keep = 15)
     $logDir = Join-Path $Root 'logs'
     if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-    $script:SK_LogFile = Join-Path $logDir ("{0}_{1}.log" -f $Prefix, (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    # $PID in the name: the timestamp has one-second granularity, so two runs of the same component
+    # started in the same second otherwise share one log file and fight over the append handle.
+    $script:SK_LogFile = Join-Path $logDir ("{0}_{1}_{2}.log" -f $Prefix, (Get-Date -Format 'yyyyMMdd_HHmmss'), $PID)
     Get-ChildItem -LiteralPath $logDir -Filter "$Prefix*.log" -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -Skip $Keep |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
     return $script:SK_LogFile
 }
 
+# PSAvoidOverwritingBuiltInCmdlets flags this name, but there is no built-in `Write-Log` to shadow:
+# `Get-Command Write-Log` is empty in a clean pwsh 7.6.2 session, and Microsoft.PowerShell.Utility
+# ships only Write-Debug/Error/Host/Information/Output/Progress/Verbose/Warning. The rule fires from
+# an inventory baked into PSScriptAnalyzer, not from the live runtime — hence the documented
+# exclusion in PSScriptAnalyzerSettings.psd1. Renaming it would break 40 call sites in three
+# repositories that vendor this file via Sync-ScriptKit.ps1, to fix nothing.
 function Write-Log {
     param([string]$Msg, [string]$Level = 'INFO', [switch]$NoConsole, [string]$Color = 'Gray')
     if ($script:SK_LogFile) {
-        Add-Content -LiteralPath $script:SK_LogFile -Value ("[{0}] [{1}] {2}" -f (Get-Date -Format 'HH:mm:ss'), $Level, $Msg) -Encoding UTF8
+        # Logging must never kill the caller's real job. Two runs of the same component started in the
+        # same second share a log path (the name has one-second granularity), and the second writer
+        # then hits a sharing violation — which used to propagate out of Write-Status mid-run.
+        try {
+            Add-Content -LiteralPath $script:SK_LogFile -Value ("[{0}] [{1}] {2}" -f (Get-Date -Format 'HH:mm:ss'), $Level, $Msg) -Encoding UTF8 -ErrorAction Stop
+        } catch {
+            Write-Verbose "Write-Log: could not append to $($script:SK_LogFile): $_"
+        }
     }
     if (-not $NoConsole) { Write-Host $Msg -ForegroundColor $Color }
 }

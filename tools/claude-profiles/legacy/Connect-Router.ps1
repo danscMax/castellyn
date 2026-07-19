@@ -19,7 +19,9 @@
 param(
     [Parameter(Mandatory)][string]$Backend,
     [Parameter(Mandatory)][string]$Model,
-    [Parameter(Mandatory)][string]$Profile,
+    # Renamed away from the automatic variable of that name (it holds the profile script path, and
+    # assigning to it has side effects). The -Profile alias keeps the documented command line working.
+    [Parameter(Mandatory)][Alias('Profile')][string]$ProfileName,
     [string]$Name = 'lmstudio',
     [switch]$WhatIf
 )
@@ -30,7 +32,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $ccrBase = 'http://127.0.0.1:3456'
 
-Write-Host "=== Подключение через роутер: $Name → профиль $Profile ===" -ForegroundColor Cyan
+Write-Host "=== Подключение через роутер: $Name → профиль $ProfileName ===" -ForegroundColor Cyan
 
 # 1. Configure ccr for this backend/model (+ ccr restart inside Setup-Router).
 $setup = Join-Path $scriptDir 'Setup-Router.ps1'
@@ -59,17 +61,20 @@ if (-not $WhatIf) {
 $token = ''
 $cfgPath = Join-Path $HOME '.claude-code-router\config.json'
 if (Test-Path -LiteralPath $cfgPath) {
-    try { $token = [string]((Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json).APIKEY) } catch {}
+    # An unreadable ccr config just means "no APIKEY": step 4 then omits -Token and Manage-Provider
+    # writes its dummy bearer, which is the correct behaviour for an open localhost ccr.
+    try { $token = [string]((Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json).APIKEY) }
+    catch { Write-Host "  [ВНИМАНИЕ] не прочитал APIKEY из $cfgPath — привязываю без токена: $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 
 # 4. Bind the profile to ccr (Anthropic endpoint).
 #    Token: pass ccr's APIKEY when it has one; otherwise omit it so Manage-Provider writes a dummy
 #    bearer (single source of the dummy-token rule) — a bare `claude` then skips the login screen.
 $prov = Join-Path $scriptDir 'Manage-Provider.ps1'
-$pa = @{ Action = 'set'; Name = $Profile; BaseUrl = $ccrBase; Model = $Model }
+$pa = @{ Action = 'set'; Name = $ProfileName; BaseUrl = $ccrBase; Model = $Model }
 if ($token) { $pa.Token = $token }
 if ($WhatIf) { $pa.WhatIf = $true }
 & $prov @pa
 if ($LASTEXITCODE -ne 0) { Write-Host 'Прервано: не удалось привязать профиль.' -ForegroundColor Red; exit 1 }
 
-Write-Host "Готово. Профиль '$Profile' → $ccrBase (ccr) → $Name ($Model). Перезапусти профиль." -ForegroundColor Green
+Write-Host "Готово. Профиль '$ProfileName' → $ccrBase (ccr) → $Name ($Model). Перезапусти профиль." -ForegroundColor Green

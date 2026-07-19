@@ -1,4 +1,4 @@
-# castellyn-status-version: 2
+# castellyn-status-version: 3
 # Claude Code lifecycle hook -> Castellyn agent-status file.
 #
 # Castellyn spawns each Sessions pane with CASTELLYN_SESSION_ID in the env; this hook
@@ -60,7 +60,10 @@ def main():
         "claudeSessionId": data.get("session_id", ""),
         "ts": int(time.time() * 1000),
     }
-    tmp = fp + ".tmp"
+    # pid-unique temp name: parallel tool calls in ONE session fire these hooks concurrently, so a
+    # shared "<sid>.json.tmp" would let two processes truncate/write the same path and os.replace over
+    # each other — the poller then reads interleaved JSON. Mirrors plugin_sync.py / _opencode_plugin.js.
+    tmp = fp + f".{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     os.replace(tmp, fp)

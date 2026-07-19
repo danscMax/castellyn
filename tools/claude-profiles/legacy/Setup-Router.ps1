@@ -67,7 +67,10 @@ if ($apiBase -notmatch '/chat/completions$') { $apiBase = "$apiBase/chat/complet
 # Load existing config (preserve other providers/keys) or start fresh.
 $cfg = $null
 if (Test-Path -LiteralPath $cfgPath) {
-    try { $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable } catch {}
+    # A malformed/unreadable ccr config must not abort the configure step: the line below falls back
+    # to a fresh @{}, which is the intended "start over" path. Warn instead of dying.
+    try { $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable }
+    catch { Write-Host "  [ВНИМАНИЕ] не разобрал $cfgPath — начинаю с пустого конфига: $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 if ($cfg -isnot [hashtable]) { $cfg = @{} }
 if (-not $cfg.ContainsKey('Providers') -or $cfg['Providers'] -isnot [System.Collections.IList]) { $cfg['Providers'] = @() }

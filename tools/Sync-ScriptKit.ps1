@@ -22,7 +22,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+# Cosmetic only (box glyphs in the drift report); a redirected/console-less host can't set it.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { Write-Verbose "console encoding not settable: $_" }
 
 $canon = Join-Path $PSScriptRoot 'ScriptKit.ps1'
 if (-not (Test-Path -LiteralPath $canon)) {

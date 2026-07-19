@@ -55,7 +55,9 @@ if (-not $token) {
         Write-Host 'ОШИБКА: нет токена и неполные email/пароль freellmapi.' -ForegroundColor Red; exit 1
     }
     try { $token = Invoke-Login } catch {
-        $st = $null; try { $st = [int]$_.Exception.Response.StatusCode } catch {}
+        # No .Response on a transport-level failure (DNS/TLS/timeout) — keep the status unknown so
+        # the branches below fall through to the generic message rather than inventing a code.
+        $st = $null; try { $st = [int]$_.Exception.Response.StatusCode } catch { $st = $null }
         if ($st -eq 401) { Write-Host '  ОШИБКА входа (401): неверный email или пароль freellmapi.' -ForegroundColor Red }
         elseif ($st -eq 429) { Write-Host '  ОШИБКА входа (429): слишком много попыток, подождите ~15 мин.' -ForegroundColor Red }
         else { Write-Host "  ОШИБКА входа в freellmapi: $($_.Exception.Message)" -ForegroundColor Red }
@@ -85,7 +87,9 @@ try {
     exit 0
 } catch {
     $msg = $_.Exception.Message
-    $st = $null; try { $st = [int]$_.Exception.Response.StatusCode } catch {}
+    # No .Response on a transport-level failure (DNS/TLS/timeout) — keep the status unknown so the
+    # branches below fall through to the generic message rather than inventing a code.
+    $st = $null; try { $st = [int]$_.Exception.Response.StatusCode } catch { $st = $null }
     if ($st -eq 401 -or $st -eq 403) {
         Write-Host "  ОШИБКА авторизации ($st): сессия freellmapi недействительна — переавторизуйтесь (Вход freellmapi)." -ForegroundColor Red
     } elseif ($st -eq 400) {
