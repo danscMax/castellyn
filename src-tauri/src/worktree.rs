@@ -178,9 +178,25 @@ fn git_add_timeout(repo: &Path, branch: &str, path: &str) -> Result<(), String> 
     }
 }
 
+/// Candidate names for one create: `base`, `base-2` … `base-MAX_SUFFIX`, then a timestamped last
+/// resort. The plain suffixes alone are a dead end for a recurring schedule — `worktree_remove`
+/// deletes a branch with `-d` only, so every run that leaves unmerged commits PRESERVES its branch,
+/// and a preserved branch is never reused. After MAX_SUFFIX such runs the scan would fail forever;
+/// the timestamped tail keeps the name space open.
+fn name_candidates(base: &str) -> impl Iterator<Item = String> + '_ {
+    (1..=MAX_SUFFIX)
+        .map(move |n| candidate(base, n))
+        .chain(std::iter::once_with(move || format!("{base}-{}", now_ms())))
+}
+
 /// Create an isolated worktree off the repo's current HEAD. Returns the checkout path + branch name.
 /// Collision-safe: a taken name/branch/path advances the suffix (`feat` → `feat-2` …).
-#[tauri::command]
+///
+/// `(async)`: the body blocks on `git worktree add` for up to ADD_TIMEOUT (180s). A plain
+/// `#[tauri::command]` on a sync fn runs on the main/event-loop thread and would freeze the whole
+/// window for that long; the `async` flag moves it to Tauri's blocking pool without touching the body
+/// (so the tests below still call it directly).
+#[tauri::command(async)]
 pub fn worktree_create(repo: String, name: String) -> Result<WorktreeInfo, String> {
     let repo_path = Path::new(&repo);
     if !repo_path.join(".git").exists() {
@@ -197,8 +213,7 @@ pub fn worktree_create(repo: String, name: String) -> Result<WorktreeInfo, Strin
     // Sibling of the repo dir: <repo>\..\.castellyn-worktrees\<repoName>\<name>
     let root = parent.join(".castellyn-worktrees").join(&repo_name);
 
-    for n in 1..=MAX_SUFFIX {
-        let cand = candidate(&base, n);
+    for cand in name_candidates(&base) {
         let branch = format!("castellyn/{cand}");
         let wt_path = root.join(&cand);
         if wt_path.exists() || branch_exists(repo_path, &branch) {
@@ -235,8 +250,8 @@ pub fn worktree_create(repo: String, name: String) -> Result<WorktreeInfo, Strin
 }
 
 /// `git status --porcelain` empty = clean. Any git error → false (conservative: a caller that can't
-/// prove cleanliness must NOT remove the worktree).
-#[tauri::command]
+/// prove cleanliness must NOT remove the worktree). `(async)`: blocks on git — off the event loop.
+#[tauri::command(async)]
 pub fn worktree_is_clean(path: String) -> bool {
     git(Path::new(&path), &["status", "--porcelain"])
         .map(|o| o.status.success() && o.stdout.iter().all(|b| b.is_ascii_whitespace()))
@@ -281,10 +296,29 @@ fn list_worktrees(repo: &Path) -> Result<Vec<WtEntry>, String> {
     Ok(entries)
 }
 
-/// Normalize a path for comparison: lowercase, forward slashes, no trailing slash (Windows is
-/// case-insensitive and git may echo either separator).
+/// Normalize a path for comparison: resolve to the real path, then lowercase, forward slashes, no
+/// trailing slash (Windows is case-insensitive and git may echo either separator).
+///
+/// Resolving first is what makes the compare sound. Windows hands us 8.3 short components wherever a
+/// path came from an env var or a legacy API (`C:\Users\RUNNER~1\…`), while `git worktree list` always
+/// echoes the canonical long form — a raw string compare between the two can NEVER match. That made
+/// `worktree_remove` refuse its own worktrees, and worse, made `is_dangerous`'s guards silently miss
+/// (a short-form repo path no longer equals its long-form self). A path that no longer exists can't be
+/// resolved and falls back to the literal form.
 fn norm(p: &str) -> String {
-    p.trim()
+    let resolved = std::fs::canonicalize(p.trim())
+        .map(|c| c.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| p.trim().to_string());
+    // canonicalize returns verbatim form: `\\?\C:\x` and `\\?\UNC\server\share`. Strip it so a
+    // resolved path and an unresolvable literal compare in the same shape.
+    let stripped = match resolved.strip_prefix(r"\\?\") {
+        Some(rest) => match rest.strip_prefix("UNC\\") {
+            Some(unc) => format!("\\\\{unc}"),
+            None => rest.to_string(),
+        },
+        None => resolved,
+    };
+    stripped
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_lowercase()
@@ -352,7 +386,8 @@ fn to_verbatim(p: &Path) -> PathBuf {
 /// Remove one of OUR worktrees and clean up its branch. All guards run BEFORE any side effect. The
 /// branch is deleted with `-d` (never `-D`): if it holds unmerged commits git refuses and the branch
 /// is preserved (returned as `preservedBranch`). Never forces a dirty removal.
-#[tauri::command]
+/// `(async)`: several git spawns + up to 3.75s of removal-retry sleeps — off the event loop.
+#[tauri::command(async)]
 pub fn worktree_remove(repo: String, path: String) -> Result<RemoveResult, String> {
     let repo_path = Path::new(&repo);
     let entries = list_worktrees(repo_path)?;
@@ -476,6 +511,45 @@ mod tests {
         assert!(sanitize_name(".").is_err());
         // Unicode survives verbatim.
         assert_eq!(sanitize_name("проект").unwrap(), "проект");
+    }
+
+    /// The exact CI failure: Windows hands a path in 8.3 short form (`C:\Users\RUNNER~1\…`) while
+    /// `git worktree list` always echoes the canonical long form. A pure string compare can never
+    /// match, so `worktree_remove` refused its own worktrees — and `is_dangerous`'s guards silently
+    /// missed — on any machine whose profile/temp path has an 8.3-mangled component (i.e. any
+    /// username longer than 8 characters). Passes locally only because `C:\Users\User` doesn't mangle.
+    #[test]
+    fn norm_matches_every_spelling_of_one_path() {
+        let mut p = std::env::temp_dir();
+        let name = format!("cast-normprobe-{}", std::process::id());
+        p.push(&name);
+        std::fs::create_dir_all(&p).unwrap();
+        let direct = p.display().to_string();
+
+        // Same directory, spelled with a round-trip through its own parent. Deterministic on every
+        // volume — unlike an 8.3 alias, which needs 8.3 generation enabled to even exist.
+        let indirect = format!("{direct}\\..\\{name}");
+        // Mixed case + a trailing separator are spellings too.
+        let sloppy = format!("{}\\", direct.to_uppercase());
+
+        let n = norm(&direct);
+        assert_eq!(norm(&indirect), n, "`..` round-trip must resolve to the same path");
+        assert_eq!(norm(&sloppy), n, "case + trailing separator must not change the path");
+
+        let _ = std::fs::remove_dir_all(&p);
+    }
+
+    /// The suffix scan must not be a dead end: a recurring schedule preserves a branch per run with
+    /// unmerged work, so after MAX_SUFFIX runs every plain suffix is taken forever. The tail
+    /// candidate must therefore be outside the `base`/`base-N` (N <= MAX_SUFFIX) space.
+    #[test]
+    fn candidate_names_end_with_an_escape_hatch() {
+        let names: Vec<String> = name_candidates("feat").collect();
+        assert_eq!(names.len() as u32, MAX_SUFFIX + 1);
+        assert_eq!(names[0], "feat");
+        let suffixed: Vec<String> = (1..=MAX_SUFFIX).map(|n| candidate("feat", n)).collect();
+        let last = names.last().unwrap();
+        assert!(!suffixed.contains(last), "last candidate is a plain suffix: {last}");
     }
 
     #[test]

@@ -452,7 +452,15 @@ fn compute(t: &Track, now: u64) -> &'static str {
             let real_output = last_output > t.hook_ts + BLOCKED_RESUME_MS;
             let stuck = now.saturating_sub(t.hook_ts) > BLOCKED_STUCK_MS;
             if burst || (stuck && real_output) {
-                "working"
+                // Same silence backstop as the `working` arm below: `bytes_since_block` only ever
+                // resets on a NEW blocked report, so once the burst threshold is passed this arm
+                // returns "working" forever — a turn that ended without a Stop hook would never
+                // fall back to idle.
+                if now.saturating_sub(last_output) > WORKING_SELFHEAL_MS {
+                    "idle"
+                } else {
+                    "working"
+                }
             } else {
                 "blocked"
             }
@@ -981,5 +989,23 @@ mod tests {
             .store(now + BLOCKED_RESUME_MS + 3_000, Ordering::Relaxed); // real post-block output
         assert_eq!(compute(&t, now + BLOCKED_STUCK_MS - 1_000), "blocked"); // before ceiling
         assert_eq!(compute(&t, now + BLOCKED_STUCK_MS + 1_000), "working"); // after ceiling
+    }
+
+    #[test]
+    fn resumed_block_self_heals_after_silence() {
+        // The resume condition latches (bytes_since_block only resets on a NEW blocked report), so
+        // without a silence backstop this pane reported "working" forever once the burst landed —
+        // e.g. an approved turn the user then Esc-interrupted, firing no Stop hook.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_state = Some("blocked".into());
+        t.hook_ts = now;
+        t.last_output.store(now + 1_000, Ordering::Relaxed);
+        t.bytes_since_block
+            .store(BLOCKED_RESUME_BYTES + 1, Ordering::Relaxed);
+        // Fresh output → still an active turn.
+        assert_eq!(compute(&t, now + 1_000 + WORKING_SELFHEAL_MS - 1), "working");
+        // Silent past the same backstop the `working` arm uses → idle, not working forever.
+        assert_eq!(compute(&t, now + 1_000 + WORKING_SELFHEAL_MS + 1), "idle");
     }
 }

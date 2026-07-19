@@ -134,6 +134,52 @@ fn take_alert(fired: &mut HashMap<String, u8>, profile: &str, window: &str, util
     Some(level)
 }
 
+/// One newly-crossed scoped alert: (window label, threshold level, percent, resets_at).
+type ScopedAlert = (String, u8, f64, Option<String>);
+
+/// Newly-crossed scoped (per-model) alerts for this response as (window, level, pct, resets_at),
+/// plus whether the antispam map changed (→ persist). Walks EVERY scoped entry, not just the binding
+/// one: `take_alert` re-arms a key only when it is CALLED with a below-WARN util, so a model that
+/// fired at 99 and then stopped being the max was never passed again and stayed armed forever — its
+/// next genuine exhaustion produced no alert at all. Pure over `fired`, so the rule is testable.
+fn scoped_alerts(
+    fired: &mut HashMap<String, u8>,
+    profile: &str,
+    resp: &serde_json::Value,
+) -> (Vec<ScopedAlert>, bool) {
+    let entries = scoped_entries(resp);
+    let mut alerts = Vec::new();
+    for (pct, label, reset) in &entries {
+        let win = label.as_deref().unwrap_or("model");
+        if let Some(level) = take_alert(fired, profile, win, *pct) {
+            alerts.push((win.to_string(), level, *pct, reset.clone()));
+        }
+    }
+    let live: Vec<&str> = entries
+        .iter()
+        .map(|(_, l, _)| l.as_deref().unwrap_or("model"))
+        .collect();
+    let pruned = prune_scoped(fired, profile, &live);
+    let changed = pruned || !alerts.is_empty();
+    (alerts, changed)
+}
+
+/// Drop this profile's antispam keys for scoped windows the response no longer reports at all.
+/// `take_alert` re-arms a key only when it is CALLED with a below-WARN util, so a scoped entry that
+/// disappears from `limits[]` (or one persisted at 99 before a restart and never seen again) would
+/// stay armed forever and silence that model's next genuine crossing. The headline windows are polled
+/// every round, so they are never pruned. Returns whether anything was dropped (→ persist).
+fn prune_scoped(fired: &mut HashMap<String, u8>, profile: &str, live: &[&str]) -> bool {
+    let before = fired.len();
+    fired.retain(|k, _| {
+        let Some((p, w)) = k.split_once('\x1f') else {
+            return true;
+        };
+        p != profile || w == "5h" || w == "7d" || live.contains(&w)
+    });
+    fired.len() != before
+}
+
 /// Where the notified-state survives a restart (sibling of config.json). Without persistence the
 /// whole antispam was process-memory only, so every relaunch re-nagged about each window already
 /// ≥99% — a profile pegged at 100% produced a fresh OS toast + in-app toast burst on every start.
@@ -169,9 +215,8 @@ fn save_fired(fired: &HashMap<String, u8>) {
 /// profile). The token is returned by value and never logged.
 fn read_access_token(cred_path: &str) -> Option<String> {
     let text = std::fs::read_to_string(cred_path).ok()?;
-    // Strip a leading BOM before parsing — matches the codebase convention for external JSON
-    // (a migration/tool could rewrite credentials.json as UTF-8-with-BOM).
-    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    // BOM-tolerant parse — a migration/tool could rewrite credentials.json as UTF-8-with-BOM.
+    let v = crate::parse_json_bom(&text).ok()?;
     v.get("claudeAiOauth")?
         .get("accessToken")?
         .as_str()
@@ -222,6 +267,19 @@ pub(crate) fn util_of(resp: &serde_json::Value, field: &str) -> (Option<f64>, Op
 /// resets_at) of the max-percent scoped entry; label falls back to the entry's `kind`.
 pub(crate) fn scoped_max(resp: &serde_json::Value) -> (Option<f64>, Option<String>, Option<String>) {
     let mut best: (Option<f64>, Option<String>, Option<String>) = (None, None, None);
+    for (pct, label, reset) in scoped_entries(resp) {
+        if best.0.is_some_and(|b| b >= pct) {
+            continue;
+        }
+        best = (Some(pct), label, reset);
+    }
+    best
+}
+
+/// EVERY scoped entry as (percent, label, resets_at), in response order. `scoped_max` picks the
+/// binding one for display; alerting walks all of them so each model keeps its own antispam key.
+fn scoped_entries(resp: &serde_json::Value) -> Vec<(f64, Option<String>, Option<String>)> {
+    let mut out = Vec::new();
     for l in resp.get("limits").and_then(|x| x.as_array()).into_iter().flatten() {
         let Some(scope) = l.get("scope").filter(|s| !s.is_null()) else {
             continue;
@@ -229,9 +287,6 @@ pub(crate) fn scoped_max(resp: &serde_json::Value) -> (Option<f64>, Option<Strin
         let Some(pct) = l.get("percent").and_then(|x| x.as_f64()) else {
             continue;
         };
-        if best.0.is_some_and(|b| b >= pct) {
-            continue;
-        }
         let label = scope
             .get("model")
             .and_then(|m| m.get("display_name"))
@@ -239,9 +294,9 @@ pub(crate) fn scoped_max(resp: &serde_json::Value) -> (Option<f64>, Option<Strin
             .filter(|s| !s.is_empty())
             .or_else(|| l.get("kind").and_then(|x| x.as_str()))
             .map(str::to_string);
-        best = (Some(pct), label, l.get("resets_at").and_then(json_scalar_str));
+        out.push((pct, label, l.get("resets_at").and_then(json_scalar_str)));
     }
-    best
+    out
 }
 
 /// `extra_usage` — pay-as-you-go credits past the plan limits: (is_enabled, utilization %).
@@ -371,15 +426,13 @@ fn poll_profile(app: &AppHandle, profile: &str, cred_path: &str) {
                     changed = true;
                 }
             }
-            // A scoped (per-model) cap alerts too — it gates real work even when the headline 5h/7d
-            // are calm. The window id is the model label, so each model re-arms independently.
-            if let Some(u) = scoped {
-                let win = scoped_label.as_deref().unwrap_or("model");
-                if let Some(level) = take_alert(&mut fired, profile, win, u) {
-                    fire_alert(app, profile, win, level, u, scoped_reset.as_deref());
-                    changed = true;
-                }
+            // Scoped (per-model) caps alert too — they gate real work even when the headline 5h/7d
+            // are calm. Every entry, not just the binding one (see scoped_alerts).
+            let (alerts, scoped_changed) = scoped_alerts(&mut fired, profile, &resp);
+            for (win, level, pct, reset) in alerts {
+                fire_alert(app, profile, &win, level, pct, reset.as_deref());
             }
+            changed |= scoped_changed;
             // Persist across restarts so a relaunch doesn't re-nag about a window already alerted
             // this reset-cycle (the whole antispam used to live only in process memory).
             if changed {
@@ -560,7 +613,7 @@ fn codex_auth_path() -> Option<String> {
 /// logged in (skip silently). Returned by value, never logged — same posture as read_access_token.
 fn read_codex_auth(path: &str) -> Option<(String, Option<String>)> {
     let text = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    let v = crate::parse_json_bom(&text).ok()?;
     let tokens = v.get("tokens")?;
     let access = tokens
         .get("access_token")?
@@ -705,6 +758,53 @@ mod tests {
         // Independent (profile, window) track separately.
         assert_eq!(take_alert(&mut fired, "cc1", "7d", 88.0), Some(85));
         assert_eq!(take_alert(&mut fired, "cc2", "5h", 88.0), Some(85));
+    }
+
+    #[test]
+    fn every_scoped_entry_rearms_not_just_the_max() {
+        // Two models under one profile. A fires at 99; later B overtakes it as the max while A cools
+        // off. Walking only the max never passed A's key to take_alert again, so A stayed armed and
+        // its next genuine exhaustion was silent. Walking every entry re-arms A on the same poll.
+        let resp = |a: f64, b: f64| {
+            serde_json::json!({ "limits": [
+                { "kind": "weekly_scoped", "percent": a, "scope": { "model": { "display_name": "A" } } },
+                { "kind": "weekly_scoped", "percent": b, "scope": { "model": { "display_name": "B" } } },
+            ]})
+        };
+        let mut fired = HashMap::new();
+        // What poll_profile would hand to fire_alert this round: (window, level).
+        let poll = |fired: &mut HashMap<String, u8>, v: &serde_json::Value| {
+            let (alerts, changed) = scoped_alerts(fired, "cc1", v);
+            assert!(changed || alerts.is_empty(), "an alert must always mark the map dirty");
+            alerts.into_iter().map(|(w, lvl, _, _)| (w, lvl)).collect::<Vec<_>>()
+        };
+        assert_eq!(poll(&mut fired, &resp(99.5, 10.0)), vec![("A".to_string(), 99)]);
+        // B overtakes as the max while A drops below WARN → A re-arms, B fires on its own key.
+        assert_eq!(poll(&mut fired, &resp(20.0, 99.9)), vec![("B".to_string(), 99)]);
+        // A genuinely exhausts again → it must alert, which the max-only walk never did.
+        assert_eq!(poll(&mut fired, &resp(99.9, 99.9)), vec![("A".to_string(), 99)]);
+        // Both pegged and already alerted → silence, and nothing left to persist.
+        assert_eq!(scoped_alerts(&mut fired, "cc1", &resp(99.9, 99.9)), (vec![], false));
+    }
+
+    #[test]
+    fn vanished_scoped_window_is_pruned() {
+        // A key for a model that left limits[] entirely is never handed to take_alert again, so it
+        // would stay armed across restarts (it is persisted) and silence the model's return.
+        let mut fired = HashMap::new();
+        assert_eq!(take_alert(&mut fired, "cc1", "A", 99.5), Some(99));
+        assert_eq!(take_alert(&mut fired, "cc1", "5h", 99.5), Some(99));
+        assert_eq!(take_alert(&mut fired, "cc2", "A", 99.5), Some(99));
+        // This round reports only model B for cc1: A is dropped, the headline window and the other
+        // profile's identically-named key are left alone.
+        assert!(prune_scoped(&mut fired, "cc1", &["B"]));
+        assert_eq!(fired.get("cc1\x1fA"), None);
+        assert_eq!(fired.get("cc1\x1f5h"), Some(&99));
+        assert_eq!(fired.get("cc2\x1fA"), Some(&99));
+        // Nothing left to drop → no needless persist.
+        assert!(!prune_scoped(&mut fired, "cc1", &["B"]));
+        // A returns above the threshold → it alerts again.
+        assert_eq!(take_alert(&mut fired, "cc1", "A", 99.9), Some(99));
     }
 
     #[test]

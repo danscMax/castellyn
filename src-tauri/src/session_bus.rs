@@ -49,11 +49,33 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Move an unreadable/corrupt mailbox aside before the caller starts from empty. Without this the
+/// reset is silent AND lossy: the next `store()` overwrites the file, so unread mail is gone with no
+/// way to look at what actually broke. Best-effort — a failed rename must not block the bus.
+fn quarantine(path: &str) {
+    let _ = std::fs::rename(path, format!("{path}.bad"));
+}
+
 fn load(path: &str) -> BusFile {
-    std::fs::read_to_string(path)
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        // A missing mailbox is the normal first-run state — everything else (sharing violation,
+        // partial read) is a real failure whose data we must not silently overwrite.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return BusFile::default(),
+        Err(_) => {
+            quarantine(path);
+            return BusFile::default();
+        }
+    };
+    // Route through the canonical BOM-tolerant parser instead of re-rolling it here; the extra
+    // Value hop is irrelevant for a file this small.
+    crate::parse_json_bom(&text)
         .ok()
-        .and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok())
-        .unwrap_or_default()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_else(|| {
+            quarantine(path);
+            BusFile::default()
+        })
 }
 
 fn store(path: &str, file: &BusFile) -> Result<(), String> {
@@ -106,8 +128,15 @@ pub fn send(path: &str, from: &str, to: &str, kind: &str, body: &str) -> Result<
 
 /// A pane's unread mail: direct (`to == session`), broadcast (`@all`), and — when the pane reports
 /// itself idle — `@idle`. Marks returned messages `delivered_at` (they reached a UI); they stay
-/// unread until `mark_read`, but a restart won't re-notify already-delivered mail (the UI keys
-/// "new" off `delivered_at == None`).
+/// unread until `mark_read`.
+///
+/// Note the stamp is applied BEFORE the message is cloned into the result, so a caller cannot use
+/// `delivered_at == None` to tell first delivery from a repeat — every message a poll returns is
+/// already stamped. Nothing reads it that way today (the UI dedupes toasts in an in-memory set and
+/// never reads `deliveredAt`), so this is a naming trap rather than a live bug. Making the field
+/// mean "was already delivered before this poll" is a three-part change — stamp after the clone
+/// here, switch `SessionsTab.pollBus` to key off it, and rewrite the first-poll assertion in
+/// `send_poll_mark_read_roundtrip` — and is only worth doing together with a consumer that needs it.
 pub fn poll(path: &str, session: &str, is_idle: bool) -> Result<Vec<BusMessage>, String> {
     poll_many(path, &[(session.to_string(), is_idle)]).map(|mut v| v.pop().unwrap_or_default())
 }
@@ -283,6 +312,23 @@ mod tests {
         std::fs::write(&p, "{not json").unwrap();
         assert!(poll(&p, "x", false).unwrap().is_empty());
         send(&p, "a", "@all", "note", "alive").unwrap();
+        assert_eq!(poll(&p, "b", false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn corrupt_file_is_moved_aside_not_overwritten() {
+        // The reset above used to be silent AND lossy: `store()` overwrote the offending file, so
+        // whatever was in it (possibly recoverable unread mail) was gone. It must survive as `.bad`.
+        let p = tmp("quarantine.json");
+        let bad = format!("{p}.bad");
+        let _ = std::fs::remove_file(&bad);
+        std::fs::write(&p, "{not json, but the bytes matter").unwrap();
+        send(&p, "a", "@all", "note", "alive").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&bad).unwrap(),
+            "{not json, but the bytes matter"
+        );
+        // …and the live mailbox is a healthy fresh one.
         assert_eq!(poll(&p, "b", false).unwrap().len(), 1);
     }
 }

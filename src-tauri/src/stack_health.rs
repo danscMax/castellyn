@@ -18,6 +18,14 @@ pub(crate) fn down_count() -> usize {
     STACK_DOWN_COUNT.load(Ordering::Relaxed)
 }
 
+/// Zero the down-count on a tick that probes nothing, and repaint the tooltip once if it actually
+/// changed — an unconditional repaint every POLL_SECS would be pointless churn.
+fn clear_down_count(app: &AppHandle) {
+    if STACK_DOWN_COUNT.swap(0, Ordering::Relaxed) != 0 {
+        crate::update_tray_tooltip(app);
+    }
+}
+
 /// Whether a newly-down service should be suppressed: it was marked expected-down within the TTL.
 /// Pure so the suppression window is unit-testable without threads or a live poll.
 fn suppressed(marked: Option<Instant>, now: Instant, ttl: Duration) -> bool {
@@ -124,12 +132,16 @@ pub fn start(app: AppHandle) {
             std::thread::sleep(Duration::from_secs(POLL_SECS));
             crate::run_guarded("stack-health", || {
             if !crate::read_config_file().stack_health_monitor.unwrap_or(true) {
+                // We stop probing, so the last count stops being true — leaving it non-zero froze
+                // "N services down" into the tray tooltip for the rest of the process lifetime
+                // (update_tray_tooltip is re-invoked from elsewhere, e.g. on session-state changes).
+                clear_down_count(&app);
                 return;
             }
             // No stack.json, or every service disabled → nothing to probe. Skips ~9 TCP connects and
             // as many thread spawns per tick for anyone who does not use the llm-stack.
             if !crate::any_stack_service_enabled() {
-                STACK_DOWN_COUNT.store(0, Ordering::Relaxed);
+                clear_down_count(&app);
                 return;
             }
             let health = crate::read_stack_health_blocking();

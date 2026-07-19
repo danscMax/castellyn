@@ -57,35 +57,53 @@ mod spawn_window_guard {
             .map(|p| p + from)
     }
 
+    /// Every backend source, not just lib.rs — a spawn moved into a sibling module used to escape
+    /// this guard entirely (worktree.rs arrived with 4 spawns the guard never saw).
+    const SOURCES: &[(&str, &str)] = &[
+        ("lib.rs", include_str!("lib.rs")),
+        ("worktree.rs", include_str!("worktree.rs")),
+        ("agent_schedules.rs", include_str!("agent_schedules.rs")),
+        ("agent_status.rs", include_str!("agent_status.rs")),
+        ("limits.rs", include_str!("limits.rs")),
+        ("stack_health.rs", include_str!("stack_health.rs")),
+        ("session_bus.rs", include_str!("session_bus.rs")),
+        ("schedules_watch.rs", include_str!("schedules_watch.rs")),
+        ("i18n.rs", include_str!("i18n.rs")),
+        ("main.rs", include_str!("main.rs")),
+    ];
+
     #[test]
     fn every_spawn_sets_a_window_flag() {
-        let src = include_str!("lib.rs").as_bytes();
         let ctor = concat!("Command", "::", "new(").as_bytes();
         let flag = concat!("creation", "_flags(").as_bytes();
         let mut spawns = 0usize;
-        let mut naked: Vec<usize> = Vec::new();
-        let mut i = 0usize;
-        while let Some(at) = find(src, ctor, i) {
-            spawns += 1;
-            let after = at + ctor.len();
-            // This spawn's region ends at the next spawn, capped so a missing flag can't be
-            // "rescued" by a later spawn's flag far below.
-            let next = find(src, ctor, after).unwrap_or(src.len());
-            let end = next.min(after + 2500).min(src.len());
-            if find(&src[after..end], flag, 0).is_none() {
-                naked.push(src[..at].iter().filter(|&&b| b == b'\n').count() + 1);
+        let mut naked: Vec<String> = Vec::new();
+        for (file, text) in SOURCES {
+            let src = text.as_bytes();
+            let mut i = 0usize;
+            while let Some(at) = find(src, ctor, i) {
+                spawns += 1;
+                let after = at + ctor.len();
+                // This spawn's region ends at the next spawn, capped so a missing flag can't be
+                // "rescued" by a later spawn's flag far below.
+                let next = find(src, ctor, after).unwrap_or(src.len());
+                let end = next.min(after + 2500).min(src.len());
+                if find(&src[after..end], flag, 0).is_none() {
+                    let line = src[..at].iter().filter(|&&b| b == b'\n').count() + 1;
+                    naked.push(format!("{file}:{line}"));
+                }
+                i = after;
             }
-            i = after;
         }
-        // Non-vacuous: if the scan collapses to far fewer sites than exist, the pattern broke and
-        // every assertion below would pass for the wrong reason.
+        // Non-vacuous: if the scan collapses to far fewer sites than exist, the pattern broke — or a
+        // module dropped out of SOURCES, taking its spawns out of coverage silently.
         assert!(
-            spawns >= 40,
-            "scanned only {spawns} spawn sites — the source pattern must have changed"
+            spawns >= 56,
+            "scanned only {spawns} spawn sites — the source pattern changed or a module fell out of SOURCES"
         );
         assert!(
             naked.is_empty(),
-            "spawn(s) with no window-creation flag (a console window will flash) at lib.rs line(s) {naked:?}"
+            "spawn(s) with no window-creation flag (a console window will flash) at {naked:?}"
         );
     }
 }
@@ -487,7 +505,23 @@ fn manifest_text() -> String {
 /// that the script-backed tabs are the owner-tooling part rather than flashing empty/erroring tabs.
 #[tauri::command]
 fn scripts_available() -> bool {
-    std::path::Path::new(&manifest_path()).exists()
+    // Existence alone used to be the signal, so a manifest that existed but did NOT parse reported
+    // "tooling present" while every Check/Apply silently ran the EMBEDDED script paths and args
+    // instead of the ones on disk. Parse-aware: a rejected manifest reads as unavailable.
+    let path = manifest_path();
+    std::path::Path::new(&path).exists() && parse_manifest(&manifest_text()).is_some()
+}
+
+/// Parse a manifest, logging (not swallowing) a rejection — the only place the parse error is
+/// observable, since both callers deliberately fall back to the embedded copy.
+fn parse_manifest(text: &str) -> Option<RawManifest> {
+    match serde_json::from_str::<RawManifest>(text) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            eprintln!("[manifest] on-disk manifest rejected, using the embedded copy: {e}");
+            None
+        }
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -527,8 +561,8 @@ struct Component {
 fn raw_components() -> Vec<RawComponent> {
     // A corrupt on-disk manifest (bad JSON) must not silently blank the dashboard — fall back to the
     // embedded copy on a PARSE error too, not just a read error (manifest_text handles missing file).
-    serde_json::from_str::<RawManifest>(&manifest_text())
-        .or_else(|_| serde_json::from_str::<RawManifest>(MANIFEST_FALLBACK))
+    parse_manifest(&manifest_text())
+        .or_else(|| serde_json::from_str::<RawManifest>(MANIFEST_FALLBACK).ok())
         .map(|m| m.components)
         .unwrap_or_default()
 }
@@ -591,7 +625,7 @@ fn list_components() -> Vec<Component> {
 
 /// Parse JSON tolerating a leading UTF-8 BOM — PowerShell writes some configs (e.g.
 /// .backup-state.json) with one, and serde_json rejects a BOM otherwise.
-fn parse_json_bom(content: &str) -> Result<serde_json::Value, serde_json::Error> {
+pub(crate) fn parse_json_bom(content: &str) -> Result<serde_json::Value, serde_json::Error> {
     serde_json::from_str(content.trim_start_matches('\u{feff}'))
 }
 
@@ -1361,7 +1395,26 @@ async fn run_component(
 
 /// Map a Forks-tab action to update-forks.ps1 args (without -Paths). Mutations carry
 /// `-Yes -Unattended` because the script otherwise prompts (Read-Host) and would hang.
+/// Every action `forks_action_args` accepts. Single source of truth so the "-Unattended on every
+/// action" test covers a newly added action by construction instead of by a hand-copied list.
+const FORK_ACTIONS: &[&str] = &[
+    "check",
+    "plan",
+    "ff",
+    "delete",
+    "rebase",
+    "sync-wip",
+    "delete-wip",
+    "prune",
+    "normalize",
+];
+
 fn forks_action_args(action: &str) -> Option<Vec<String>> {
+    // Load-bearing, not decoration: an action added to the match below but not to FORK_ACTIONS is
+    // rejected here, so the constant cannot drift out of sync unnoticed.
+    if !FORK_ACTIONS.contains(&action) {
+        return None;
+    }
     let v: Vec<&str> = match action {
         "check" => vec!["-Unattended"],
         "plan" => vec![
@@ -1854,14 +1907,17 @@ fn tar_extract(path: &str, dest: &str) -> Result<(), String> {
 
 /// F9: verify a weekly archive by listing it (`tar -tf`). Returns the entry count on success, or the
 /// tar stderr if the zip is corrupt/truncated.
-#[tauri::command]
+/// `(async)`: a sync `#[tauri::command]` runs on the main/event-loop thread, so waiting on tar there
+/// freezes the window for the whole archive. The flag moves the body to Tauri's blocking pool.
+#[tauri::command(async)]
 fn verify_backup(name: String) -> Result<usize, String> {
     tar_list(&weekly_archive_path(&name)?)
 }
 
 /// F9: extract a weekly archive to a user-picked folder. NON-destructive — never writes over the live
 /// ~/.claude (the weekly archives skills/agents/commands, which are Syncthing-synced + junctioned).
-#[tauri::command]
+/// `(async)`: blocks on tar — see verify_backup.
+#[tauri::command(async)]
 fn extract_backup(name: String, dest: String) -> Result<(), String> {
     let path = weekly_archive_path(&name)?;
     if !std::path::Path::new(&dest).is_dir() {
@@ -1873,7 +1929,8 @@ fn extract_backup(name: String, dest: String) -> Result<(), String> {
 /// Import a backup zip from an ARBITRARY path (USB stick, another machine's export): verify first
 /// so a corrupt zip fails before anything lands in `dest`, then extract. Non-destructive like
 /// extract_backup — the user picks an explicit destination, the live ~/.claude is never a target.
-#[tauri::command]
+/// `(async)`: blocks on tar TWICE (list, then extract) — see verify_backup.
+#[tauri::command(async)]
 fn import_backup_zip(path: String, dest: String) -> Result<usize, String> {
     let p = std::path::Path::new(&path);
     if !p.is_file() || !path.to_lowercase().ends_with(".zip") {
@@ -1999,7 +2056,9 @@ fn is_elevated() -> bool {
 }
 
 /// Read the cached profiles health snapshot (profiles.last.json). Null until first check.
-#[tauri::command]
+/// `(async)`: the first call warms `is_elevated()`, a cold `pwsh` start (~0.5-1.5s) — off the
+/// main/event-loop thread, where a sync command would otherwise run.
+#[tauri::command(async)]
 fn read_profiles() -> Result<Option<serde_json::Value>, String> {
     let mut out = read_json_opt(abs(PROFILES_JSON_REL), "profiles.last.json")?;
     // The external status script's `isAdmin` goes stale after an elevated relaunch (it reflects the
@@ -2093,10 +2152,16 @@ async fn repair_all_profiles(
     names: Vec<String>,
 ) -> Result<i32, String> {
     let known = profile_names();
-    let targets: Vec<String> = names
-        .into_iter()
-        .filter(|n| valid_profile_name(n) && known.iter().any(|k| k == n))
-        .collect();
+    // Reject instead of silently dropping: a filtered-out name used to leave `worst` at 0, so the
+    // run reported full success having repaired nothing. The single-profile siblings (run_profiles,
+    // repair_profile_elevated) already fail loudly on exactly this input — match them.
+    if let Some(bad) = names.iter().find(|n| !valid_profile_name(n)) {
+        return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", bad)]));
+    }
+    if let Some(unknown) = names.iter().find(|n| !known.iter().any(|k| k == *n)) {
+        return Err(trv("err.unknown_profile", cur_lang(), &[("name", unknown)]));
+    }
+    let targets = names;
     let _slot = RunSlot::reserve(state.inner())?;
     PROFILES_BULK_CANCEL.store(false, Ordering::SeqCst);
     let script = abs(REPAIR_SCRIPT_REL);
@@ -2480,7 +2545,11 @@ async fn repair_profile_elevated(
     let s_done = esc(tr("log.done", lang));
     let s_err = esc(tr("log.relink_error_code", lang));
     let s_cancel = esc(tr("log.relink_cancelled", lang));
-    let repair = esc(&repair);
+    // The `"& '<path>' -Name '<n>'"` element below is a DOUBLE-quoted PS string, so `$(...)`/`$var`
+    // still expand there — even inside the nested single quotes, which are plain characters in that
+    // context. Neutralize `$` for this value only; the Write-Host literals sit in single quotes,
+    // where a backtick would be taken literally and would corrupt the displayed text.
+    let repair = esc(&repair).replace('$', "`$");
     let inner = format!(
         "Write-Host '{s_start}'; \
          try {{ $p = Start-Process -FilePath pwsh -Verb RunAs -PassThru -Wait -ArgumentList \
@@ -3823,7 +3892,14 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
             );
             continue;
         }
-        if port != 0 && probe_ports(&[port]).first().copied().unwrap_or(false) {
+        // The probe blocks up to 250ms — off the async worker, like read_stack's port probe.
+        let already_up = port != 0
+            && tokio::task::spawn_blocking(move || probe_ports(&[port]).first().copied())
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(false);
+        if already_up {
             stack_emit(app, format!("[skip] {name}: :{port} already up"));
             continue;
         }
@@ -3957,7 +4033,25 @@ fn stop_aborts_start(only: Option<&str>) -> bool {
 /// Native STOP: kill each target service by its tracked top-of-tree pid (persisted, so it survives an
 /// app restart), with a port→pid fallback (ownership-guarded) for anything we didn't spawn. kill_tree
 /// = taskkill /T so the whole npm→node tree dies and no window is orphaned.
-async fn native_stack_stop(
+/// Every step of the stop blocks: `netstat` (listening_pids), `tasklist` (pid_image_name) and
+/// kill_tree's 600ms sleep-poll, once per service. Run the whole thing on the blocking pool rather
+/// than on an async worker, matching read_stack/read_stack_health. `procs` is taken from managed
+/// state inside — a `&StackProcs` borrowed from `State` cannot cross into a 'static task.
+async fn native_stack_stop(app: &AppHandle, only: Option<&str>, emit_done: bool) -> i32 {
+    let app = app.clone();
+    let only = only.map(str::to_string);
+    tokio::task::spawn_blocking(move || {
+        let procs = app.state::<StackProcs>();
+        native_stack_stop_blocking(&app, procs.inner(), only.as_deref(), emit_done)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("[stack] stop task failed: {e}");
+        1
+    })
+}
+
+fn native_stack_stop_blocking(
     app: &AppHandle,
     procs: &StackProcs,
     only: Option<&str>,
@@ -4087,7 +4181,7 @@ async fn run_stack(
         "stop" => {
             let slot = StackSlot::reserve_preempt(stack.inner());
             let code = if native {
-                native_stack_stop(&app, procs.inner(), o, true).await
+                native_stack_stop(&app, o, true).await
             } else {
                 // Script path stops too: suppress the health poll's "down" alert for these ids,
                 // same as the native path does per-service (review-w1 M1 — a deliberate Stop in
@@ -4121,7 +4215,7 @@ async fn run_stack(
         "restart" => {
             let slot = StackSlot::reserve(stack.inner())?;
             let code = if native {
-                native_stack_stop(&app, procs.inner(), o, false).await;
+                native_stack_stop(&app, o, false).await;
                 native_stack_start(&app, procs.inner(), o).await
             } else {
                 // The script restart's stop phase takes services down on purpose — suppress the
@@ -4356,11 +4450,23 @@ fn http_health_ok(port: u16, path: &str) -> bool {
     if stream.write_all(req.as_bytes()).is_err() {
         return false;
     }
+    // Keep reading until the status line is complete: TCP may deliver it in fragments, and a single
+    // read() that stops after "HTTP/1.1" would parse as unhealthy for a perfectly good 200. Bounded
+    // by the buffer, by EOF, and by the read timeout set above — no extra deadline needed.
     let mut buf = [0u8; 64];
-    let n = match stream.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return false,
-    };
+    let mut n = 0usize;
+    while n < buf.len() {
+        match stream.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => {
+                n += k;
+                if buf[..n].contains(&b'\n') {
+                    break;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
     // Status line looks like "HTTP/1.1 200 OK" — accept any 2xx.
     let head = String::from_utf8_lossy(&buf[..n]);
     head.starts_with("HTTP/1.")
@@ -4756,12 +4862,36 @@ fn apply_router_config(
     if !api_base.ends_with("/chat/completions") {
         api_base = format!("{api_base}/chat/completions");
     }
-    // Load existing config (preserve other providers/keys) or start fresh.
-    let mut cfg: Value = std::fs::read_to_string(cfg_path)
-        .ok()
-        .and_then(|c| parse_json_bom(&c).ok())
-        .filter(|v| v.is_object())
-        .unwrap_or_else(|| json!({}));
+    // Load existing config (preserve other providers/keys) or start fresh. A file that EXISTS but
+    // does not parse is a hard error, never an empty start: silently replacing it would drop every
+    // other provider, Router rule and transformer in it while the run still logged success. Only a
+    // genuinely absent file starts from `{}` — same posture as Manage-Provider.ps1, which exits 1.
+    let mut cfg: Value = match std::fs::read_to_string(cfg_path) {
+        Ok(c) => match parse_json_bom(&c) {
+            Ok(v) if v.is_object() => v,
+            Ok(_) => {
+                err(&trv(
+                    "err.bad_config_file",
+                    cur_lang(),
+                    &[("e", &cfg_path.to_string())],
+                ));
+                return 1;
+            }
+            Err(e) => {
+                err(&trv(
+                    "err.bad_config_file",
+                    cur_lang(),
+                    &[("e", &e.to_string())],
+                ));
+                return 1;
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => {
+            err(&trv("err.read", cur_lang(), &[("e", &e)]));
+            return 1;
+        }
+    };
     let obj = cfg.as_object_mut().unwrap();
     if !obj.get("Providers").map(|p| p.is_array()).unwrap_or(false) {
         obj.insert("Providers".into(), json!([]));
@@ -6180,6 +6310,10 @@ fn valid_provider_name(s: &str) -> bool {
 /// `[::1]:port`) without mistaking its inner colons for the port separator. Shared by
 /// `valid_base_url` and `probe_url_allowed` (previously copy-pasted in both).
 fn extract_host(host_port: &str) -> &str {
+    // Strip a URL userinfo prefix first: `x@169.254.169.254` would otherwise be treated as one
+    // opaque host and slip past every layer of the SSRF guard (blocklist, prefix test, literal-IP
+    // parse, and DNS resolution — which fails open). rsplit: the LAST '@' separates userinfo.
+    let host_port = host_port.rsplit_once('@').map_or(host_port, |(_, h)| h);
     if host_port.starts_with('[') {
         host_port
             .trim_start_matches('[')
@@ -6613,7 +6747,19 @@ fn remove_provider_key(id: String, index: u64) -> Result<MyProvider, String> {
     let mut list = read_myproviders_checked()?;
     let pos = find_provider_idx(&list, &id).ok_or(tr("err.provider_not_found", cur_lang()))?;
     let (count, active) = key_pool_meta(&list[pos]);
-    if count == 0 || index >= count {
+    // Legacy single-key layout (keyCount==0, secret in `provider:<id>`): still what the Add/Edit
+    // dialog writes, so removal has to handle it too — rejecting count==0 outright made "Remove key"
+    // permanently impossible for every provider whose key came from that dialog. The UI normalizes
+    // the lone legacy key to one slot, so it arrives here as index 0. No JSON write: keyCount and
+    // activeKey are already 0, and myprovider_from_entry recomputes hasKey from the keyring.
+    if count == 0 {
+        if index != 0 || kr_get(KR_PROVIDERS, &format!("provider:{id}")).is_none() {
+            return Err(tr("err.key_not_found", cur_lang()).into());
+        }
+        kr_delete(KR_PROVIDERS, &format!("provider:{id}"));
+        return Ok(myprovider_from_entry(&list[pos]));
+    }
+    if index >= count {
         return Err(tr("err.key_not_found", cur_lang()).into());
     }
     // Read all surviving secrets in order, then rewrite slots compactly.
@@ -6730,7 +6876,13 @@ fn gateway_base_url() -> Option<String> {
 /// freellmapi-backend registration + Codex-freellmapi; `omniroute` feeds the single client front.
 #[tauri::command]
 fn omniroute_base_url() -> Option<String> {
-    let port = stack_services()
+    omniroute_url_from(&stack_services())
+}
+
+/// Pure mapping, split out from the disk read so it is testable in a gate: `stack_services()` reads
+/// stack.json from under SCRIPTS_ROOT, which does not exist on a clean machine or a CI runner.
+fn omniroute_url_from(services: &[serde_json::Value]) -> Option<String> {
+    let port = services
         .iter()
         .find(|e| e.get("id").and_then(|x| x.as_str()) == Some("omniroute"))
         .and_then(|e| e.get("port").and_then(|x| x.as_u64()))?;
@@ -6914,15 +7066,19 @@ async fn connect_my_provider(
     let e = find_provider(&list, &id).ok_or(tr("err.provider_not_found", cur_lang()))?;
     let s = |k: &str| e.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let (protocol, via, base_url) = (s("protocol"), s("connectVia"), s("baseUrl"));
-    valid_base_url(&base_url)?;
-    // active_provider_key hits the Windows Credential Manager (a blocking syscall that can stall) —
-    // move it off the async runtime. read_myproviders_raw above is a fast local fs read, left inline.
+    // Both of these block: valid_base_url resolves the host (OS resolver, can stall for the DNS
+    // timeout) and active_provider_key hits the Windows Credential Manager (a blocking syscall).
+    // One hop off the async runtime covers both. read_myproviders_raw above is a fast local fs read.
     let e_owned = e.clone();
     let id_for_key = id.clone();
-    let api_key = tokio::task::spawn_blocking(move || active_provider_key(&id_for_key, &e_owned))
-        .await
-        .map_err(|err| err.to_string())?
-        .ok_or(tr("err.provider_no_apikey", cur_lang()))?;
+    let base_for_check = base_url.clone();
+    let api_key = tokio::task::spawn_blocking(move || {
+        valid_base_url(&base_for_check)?;
+        Ok::<_, String>(active_provider_key(&id_for_key, &e_owned))
+    })
+    .await
+    .map_err(|err| err.to_string())??
+    .ok_or(tr("err.provider_no_apikey", cur_lang()))?;
 
     match (via.as_str(), protocol.as_str()) {
         // Anthropic-native → bind straight to a profile's settings.json (native Manage-Provider).
@@ -7166,6 +7322,13 @@ fn fetch_models_bearer(base_url: &str, authorization: &str) -> Vec<String> {
     if valid_base_url(base_url).is_err() {
         return Vec::new();
     }
+    // valid_base_url permits plaintext http://, which is fine for the keyless engine preview but not
+    // when a REAL key rides along in the Authorization header — that would put it on the wire in
+    // cleartext. Every sibling key-carrying path uses probe_url_allowed (https outside loopback);
+    // gate here rather than at the caller so a future caller can't reintroduce the leak.
+    if authorization != "Bearer not-needed" && probe_url_allowed(base_url).is_err() {
+        return Vec::new();
+    }
     let u = base_url.trim_end_matches('/');
     let url = if u.ends_with("/models") {
         u.to_string()
@@ -7237,7 +7400,12 @@ async fn check_my_provider(id: String) -> serde_json::Value {
         .and_then(|x| x.as_str())
         .unwrap_or("openai")
         .to_string();
-    let api_key = active_provider_key(&id, &e).unwrap_or_default();
+    // Credential Manager read is a blocking syscall — off the async runtime, like connect_my_provider.
+    let api_key = tokio::task::spawn_blocking(move || active_provider_key(&id, &e))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     run_provider_check(&base_url, &protocol, &api_key).await
 }
 
@@ -8130,6 +8298,9 @@ async fn read_schedules() -> Result<Option<serde_json::Value>, String> {
             "query",
         ])
         .creation_flags(CREATE_NO_WINDOW)
+        // Dropping the timed-out future does NOT kill the child by default, so a hung query would be
+        // orphaned and keep running — exactly the path this timeout exists for.
+        .kill_on_drop(true)
         .output();
     // Best-effort refresh, bounded — if the query hangs, fall through and read the last JSON anyway.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(30), fut).await;
@@ -8331,6 +8502,8 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
     let fut = tokio::process::Command::new(&claude)
         .args(["plugin", "list", "--json"])
         .creation_flags(CREATE_NO_WINDOW)
+        // Without this, the 30s timeout below leaks the hung child instead of reclaiming it.
+        .kill_on_drop(true)
         .output();
     let out = match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
         Ok(r) => r.map_err(|e| trv("err.claude_launch", cur_lang(), &[("e", &e)]))?,
@@ -9193,6 +9366,15 @@ fn share_skills_blocking() -> Result<ShareResult, String> {
             continue;
         }
         let link = format!("{target_dir}\\{name}");
+        // The charset check above only covers `name`. `src` is the on-disk directory of a
+        // plugin-bundled skill — third-party data, never validated — and cmd re-parses its argv, so
+        // guard the WHOLE argv with the existing helper rather than trusting the link name alone.
+        if !cmd_argv_safe(&[link.clone(), src.clone()]) {
+            res.failed += 1;
+            res.details
+                .push(format!("{name}: unsafe source path, skipped"));
+            continue;
+        }
         let lp = std::path::Path::new(&link);
         // symlink_metadata (lstat) sees the junction node even when its target is gone; `exists()`
         // follows the link and would report `false` for a dangling junction, defeating the repair.
@@ -9445,7 +9627,8 @@ fn resolve_rtk_path(home: &str) -> Option<String> {
 /// Enable/disable RTK command-rewriting for OpenCode by writing/removing a Castellyn-managed,
 /// Windows-safe plugin at ~/.config/opencode/plugins/rtk.ts. Returns the new enabled state.
 /// Reversible (disable just deletes the file); never touches Claude's RTK hook.
-#[tauri::command]
+/// `(async)`: `enable` waits on `resolve_rtk_path`'s `where.exe` — off the main/event-loop thread.
+#[tauri::command(async)]
 fn run_opencode_rtk(action: String) -> Result<bool, String> {
     let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let plugins_dir = format!("{home}\\.config\\opencode\\plugins");
@@ -9530,7 +9713,9 @@ fn canonical_mcp_servers(home: &str) -> Result<serde_json::Map<String, serde_jso
         .ok_or_else(|| tr("err.mcp_no_servers", cur_lang()).to_string())
 }
 
-#[tauri::command]
+/// `(async)`: takes a std Mutex and writes config files — off the main/event-loop thread, like the
+/// rest of the deploy commands. Body unchanged, so the lock is still never held across an `.await`.
+#[tauri::command(async)]
 fn run_opencode_mcp() -> Result<usize, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4/L4
     use serde_json::json;
@@ -9707,7 +9892,8 @@ fn merge_opencode_provider(target: &mut serde_json::Value, shape: serde_json::Va
 /// Batch counterpart of the single-provider `run_opencode_provider` bind. Merge-patch preserves
 /// user-added providers and manually bound keys; secrets never leave the Credential Manager
 /// (apiKey is written as an `{env:…}` reference the user populates). Returns the count written.
-#[tauri::command]
+/// `(async)`: same class as run_opencode_mcp — std Mutex + config write off the event-loop thread.
+#[tauri::command(async)]
 fn run_opencode_providers() -> Result<usize, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4
     use serde_json::{json, Value};
@@ -9999,27 +10185,31 @@ fn deploy_codex_provider(
 /// helper — same mechanism as analytics) so `codex --profile freellmapi` works out of the
 /// box in a new terminal. Returns whether the key was set; the key itself is never logged.
 #[tauri::command]
-fn run_codex_providers() -> Result<bool, String> {
-    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
-    use std::os::windows::process::CommandExt;
-    let base = gateway_base_url().ok_or_else(|| tr("err.gateway_missing", cur_lang()).to_string())?;
-    deploy_codex_provider(
-        "freellmapi",
-        "FreeLLMAPI",
-        &base,
-        "FREELLMAPI_API_KEY",
-        "kimi-k2-thinking",
-    )?;
+async fn run_codex_providers() -> Result<bool, String> {
+    // The config write takes DEPLOY_CFG_LOCK (a std Mutex, never held across an `.await`) and does
+    // blocking file IO — off the async runtime, exactly like run_codex_mcp.
+    tokio::task::spawn_blocking(deploy_codex_freellmapi)
+        .await
+        .map_err(|e| format!("codex providers task panicked: {e}"))??;
 
     // Key mirror is best-effort: a missing DB/node/helper leaves the config connected and
-    // the toast tells the user to set the variable by hand (dashboard shows the key).
-    let key_set = (|| -> Option<()> {
+    // the toast tells the user to set the variable by hand (dashboard shows the key). Runs AFTER the
+    // lock is released — it touches only the environment, not config.toml.
+    let key_set = async {
         let db = gateway_db_path().filter(|p| std::path::Path::new(p).exists())?;
         let helper = abs("Castellyn\\tools\\analytics\\unified-key.cjs");
-        let out = std::process::Command::new("node")
+        // Bound the helper: it opens the gateway's SQLite, and a locked DB would otherwise leave the
+        // deploy waiting forever with no way out (same 30s bound as read_schedules/list_plugins).
+        let fut = tokio::process::Command::new("node")
             .args([&helper, &db])
             .creation_flags(CREATE_NO_WINDOW)
-            .output()
+            // Dropping the timed-out future does not kill the child; without this a helper stuck on
+            // a locked SQLite would be orphaned rather than reclaimed.
+            .kill_on_drop(true)
+            .output();
+        let out = tokio::time::timeout(std::time::Duration::from_secs(30), fut)
+            .await
+            .ok()?
             .ok()?;
         if !out.status.success() {
             return None;
@@ -10035,22 +10225,39 @@ fn run_codex_providers() -> Result<bool, String> {
         // HAND to run `codex`, and Windows offers no non-persistent way to inject an env var into
         // future externally-launched shells (a shell-profile hook is equally plaintext). The
         // Credential Manager remains the source of truth; this is a convenience mirror, not storage.
-        let st = std::process::Command::new("setx")
+        let st = tokio::process::Command::new("setx")
             .args(["FREELLMAPI_API_KEY", &key])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
+            .await
             .ok()?;
         st.status.success().then_some(())
-    })()
+    }
+    .await
     .is_some();
     Ok(key_set)
+}
+
+/// The blocking half of `run_codex_providers`: register the freellmapi provider in Codex's config.
+/// Kept a sync fn so `DEPLOY_CFG_LOCK` (a std Mutex) is never held across an `.await`.
+fn deploy_codex_freellmapi() -> Result<(), String> {
+    let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
+    let base = gateway_base_url().ok_or_else(|| tr("err.gateway_missing", cur_lang()).to_string())?;
+    deploy_codex_provider(
+        "freellmapi",
+        "FreeLLMAPI",
+        &base,
+        "FREELLMAPI_API_KEY",
+        "kimi-k2-thinking",
+    )
 }
 
 /// Connect OmniRoute to Codex (Ф6 — `patch_codex_provider` generalized off the freellmapi-only
 /// `run_codex_providers`). Unlike freellmapi there is no key mirror here: OmniRoute's own key
 /// management (`omniroute keys`) is the source of truth. Always returns `Ok(false)` — the boolean
 /// return shape is kept only to match `run_codex_providers`'s call signature on the frontend.
-#[tauri::command]
+/// `(async)`: same class as run_opencode_mcp — std Mutex + config write off the event-loop thread.
+#[tauri::command(async)]
 fn run_codex_omniroute() -> Result<bool, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4-adjacent (config.toml)
     let base = omniroute_base_url().ok_or_else(|| tr("err.omniroute_missing", cur_lang()).to_string())?;
@@ -10078,7 +10285,8 @@ const CANON_RULES_REL: [&str; 2] = [
 /// Attach the canonical rule files to OpenCode's `instructions` array (idempotent merge,
 /// existing user entries preserved). Returns how many canonical paths are connected after
 /// the merge — 0 means none of the files exist on disk.
-#[tauri::command]
+/// `(async)`: reads and merges instruction files from disk — off the main/event-loop thread.
+#[tauri::command(async)]
 fn run_opencode_instructions() -> Result<usize, String> {
     let _cfg_guard = DEPLOY_CFG_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // M4
     use serde_json::json;
@@ -11271,13 +11479,30 @@ fn slugify_agent(name: &str) -> String {
     if slug.is_empty() { "agent".into() } else { slug }
 }
 
+/// A single-line YAML scalar, double-quoted only when the plain form would be invalid or would mean
+/// something else. `description: Use when: X` is the common real case — a plain scalar containing
+/// `: ` makes the whole frontmatter unparseable, and Claude Code then cannot load the subagent, while
+/// Castellyn's own naive `fm_value` reader (which strips surrounding quotes) reports it healthy either
+/// way. Left unquoted otherwise, matching the ecosystem convention for these files.
+fn yaml_scalar(v: &str) -> String {
+    let hostile = v.contains(": ")
+        || v.ends_with(':')
+        || v.contains(" #")
+        || v.starts_with(['#', '[', '{', '&', '*', '!', '|', '>', '%', '@', '`', '"', '\'', '-', '?', ','])
+        || v.trim() != v;
+    if v.is_empty() || !hostile {
+        return v.to_string();
+    }
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// Render a subagent .md: frontmatter (name/description always; model/tools only when set) + body.
 /// UTF-8 without BOM (Castellyn's own writer convention). Unquoted scalars match the ecosystem
 /// convention (plugin agents ship unquoted) — the description is kept single-line by the UI.
 fn render_agent_md(name: &str, description: &str, model: &str, tools: &str, prompt: &str) -> String {
     // Sanitize each scalar: a raw newline (or a line equal to `---`) in a value would break out of the
     // YAML frontmatter block. Collapse interior CR/LF to spaces so every value stays on one line.
-    let clean = |v: &str| v.trim().replace(['\r', '\n'], " ");
+    let clean = |v: &str| yaml_scalar(&v.trim().replace(['\r', '\n'], " "));
     let mut s = String::from("---\n");
     s.push_str(&format!("name: {}\n", clean(name)));
     s.push_str(&format!("description: {}\n", clean(description)));
@@ -11419,6 +11644,37 @@ async fn test_subagent(path: String) -> Result<AgentTestResult, String> {
         .map_err(|e| format!("test_subagent panicked: {e}"))?
 }
 
+/// True when `cli` appears in a system prompt as a COMMAND, not merely as prose. The probe used to
+/// fire on a bare lowercase substring, so an agent that only MENTIONS codex/opencode (e.g. a
+/// `codex-review-notes` reference) failed its whole smoke test when that CLI was absent from PATH —
+/// for a wrapper it never was. A command sits either inside a fenced block / after a shell prompt
+/// marker, or right after a pipeline-chaining operator, and is followed by an argument.
+fn cli_invoked(body: &str, cli: &str) -> bool {
+    let mut in_fence = false;
+    for line in body.lines() {
+        let l = line.to_lowercase();
+        if l.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        let mut from = 0;
+        while let Some(rel) = l[from..].find(cli) {
+            let start = from + rel;
+            let end = start + cli.len();
+            // Followed by an argument (or the end of the command), never glued into a longer word.
+            let after_ok = end == l.len() || l[end..].starts_with(' ');
+            let before = l[..start].trim_end();
+            let before_ok = (before.is_empty() && in_fence)
+                || before.ends_with(['|', '&', ';', '(', '`', '$', '>']);
+            if after_ok && before_ok {
+                return true;
+            }
+            from = start + 1;
+        }
+    }
+    false
+}
+
 fn test_subagent_blocking(path: &str) -> Result<AgentTestResult, String> {
     let p = std::path::Path::new(path);
     agent_guard(p)?;
@@ -11436,10 +11692,10 @@ fn test_subagent_blocking(path: &str) -> Result<AgentTestResult, String> {
     let has_body = !body.trim().is_empty();
     push(&mut lines, has_body, if has_body { "системный промпт задан".into() } else { "пустой системный промпт".into() });
 
-    // Wrapper agents shell out to an external CLI — that CLI must resolve and run.
-    let bl = body.to_lowercase();
-    for (needle, cli) in [("codex", "codex"), ("opencode", "opencode")] {
-        if bl.contains(needle) {
+    // Wrapper agents shell out to an external CLI — that CLI must resolve and run. Only a real
+    // invocation counts; a passing mention of the name must not fail the agent's smoke test.
+    for cli in ["codex", "opencode"] {
+        if cli_invoked(&body, cli) {
             match exe_on_path(cli) {
                 Some(exe) => {
                     let out = std::process::Command::new(&exe)
@@ -12461,13 +12717,16 @@ fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
 /// a fresh source↔deployed comparison, so a silent no-op deploy surfaces as lingering drift.
 #[tauri::command]
 async fn run_managed_deploy() -> Result<StackDriftItem, String> {
-    // Double any apostrophe so the path can't break out of the single-quoted PowerShell array element
-    // below (a username with a `'` would otherwise inject into the -ArgumentList string).
-    let deploy = abs(MANAGED_DEPLOY_SCRIPT_REL).replace('\'', "''");
+    // Start-Process does NOT quote -ArgumentList elements, so `-File <path with spaces>` reaches the
+    // elevated shell truncated and the deploy is a silent no-op (same trap repair_profile_elevated
+    // documents). Pass the script through `-Command "& '<path>'"` instead, where the quotes survive.
+    // The path is nested in single quotes TWICE (the -Command element is itself a single-quoted PS
+    // string), so an apostrophe in it must be doubled twice to stay inert.
+    let deploy = abs(MANAGED_DEPLOY_SCRIPT_REL).replace('\'', "''''");
     tokio::task::spawn_blocking(move || {
         let inner = format!(
             "Start-Process powershell -Verb RunAs -Wait -ArgumentList \
-             '-ExecutionPolicy','Bypass','-File','{deploy}'"
+             '-ExecutionPolicy','Bypass','-Command','& ''{deploy}'''"
         );
         let _ = std::process::Command::new("powershell.exe")
             .args(["-ExecutionPolicy", "Bypass", "-Command", &inner])
@@ -13486,6 +13745,10 @@ mod audit_fixes_tests {
         assert_eq!(extract_host("example.com"), "example.com");
         assert_eq!(extract_host("[::1]:443"), "::1");
         assert_eq!(extract_host("[fe80::1]"), "fe80::1");
+        // Userinfo must not become part of the host — otherwise it defeats the whole SSRF guard.
+        assert_eq!(extract_host("x@169.254.169.254"), "169.254.169.254");
+        assert_eq!(extract_host("u:p@example.com:8080"), "example.com");
+        assert_eq!(extract_host("x@[::1]:443"), "::1");
     }
 
     #[test]
@@ -13507,6 +13770,9 @@ mod audit_fixes_tests {
         assert!(valid_base_url("http://metadata.google.internal/").is_err());
         assert!(valid_base_url("http://[fe80::1]:8080").is_err());
         assert!(valid_base_url("ftp://example.com").is_err());
+        // Userinfo prefix must not smuggle a blocked host past the guard.
+        assert!(valid_base_url("http://x@169.254.169.254/").is_err());
+        assert!(valid_base_url("http://x@metadata.google.internal/").is_err());
         // Allowed: loopback literal (no DNS) + localhost (resolves to loopback).
         assert!(valid_base_url("http://127.0.0.1:1234").is_ok());
         assert!(valid_base_url("http://localhost:8080").is_ok());
@@ -13795,6 +14061,129 @@ mod plugin_sync_tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// Fresh empty scratch dir for one test, keyed by name so parallel tests never collide.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("castellyn_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_only_what_would_break_the_frontmatter() {
+        // Plain values stay plain — the ecosystem convention for these files.
+        for plain in ["my-agent", "Use for X", "sonnet", "Read, Grep, Glob"] {
+            assert_eq!(super::yaml_scalar(plain), plain);
+        }
+        // `: ` makes the whole frontmatter unparseable for any real YAML reader.
+        assert_eq!(
+            super::yaml_scalar("Use when: the user asks"),
+            "\"Use when: the user asks\""
+        );
+        assert_eq!(super::yaml_scalar("trailing:"), "\"trailing:\"");
+        assert_eq!(super::yaml_scalar("#comment"), "\"#comment\"");
+        // Quotes and backslashes inside a quoted scalar must be escaped, not emitted raw.
+        assert_eq!(
+            super::yaml_scalar("say: \"hi\\there\""),
+            "\"say: \\\"hi\\\\there\\\"\""
+        );
+    }
+
+    #[test]
+    fn render_agent_md_survives_a_colon_in_the_description() {
+        let md = super::render_agent_md("a", "Use when: X", "", "", "body");
+        assert!(md.contains("description: \"Use when: X\""), "{md}");
+        // Castellyn's own reader strips the surrounding quotes, so the fix is backward-compatible.
+        let fm = super::extract_frontmatter(&md);
+        assert_eq!(
+            super::fm_value(&fm, "description").as_deref(),
+            Some("Use when: X")
+        );
+    }
+
+    #[test]
+    fn cli_invoked_separates_a_command_from_a_mention() {
+        // Mentions must NOT trigger the CLI probe (they used to fail the whole agent test).
+        for prose in [
+            "See codex-review-notes for background.",
+            "This agent replaces opencode entirely.",
+            "codex is a CLI by OpenAI",
+        ] {
+            assert!(!super::cli_invoked(prose, "codex"), "{prose}");
+        }
+        // Real invocations still do.
+        assert!(super::cli_invoked("Run `codex exec \"fix it\"` now.", "codex"));
+        assert!(super::cli_invoked("```sh\ncodex exec --json\n```", "codex"));
+        assert!(super::cli_invoked("cd repo && opencode run", "opencode"));
+        assert!(super::cli_invoked("$ codex", "codex"));
+    }
+
+    #[test]
+    fn import_bundle_validates_config_before_touching_the_fork_registry() {
+        // Codex MEDIUM-04 regression pin: a bundle whose `forks` is valid but whose `config` is not
+        // must fail WITHOUT having rewritten forks.json. Ordering is the whole invariant — move the
+        // fork write back above the from_value call and this assertion fires.
+        let dir = scratch("impord");
+        let fp = dir.join("forks.json");
+        let original = "{\"repos\":[{\"name\":\"keep-me\"}]}";
+        std::fs::write(&fp, original).unwrap();
+        let fp_s = fp.to_string_lossy().to_string();
+
+        // `scriptsRoot` is Option<String>; a number is a hard deserialization failure.
+        let bad = "{\"schemaVersion\":2,\"config\":{\"scriptsRoot\":42},\"forks\":{\"repos\":[]}}";
+        assert!(super::import_bundle(bad, Some(&fp_s)).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&fp).unwrap(),
+            original,
+            "a rejected config must leave the fork registry byte-for-byte unchanged"
+        );
+
+        // Control: the SAME forks payload does land once the config parses, so the assertion above
+        // is about ordering, not about the write being unreachable in this test setup.
+        let good = "{\"schemaVersion\":2,\"config\":{},\"forks\":{\"repos\":[]}}";
+        assert!(super::import_bundle(good, Some(&fp_s)).is_ok());
+        assert_ne!(std::fs::read_to_string(&fp).unwrap(), original);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_import_bundle_round_trips_config_and_forks() {
+        let dir = scratch("exprt");
+        let fp = dir.join("forks.json");
+        let fp_s = fp.to_string_lossy().to_string();
+
+        let cfg = super::HubConfig {
+            scripts_root: Some("E:\\Scripts".to_string()),
+            ..Default::default()
+        };
+        let text = super::export_bundle(&cfg, Some(json!({ "repos": ["a", "b"] }))).unwrap();
+
+        let back = super::import_bundle(&text, Some(&fp_s)).unwrap();
+        assert_eq!(back.scripts_root.as_deref(), Some("E:\\Scripts"));
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&fp).unwrap()).unwrap();
+        assert_eq!(written, json!({ "repos": ["a", "b"] }));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_bundle_accepts_a_legacy_flat_config_and_leaves_forks_alone() {
+        // Pre-R8 exports are a bare HubConfig with no schemaVersion — the `else` branch.
+        let dir = scratch("implgc");
+        let fp = dir.join("forks.json");
+        std::fs::write(&fp, "{\"repos\":[]}").unwrap();
+        let fp_s = fp.to_string_lossy().to_string();
+
+        let flat = super::import_bundle("{\"scriptsRoot\":\"D:\\\\Old\"}", Some(&fp_s)).unwrap();
+        assert_eq!(flat.scripts_root.as_deref(), Some("D:\\Old"));
+        assert_eq!(std::fs::read_to_string(&fp).unwrap(), "{\"repos\":[]}");
+        // A BOM in front of a legacy export must still parse (PowerShell writes some configs so).
+        assert!(super::import_bundle("\u{feff}{\"scriptsRoot\":null}", Some(&fp_s)).is_ok());
+        // Not JSON at all → Err, not a silent default.
+        assert!(super::import_bundle("not json", Some(&fp_s)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn status_hook_diagnostic_ignores_and_preserves_unrelated_hooks() {
         // An unrelated hook already lives on a lifecycle event we also wire. It must never be
@@ -14000,18 +14389,23 @@ fn app_paths() -> serde_json::Value {
 /// file is always valid even if config.json was never written.
 #[tauri::command]
 fn export_config(dest: String) -> Result<(), String> {
-    // R8: bundle the durable forks.json alongside config so a settings export carries the fork
-    // registry too (schemaVersion 2). import_config accepts both this and the legacy flat HubConfig.
     let forks = fork_config_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|c| parse_json_bom(&c).ok());
+    let json = export_bundle(&read_config_file(), forks)?;
+    std::fs::write(&dest, json).map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]))
+}
+
+/// R8: bundle the durable forks.json alongside config so a settings export carries the fork registry
+/// too (schemaVersion 2). import_bundle accepts both this and the legacy flat HubConfig. Split from
+/// the command so the bundle shape can be round-tripped in tests without touching %APPDATA%.
+fn export_bundle(config: &HubConfig, forks: Option<serde_json::Value>) -> Result<String, String> {
     let bundle = serde_json::json!({
         "schemaVersion": 2,
-        "config": read_config_file(),
+        "config": config,
         "forks": forks,
     });
-    let json = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
-    std::fs::write(&dest, json).map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]))
+    serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())
 }
 
 /// Read + validate a config file (#117); returns the parsed HubConfig (the frontend persists it
@@ -14021,8 +14415,14 @@ fn export_config(dest: String) -> Result<(), String> {
 fn import_config(src: String) -> Result<HubConfig, String> {
     let text =
         std::fs::read_to_string(&src).map_err(|e| trv("err.read", cur_lang(), &[("e", &e)]))?;
+    import_bundle(&text, fork_config_path().as_deref())
+}
+
+/// The parse+restore half of `import_config`, with the fork-registry destination injected so the
+/// "validate before mutating" ordering below can be tested without redirecting %APPDATA%.
+fn import_bundle(text: &str, forks_path: Option<&str>) -> Result<HubConfig, String> {
     // BOM-tolerant like every other file read (PowerShell-written configs often carry one).
-    let v: serde_json::Value = parse_json_bom(&text)
+    let v: serde_json::Value = parse_json_bom(text)
         .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))?;
     if v.get("schemaVersion").is_some() && v.get("config").is_some() {
         // New bundle. Deserialize (validate) the config BEFORE touching disk — a malformed config must
@@ -14033,8 +14433,8 @@ fn import_config(src: String) -> Result<HubConfig, String> {
             .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))?;
         // Config is valid → now restore the fork registry to its durable path.
         if let Some(forks) = v.get("forks").filter(|f| !f.is_null()) {
-            if let (Some(fp), Ok(fj)) = (fork_config_path(), serde_json::to_string_pretty(forks)) {
-                let _ = write_json_atomic(&fp, &fj);
+            if let (Some(fp), Ok(fj)) = (forks_path, serde_json::to_string_pretty(forks)) {
+                let _ = write_json_atomic(fp, &fj);
             }
         }
         Ok(config)
@@ -14165,7 +14565,15 @@ fn write_temp_mcp_config(name: &str, servers: &[String]) -> Option<String> {
         for e in entries.flatten() {
             let n = e.file_name();
             let n = n.to_string_lossy();
-            if n.starts_with(&prefix) && n.ends_with(".json") {
+            // Only sweep files old enough that no launch can still be booting into them: the
+            // consumer is asynchronous (`claude` opens the path seconds after we spawn it), so an
+            // unconditional sweep would delete a sibling launch's config out from under it.
+            let stale = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t.elapsed().unwrap_or_default() > std::time::Duration::from_secs(120))
+                .unwrap_or(true);
+            if stale && n.starts_with(&prefix) && n.ends_with(".json") {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -14452,7 +14860,9 @@ fn open_path(path: String) -> Result<(), String> {
 
 /// F10: clone a GitHub repo to a user-picked path via the git CLI. Blocks until the clone finishes;
 /// `target` is the full destination dir (picked parent + repo name). Only https URLs are accepted.
-#[tauri::command]
+/// `(async)`: cloning an arbitrary repo can take minutes, and a sync command would spend all of it
+/// on the main/event-loop thread with the window frozen.
+#[tauri::command(async)]
 fn clone_repo(url: String, target: String) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err(trv("err.bad_url_scheme", cur_lang(), &[("url", &url)]));
@@ -14991,6 +15401,16 @@ fn set_toggle_hotkey(app: AppHandle, accel: Option<String>) -> Result<(), String
     }
 }
 
+/// Register every non-empty accelerator in a mapping, logging (never failing on) a combo the OS
+/// rejects. Shared by startup and by `set_shortcuts`' rollback arm, which must restore the same set.
+fn register_all_shortcuts(app: &AppHandle, shortcuts: &HashMap<String, String>) {
+    for accel in shortcuts.values().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Err(e) = register_shortcut(app, accel) {
+            eprintln!("shortcut register failed ({accel}): {e}");
+        }
+    }
+}
+
 /// Return the current shortcut mapping (action → accelerator). Empty map = none configured.
 #[tauri::command]
 fn read_shortcuts() -> HashMap<String, String> {
@@ -15017,6 +15437,10 @@ fn set_shortcuts(app: AppHandle, shortcuts: HashMap<String, String>) -> Result<(
     for accel in &non_empty {
         if let Err(e) = register_shortcut(&app, accel) {
             let _ = gs.unregister_all();
+            // unregister_all alone is not a rollback: it leaves EVERY accelerator dead while config
+            // and the Settings UI still advertise the old mapping, until the next app start. Put the
+            // last persisted set back before returning the error.
+            register_all_shortcuts(&app, &read_config_file().shortcuts.unwrap_or_default());
             return Err(e);
         }
     }
@@ -15612,14 +16036,22 @@ fn open_in_editor(app: AppHandle, path: String, line: Option<u32>) -> Result<(),
         return Err("open_in_editor: not a regular file".into());
     }
     // Never auto-open an executable/script — opening it could run it.
+    // ws/wsc are script hosts; url/scf/chm are indirection formats that launch a target on open.
     const BLOCKED_EXT: &[&str] = &[
         "exe", "bat", "cmd", "com", "ps1", "psm1", "scr", "lnk", "vbs", "vbe", "js", "jse", "wsf",
-        "wsh", "msi", "reg", "hta", "cpl", "jar", "msc", "pif",
+        "wsh", "msi", "reg", "hta", "cpl", "jar", "msc", "pif", "ws", "wsc", "url", "scf", "chm",
     ];
-    if let Some(ext) = canon.extension().and_then(|e| e.to_str()) {
-        if BLOCKED_EXT.iter().any(|b| b.eq_ignore_ascii_case(ext)) {
-            return Err("open_in_editor: blocked file type".into());
-        }
+    // Interpreted sources are the ordinary thing to click in a linter diagnostic, so they stay
+    // openable in the EDITOR — but on a dev machine they are file-associated with their interpreter,
+    // so handing one to ShellExecute would RUN it. Editor-only, never the opener fallback.
+    const NO_SHELL_OPEN_EXT: &[&str] = &["py", "pyw", "sh", "rb", "pl", "php", "lua"];
+    let ext = canon
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_string();
+    if BLOCKED_EXT.iter().any(|b| b.eq_ignore_ascii_case(&ext)) {
+        return Err("open_in_editor: blocked file type".into());
     }
     let canon_str = canon.to_string_lossy().to_string();
     // Prefer VS Code's --goto (jumps to the line) via argv — no shell. `code` resolves on installs
@@ -15641,6 +16073,9 @@ fn open_in_editor(app: AppHandle, path: String, line: Option<u32>) -> Result<(),
         .is_ok()
     {
         return Ok(());
+    }
+    if NO_SHELL_OPEN_EXT.iter().any(|b| b.eq_ignore_ascii_case(&ext)) {
+        return Err("open_in_editor: no editor found for this file type".into());
     }
     // Fallback: open the validated path in its default app via the opener plugin (ShellExecute on the
     // path as data — not a shell command line). Loses the line jump but stays safe.
@@ -15910,7 +16345,10 @@ fn delete_ssh_host(id: String) -> Result<Vec<SshHost>, String> {
 
 /// Quick reachability probe for the host editor: TCP connect to host:port (default 22), ~2s timeout.
 /// Does NOT authenticate — just tells the user the host is reachable before they launch ssh.
-#[tauri::command]
+/// `(async)`: blocking DNS + TCP connects. As a sync command these ran on the main/event-loop
+/// thread, so the frontend's `Promise.allSettled` fan-out over every host serialized AND froze the
+/// UI for N×2s; on the blocking pool the probes actually overlap.
+#[tauri::command(async)]
 fn test_ssh_host(host: String, port: Option<u16>) -> bool {
     use std::net::{TcpStream, ToSocketAddrs};
     let p = port.unwrap_or(22);
@@ -16133,7 +16571,13 @@ fn take_detach(label: String) -> Option<serde_json::Value> {
 fn open_monitor_window(app: AppHandle, label: String, monitor_index: usize) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.set_focus();
-        return Ok(());
+        // Ok() here would be a lie: the caller stashed a spec via prepare_detach and reads Ok as
+        // "the panes moved", removing them from the grid — but this window mounted long ago and
+        // will never consume it, so they end up rendered nowhere. Drop the orphaned spec (it would
+        // otherwise be replayed by the next window under this label) and report the failure so the
+        // caller leaves the panes where they are.
+        let _ = take_detach(label);
+        return Err("monitor window already open".to_string());
     }
     let mons = app.available_monitors().map_err(|e| e.to_string())?;
     let m = mons
@@ -16244,7 +16688,9 @@ pub fn run() {
         )
         .manage(RunState::default())
         .manage(StackRun::default())
-        .manage(StackProcs::default())
+        // Seed from disk, not empty: every writer persists the in-memory map verbatim, so an empty
+        // start would let the first native_stack_start wipe pids written by a previous app session.
+        .manage(StackProcs(Mutex::new(load_stack_procs())))
         .manage(ForkRuns::default())
         .manage(SessionState::default())
         .manage(UsageCache::default())
@@ -16475,11 +16921,7 @@ read_opencode_models,
                 // register_shortcut does NOT unregister_all, so one pass registers each accel cleanly.
                 // The old `if count > 1 { unregister_all + re-register }` block was dead churn (stale
                 // copy-paste from an earlier probe-register design).
-                for accel in shortcuts.values().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                    if let Err(e) = register_shortcut(app.handle(), accel) {
-                        eprintln!("shortcut register failed ({accel}): {e}");
-                    }
-                }
+                register_all_shortcuts(app.handle(), shortcuts);
             }
             Ok(())
         })
@@ -16523,10 +16965,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn omniroute_base_url_resolves_from_stack_json() {
-        // The `omniroute` entry (Ф4) must be present and expose port 20128.
-        let url = super::omniroute_base_url().expect("omniroute entry present in stack.json");
-        assert_eq!(url, "http://localhost:20128");
+    fn omniroute_url_maps_the_stack_entry() {
+        // Pure mapping — no stack.json on disk, so this holds on a CI runner too. The previous
+        // version called omniroute_base_url() and asserted against the DEVELOPER's real stack.json,
+        // which is why CI had been red: on a clean machine the file is simply absent.
+        let some = serde_json::json!([{"id": "ccr", "port": 3456}, {"id": "omniroute", "port": 20128}]);
+        assert_eq!(
+            omniroute_url_from(some.as_array().unwrap()).unwrap(),
+            "http://localhost:20128"
+        );
+        // No entry / no port -> no URL, so callers fall back instead of aiming at a wrong port.
+        assert_eq!(omniroute_url_from(&[]), None);
+        let noport = serde_json::json!([{"id": "omniroute"}]);
+        assert_eq!(omniroute_url_from(noport.as_array().unwrap()), None);
+    }
+
+    #[test]
+    #[ignore] // Not part of the gates: `cargo test omniroute_entry -- --ignored --nocapture`
+    fn omniroute_entry_present_in_local_stack_json() {
+        // The environment assertion the gate version used to make: THIS machine's stack.json really
+        // does carry the omniroute entry on port 20128. Machine-dependent, so it stays manual.
+        assert_eq!(
+            super::omniroute_base_url().expect("omniroute entry present in stack.json"),
+            "http://localhost:20128"
+        );
     }
 
     #[test]
@@ -17252,19 +17714,16 @@ mod tests {
 
     #[test]
     fn forks_actions_all_unattended() {
-        // Every fork action runs unattended (no interactive Read-Host hang).
-        for a in [
-            "check",
-            "plan",
-            "ff",
-            "delete",
-            "rebase",
-            "sync-wip",
-            "delete-wip",
-            "prune",
-            "normalize",
-        ] {
-            let args = forks_action_args(a).unwrap();
+        // Every fork action runs unattended (no interactive Read-Host hang). Driven off the
+        // whitelist constant, so a NEW action is covered without editing this test.
+        assert_eq!(
+            FORK_ACTIONS.len(),
+            9,
+            "FORK_ACTIONS shrank — an emptied constant would make this test vacuous"
+        );
+        for a in FORK_ACTIONS {
+            let args = forks_action_args(a)
+                .unwrap_or_else(|| panic!("{a} is listed in FORK_ACTIONS but not accepted"));
             assert!(
                 args.contains(&"-Unattended".to_string()),
                 "{a} must be unattended"

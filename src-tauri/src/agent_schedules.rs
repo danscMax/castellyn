@@ -83,7 +83,10 @@ fn sched_path() -> Result<String, String> {
 fn load(path: &str) -> ScheduleFile {
     std::fs::read_to_string(path)
         .ok()
-        .and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok())
+        // Route through the canonical BOM-tolerant parser instead of re-rolling it here; the extra
+        // Value hop is irrelevant for a file this small.
+        .and_then(|t| crate::parse_json_bom(&t).ok())
+        .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default()
 }
 
@@ -248,6 +251,33 @@ fn set_outcome(s: &mut AgentSchedule, day_key: &str, outcome: &str) {
     s.last_outcome = Some(format!("{day_key}|{outcome}"));
 }
 
+/// Swap only the outcome word, keeping the day key from the original fire — used once the fire has
+/// already been recorded and only its result changes (frontend ack, stale-pending sweep).
+fn swap_outcome(s: &mut AgentSchedule, outcome: &str) {
+    if let Some((day, _)) = s.last_outcome.as_deref().and_then(|o| o.split_once('|')) {
+        let day = day.to_string();
+        s.last_outcome = Some(format!("{day}|{outcome}"));
+    }
+}
+
+fn grace_of(s: &AgentSchedule) -> i64 {
+    s.grace_minutes.unwrap_or(DEFAULT_GRACE_MIN).max(1)
+}
+
+/// Is a `pending` entry too old to still be launched? The frontend drains pending entries only when
+/// Sessions is mounted, so one fired while the tab was never opened sat there indefinitely: it would
+/// eventually launch hours or days late (the launch-in-the-past this module refuses), and until then
+/// it wedged the schedule outright — `tick` skips pending entries, so nothing else ever fired. Past
+/// the grace window it becomes an honest `skipped_missed` instead. Pure.
+fn pending_expired(last_fired_at: Option<i64>, now: i64, grace_min: i64) -> bool {
+    // No fire stamp at all (hand-edited file, pre-upgrade record) → age is unknowable; treat it as
+    // stale so a schedule can never stay wedged forever.
+    let Some(fired_at) = last_fired_at else {
+        return true;
+    };
+    now.saturating_sub(fired_at) > grace_min.saturating_mul(60_000)
+}
+
 /// Keep the last `cap` BYTES of `s`, snapped forward to a char boundary. `s[s.len()-cap..]` alone
 /// panics when the byte offset lands inside a multi-byte UTF-8 char (Cyrillic/emoji precheck output).
 fn tail_capped(s: &str, cap: usize) -> String {
@@ -352,101 +382,206 @@ struct ScheduleDue {
     recipe: ScheduleRecipe,
 }
 
+/// A schedule that reached `Due::Fire` and still has to clear the (blocking) gates.
+struct Candidate {
+    id: String,
+    day: String,
+    label: String,
+    recipe: ScheduleRecipe,
+    quota_max_pct: Option<f64>,
+    precheck: Option<(String, u64)>,
+}
+
+/// A decision taken under the lock (or produced by the gates) and written back under it.
+struct Decision {
+    id: String,
+    /// Day key to record the outcome under; `None` = keep whichever day the entry already carries
+    /// (the stale-pending sweep, whose day belongs to the original fire).
+    day: Option<String>,
+    outcome: &'static str,
+    /// Set only for a fire — the payload the frontend launches.
+    due: Option<ScheduleDue>,
+    msg: Option<String>,
+}
+
 /// One tick: evaluate every enabled schedule, fire/skip, persist, notify. Public for tests via the
 /// pure pieces; the thread wrapper below owns the cadence.
+///
+/// Three phases, because SCHED_LOCK is also taken by the four schedule commands: decide under the
+/// lock (pure), run the gates unlocked (a precheck blocks up to a minute, the quota gate can make an
+/// HTTPS call), then re-take the lock on a FRESH load to persist. Holding the lock across the gates
+/// stalled every schedule command for as long as a precheck ran.
 #[cfg(windows)]
 fn tick(app: &AppHandle) {
     let Ok(path) = sched_path() else { return };
     let bus = crate::session_bus::bus_file_path();
     let (now_min, weekday, day_key) = local_now();
-    let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut f = load(&path);
-    let mut changed = false;
-    for s in f.schedules.iter_mut() {
-        if !s.enabled || s.pending {
-            continue;
-        }
-        let Some(time_min) = parse_hhmm(&s.time) else { continue };
-        let grace = s.grace_minutes.unwrap_or(DEFAULT_GRACE_MIN).max(1);
-        // Recover a late-yesterday occurrence whose grace window spilled past midnight; `okey` is the
-        // day key the outcome is recorded under (today's, or yesterday's for a recovered fire).
-        let yesterday = prev_day_key(weekday, &day_key).map(|(yw, yk)| {
-            let yf = fired_today(s, &yk);
-            (yw, yk, yf)
-        });
-        let (due, okey) = effective_due(
-            time_min, &s.days, grace, now_min, weekday, &day_key, fired_today(s, &day_key), yesterday,
-        );
-        match due {
-            Due::Wait => {}
-            Due::Missed => {
-                set_outcome(s, &okey, "skipped_missed");
-                changed = true;
-                if let Ok(b) = &bus {
-                    let _ = crate::session_bus::send(
-                        b,
-                        "scheduler",
-                        "@all",
-                        "schedule",
-                        &format!("{}: пропущен (окно {} мин прошло)", s.label_or_id(), grace),
-                    );
+    let now = now_ms();
+
+    // ── Phase 1: decide (locked, pure — no IO beyond the one load) ─────────────────────────────
+    let (mut decisions, candidates) = {
+        let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let f = load(&path);
+        let mut decisions: Vec<Decision> = Vec::new();
+        let mut candidates: Vec<Candidate> = Vec::new();
+        for s in f.schedules.iter() {
+            if s.pending {
+                if pending_expired(s.last_fired_at, now, grace_of(s)) {
+                    decisions.push(Decision {
+                        id: s.id.clone(),
+                        day: None,
+                        outcome: "skipped_missed",
+                        due: None,
+                        msg: Some(format!(
+                            "{}: пропущен (запуск не подхвачен вовремя)",
+                            s.label_or_id()
+                        )),
+                    });
                 }
+                continue;
             }
-            Due::Fire => {
-                // Gate 1: quota — a KNOWN-hot profile is skipped, unknown passes (see profile_h5).
-                if let (Some(maxp), "claude") = (s.quota_gate_max_pct, s.recipe.env.as_str()) {
-                    if let Some(h5) = profile_h5(&s.recipe.profile) {
-                        if h5 > maxp {
-                            set_outcome(s, &okey, "skipped_quota");
-                            changed = true;
-                            if let Ok(b) = &bus {
-                                let _ = crate::session_bus::send(
-                                    b,
-                                    "scheduler",
-                                    "@all",
-                                    "schedule",
-                                    &format!("{}: пропущен (квота {h5:.0}% > {maxp:.0}%)", s.label_or_id()),
-                                );
-                            }
-                            continue;
-                        }
-                    }
-                }
-                // Gate 2: precheck (blocking, bounded — we're on the tick thread, not the UI).
-                if let Some(cmd) = s.precheck.as_deref().filter(|c| !c.trim().is_empty()) {
-                    let t = s.precheck_timeout_sec.unwrap_or(PRECHECK_DEFAULT_TIMEOUT_SEC);
-                    if let Err(why) = run_precheck(cmd, &s.recipe.folder, t) {
-                        set_outcome(s, &okey, "skipped_precheck");
-                        changed = true;
-                        if let Ok(b) = &bus {
-                            let _ = crate::session_bus::send(
-                                b,
-                                "scheduler",
-                                "@all",
-                                "schedule",
-                                &format!("{}: пропущен precheck ({why})", s.label_or_id()),
-                            );
-                        }
+            if !s.enabled {
+                continue;
+            }
+            let Some(time_min) = parse_hhmm(&s.time) else { continue };
+            let grace = grace_of(s);
+            // Recover a late-yesterday occurrence whose grace window spilled past midnight; `okey` is
+            // the day key the outcome is recorded under (today's, or yesterday's for a recovered fire).
+            let yesterday = prev_day_key(weekday, &day_key).map(|(yw, yk)| {
+                let yf = fired_today(s, &yk);
+                (yw, yk, yf)
+            });
+            let (due, okey) = effective_due(
+                time_min, &s.days, grace, now_min, weekday, &day_key, fired_today(s, &day_key), yesterday,
+            );
+            match due {
+                Due::Wait => {}
+                Due::Missed => decisions.push(Decision {
+                    id: s.id.clone(),
+                    day: Some(okey),
+                    outcome: "skipped_missed",
+                    due: None,
+                    msg: Some(format!("{}: пропущен (окно {grace} мин прошло)", s.label_or_id())),
+                }),
+                Due::Fire => candidates.push(Candidate {
+                    id: s.id.clone(),
+                    day: okey,
+                    label: s.label_or_id().to_string(),
+                    recipe: s.recipe.clone(),
+                    // The quota gate only means anything for a claude profile.
+                    quota_max_pct: s.quota_gate_max_pct.filter(|_| s.recipe.env == "claude"),
+                    precheck: s
+                        .precheck
+                        .as_deref()
+                        .filter(|c| !c.trim().is_empty())
+                        .map(|c| {
+                            (
+                                c.to_string(),
+                                s.precheck_timeout_sec.unwrap_or(PRECHECK_DEFAULT_TIMEOUT_SEC),
+                            )
+                        }),
+                }),
+            }
+        }
+        (decisions, candidates)
+    };
+
+    // ── Phase 2: gates (UNLOCKED — blocking precheck + possible HTTPS quota lookup) ────────────
+    for c in candidates {
+        let skip = |outcome, msg| Decision {
+            id: c.id.clone(),
+            day: Some(c.day.clone()),
+            outcome,
+            due: None,
+            msg: Some(msg),
+        };
+        // Gate 1: quota — a KNOWN-hot profile is skipped, unknown passes (see profile_h5).
+        if let Some(maxp) = c.quota_max_pct {
+            if let Some(h5) = profile_h5(&c.recipe.profile).filter(|h5| *h5 > maxp) {
+                decisions.push(skip(
+                    "skipped_quota",
+                    format!("{}: пропущен (квота {h5:.0}% > {maxp:.0}%)", c.label),
+                ));
+                continue;
+            }
+        }
+        // Gate 2: precheck (blocking, bounded — we're on the tick thread, not the UI).
+        if let Some((cmd, timeout)) = &c.precheck {
+            if let Err(why) = run_precheck(cmd, &c.recipe.folder, *timeout) {
+                decisions.push(skip(
+                    "skipped_precheck",
+                    format!("{}: пропущен precheck ({why})", c.label),
+                ));
+                continue;
+            }
+        }
+        decisions.push(Decision {
+            id: c.id.clone(),
+            day: Some(c.day.clone()),
+            outcome: "fired",
+            due: Some(ScheduleDue {
+                id: c.id.clone(),
+                label: c.label.clone(),
+                recipe: c.recipe.clone(),
+            }),
+            msg: None,
+        });
+    }
+
+    // ── Phase 3: persist (locked again, on a FRESH load) ───────────────────────────────────────
+    if decisions.is_empty() {
+        return;
+    }
+    let mut launches: Vec<ScheduleDue> = Vec::new();
+    let mut posts: Vec<String> = Vec::new();
+    {
+        let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Re-read: a schedule command may have rewritten the file while the gates ran unlocked.
+        // Only this entry's backend-owned bookkeeping is touched, so a concurrent edit survives.
+        let mut f = load(&path);
+        let mut changed = false;
+        for d in decisions {
+            let Some(s) = f.schedules.iter_mut().find(|s| s.id == d.id) else { continue };
+            match &d.day {
+                // Stale-pending sweep: only meaningful while it is still pending.
+                None => {
+                    if !s.pending {
                         continue;
                     }
+                    s.pending = false;
+                    swap_outcome(s, d.outcome);
                 }
-                // Fire: mark pending, hand the launch to the frontend.
-                s.pending = true;
-                set_outcome(s, &okey, "fired");
-                changed = true;
-                let _ = app.emit(
-                    "agent-schedule-due",
-                    ScheduleDue {
-                        id: s.id.clone(),
-                        label: s.label_or_id().to_string(),
-                        recipe: s.recipe.clone(),
-                    },
-                );
+                // The user may have disabled or re-armed the schedule while the gates ran, or the
+                // frontend may have acted on it — never overwrite a state that moved on without us.
+                Some(day) => {
+                    if !s.enabled || s.pending || fired_today(s, day) {
+                        continue;
+                    }
+                    s.pending = d.due.is_some();
+                    set_outcome(s, day, d.outcome);
+                }
+            }
+            changed = true;
+            if let Some(due) = d.due {
+                launches.push(due);
+            }
+            if let Some(msg) = d.msg {
+                posts.push(msg);
             }
         }
+        if changed {
+            let _ = store(&path, &f);
+        }
     }
-    if changed {
-        let _ = store(&path, &f);
+    // Announce only what was actually persisted — and only after the store, so the frontend can't
+    // ack a fire that isn't on disk yet.
+    for due in launches {
+        let _ = app.emit("agent-schedule-due", due);
+    }
+    if let Ok(b) = &bus {
+        for msg in posts {
+            let _ = crate::session_bus::send(b, "scheduler", "@all", "schedule", &msg);
+        }
     }
 }
 
@@ -471,45 +606,52 @@ pub fn start(app: AppHandle) {
 
 // ── Commands ───────────────────────────────────────────────────────────────────────────────────
 
-#[tauri::command]
+// All four take SCHED_LOCK and touch the filesystem — `async` keeps that off the event-loop thread,
+// so even a tick that is mid-store can't stall the UI.
+
+#[tauri::command(async)]
 pub fn read_agent_schedules() -> Result<Vec<AgentSchedule>, String> {
     let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     Ok(load(&sched_path()?).schedules)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_agent_schedules(schedules: Vec<AgentSchedule>) -> Result<(), String> {
     let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     store(&sched_path()?, &ScheduleFile { schedules })
 }
 
 /// The frontend launched (or failed to launch) a pending schedule — record the outcome.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ack_agent_schedule(id: String, outcome: String) -> Result<(), String> {
     let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = sched_path()?;
     let mut f = load(&path);
     if let Some(s) = f.schedules.iter_mut().find(|s| s.id == id) {
         s.pending = false;
-        // Keep the day-key from the fire, swap only the outcome word.
-        if let Some((day, _)) = s.last_outcome.as_deref().and_then(|o| o.split_once('|')) {
-            let day = day.to_string();
-            s.last_outcome = Some(format!("{day}|{outcome}"));
-        }
+        swap_outcome(s, &outcome);
         store(&path, &f)?;
     }
     Ok(())
 }
 
 /// Pending entries (fired while Sessions wasn't mounted) — drained by the frontend on mount.
-#[tauri::command]
+/// Entries whose grace window has already passed are withheld: Sessions mounts whenever the user
+/// first opens the tab, which can be days after the fire, and launching then is exactly the
+/// launch-in-the-past this module refuses. The next tick records them as `skipped_missed`.
+#[tauri::command(async)]
 pub fn pending_agent_schedules() -> Result<Vec<AgentSchedule>, String> {
+    let now = now_ms();
+    Ok(load_pending(&sched_path()?, now))
+}
+
+fn load_pending(path: &str, now: i64) -> Vec<AgentSchedule> {
     let _g = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    Ok(load(&sched_path()?)
+    load(path)
         .schedules
         .into_iter()
-        .filter(|s| s.pending)
-        .collect())
+        .filter(|s| s.pending && !pending_expired(s.last_fired_at, now, grace_of(s)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -598,6 +740,82 @@ mod tests {
         set_outcome(&mut s, "2026-07-18", "fired");
         assert!(fired_today(&s, "2026-07-18"));
         assert!(!fired_today(&s, "2026-07-19")); // next day re-arms
+    }
+
+    #[test]
+    fn pending_expires_after_its_grace_window() {
+        let fired = 1_000_000_000_000i64;
+        let grace = 30; // minutes
+        assert!(!pending_expired(Some(fired), fired, grace));
+        assert!(!pending_expired(Some(fired), fired + 30 * 60_000, grace));
+        assert!(pending_expired(Some(fired), fired + 30 * 60_000 + 1, grace));
+        // Hours later — the "launch-in-the-past" case the drain must refuse.
+        assert!(pending_expired(Some(fired), fired + 6 * 3_600_000, grace));
+        // No fire stamp at all → unknowable age, treated as stale so nothing wedges forever.
+        assert!(pending_expired(None, fired, grace));
+        // Clock skew (stamp in the future) must not read as stale.
+        assert!(!pending_expired(Some(fired + 60_000), fired, grace));
+    }
+
+    #[test]
+    fn stale_pending_is_withheld_from_the_drain() {
+        // The frontend drains pending entries on Sessions mount, which may be days after the fire.
+        // A pending entry past its grace window must NOT be handed over for launch.
+        let dir = std::env::temp_dir().join("castellyn-sched-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("drain.json").to_string_lossy().to_string();
+        let fired = 1_000_000_000_000i64;
+        let mut s = AgentSchedule {
+            id: "x".into(),
+            enabled: true,
+            label: String::new(),
+            recipe: ScheduleRecipe::default(),
+            time: "03:00".into(),
+            days: vec![],
+            quota_gate_max_pct: None,
+            precheck: None,
+            precheck_timeout_sec: None,
+            grace_minutes: Some(30),
+            last_fired_at: Some(fired),
+            last_outcome: Some("2026-07-19|fired".into()),
+            pending: true,
+        };
+        store(&path, &ScheduleFile { schedules: vec![s.clone()] }).unwrap();
+        // Inside the window → drained normally.
+        assert_eq!(load_pending(&path, fired + 60_000).len(), 1);
+        // Past it → withheld.
+        assert!(load_pending(&path, fired + 6 * 3_600_000).is_empty());
+        // A non-pending entry is never drained regardless of age.
+        s.pending = false;
+        store(&path, &ScheduleFile { schedules: vec![s] }).unwrap();
+        assert!(load_pending(&path, fired + 60_000).is_empty());
+    }
+
+    #[test]
+    fn swap_outcome_keeps_the_day_key() {
+        let mut s = AgentSchedule {
+            id: "x".into(),
+            enabled: true,
+            label: String::new(),
+            recipe: ScheduleRecipe::default(),
+            time: "03:00".into(),
+            days: vec![],
+            quota_gate_max_pct: None,
+            precheck: None,
+            precheck_timeout_sec: None,
+            grace_minutes: None,
+            last_fired_at: None,
+            last_outcome: None,
+            pending: false,
+        };
+        // Nothing recorded yet → nothing to swap (no phantom day key invented).
+        swap_outcome(&mut s, "launched");
+        assert_eq!(s.last_outcome, None);
+        set_outcome(&mut s, "2026-07-19", "fired");
+        swap_outcome(&mut s, "skipped_missed");
+        assert_eq!(s.last_outcome.as_deref(), Some("2026-07-19|skipped_missed"));
+        // The day still counts as acted-on, so the schedule doesn't re-fire the same day.
+        assert!(fired_today(&s, "2026-07-19"));
     }
 
     #[test]
