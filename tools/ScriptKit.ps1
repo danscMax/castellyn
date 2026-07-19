@@ -276,13 +276,18 @@ function Write-StatusJson {
         # Atomic write: full-content temp then a rename, so a crash/power-loss mid-write can't leave a
         # TORN <id>.last.json (the Rust reader would then show `corrupt:` with no .bak to recover from).
         # File.Move(...,$true) is MoveFileEx REPLACE_EXISTING under pwsh 7 → an atomic same-volume swap.
-        $tmp = "$path.tmp"
+        # UNIQUE temp per writer (PID + random): a fixed "<comp>.last.json.tmp" let a scheduled check
+        # and a manual run for the same component collide — one moved the temp while the other was still
+        # writing it, so a writer threw or published the other run's envelope (Codex LOW-01). Each writer
+        # now owns its temp; Move (REPLACE_EXISTING) stays a clean last-writer-wins on the destination.
+        $tmp = "$path.$PID.$([System.IO.Path]::GetRandomFileName()).tmp"
         [System.IO.File]::WriteAllText($tmp, ($payload | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
         [System.IO.File]::Move($tmp, $path, $true)
         return $path
     } catch {
         # Don't fail the caller, but don't fail silently either — a swallowed write means the
         # dashboard would keep showing a stale status.
+        if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
         try { Write-Log ("Write-StatusJson failed: {0}" -f $_.Exception.Message) -Level 'WARN' -Color 'Yellow' } catch { }
         return $null
     }

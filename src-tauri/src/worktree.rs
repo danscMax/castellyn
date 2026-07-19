@@ -123,8 +123,6 @@ fn now_ms() -> u128 {
 
 /// `git worktree add --no-track -b <branch> <path>` with a 180s bound. `--no-track` so the new
 /// branch has no upstream and `git status` doesn't read it as "behind N" before the first push.
-/// ponytail: stderr is piped and read only after exit (worktree-add output is tiny); a >64KB stderr
-/// could deadlock the poll — upgrade to a reader thread if that ever happens.
 fn git_add_timeout(repo: &Path, branch: &str, path: &str) -> Result<(), String> {
     use std::io::Read;
     use std::process::Stdio;
@@ -136,16 +134,24 @@ fn git_add_timeout(repo: &Path, branch: &str, path: &str) -> Result<(), String> 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("git worktree add: {e}"))?;
+    // Drain stderr on its own thread: reading it only after exit deadlocks if a checkout hook/helper
+    // emits more than the OS pipe buffer (~64KB) — git blocks writing, never exits, and dies only at
+    // the timeout. The thread reads to EOF; the pipe closes when git (or its tree-kill) ends.
+    let mut err_pipe = child.stderr.take();
+    let err_t = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_string(&mut s);
+        }
+        s
+    });
     let deadline = Instant::now() + ADD_TIMEOUT;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let s = err_t.join().unwrap_or_default();
                 if status.success() {
                     return Ok(());
-                }
-                let mut s = String::new();
-                if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_string(&mut s);
                 }
                 return Err(if s.trim().is_empty() {
                     "git worktree add failed".to_string()
@@ -155,7 +161,14 @@ fn git_add_timeout(repo: &Path, branch: &str, path: &str) -> Result<(), String> 
             }
             Ok(None) => {
                 if Instant::now() > deadline {
-                    let _ = child.kill();
+                    // Tree-kill (checkout may have spawned children), then reap so the child + reader
+                    // thread don't leak — child.kill() alone left descendants and an unreaped root.
+                    let _ = Command::new("taskkill")
+                        .args(["/T", "/F", "/PID", &child.id().to_string()])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                    let _ = child.wait();
+                    let _ = err_t.join();
                     return Err("git worktree add timed out".to_string());
                 }
                 std::thread::sleep(Duration::from_millis(100));

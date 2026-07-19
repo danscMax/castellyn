@@ -141,6 +141,75 @@ pub fn due_state(
     }
 }
 
+/// Days in a civil month (leap-aware). Pure.
+fn days_in_month(y: i64, m: u8) -> u8 {
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30,
+    }
+}
+
+/// Yesterday's day key ("YYYY-MM-DD") + ISO weekday, derived from today's. None if `today_key` is
+/// malformed. Pure — handles month/year/leap boundaries so the midnight recovery below is testable.
+fn prev_day_key(today_weekday: u8, today_key: &str) -> Option<(u8, String)> {
+    let mut it = today_key.split('-');
+    let y: i64 = it.next()?.trim().parse().ok()?;
+    let m: u8 = it.next()?.trim().parse().ok()?;
+    let d: u8 = it.next()?.trim().parse().ok()?;
+    if !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m) {
+        return None;
+    }
+    let (py, pm, pd) = if d > 1 {
+        (y, m, d - 1)
+    } else if m == 1 {
+        (y - 1, 12, 31)
+    } else {
+        (y, m - 1, days_in_month(y, m - 1))
+    };
+    let yweekday = if today_weekday <= 1 { 7 } else { today_weekday - 1 };
+    Some((yweekday, format!("{py:04}-{pm:02}-{pd:02}")))
+}
+
+/// Firing decision that also recovers a late-yesterday occurrence whose grace window spilled past
+/// midnight (e.g. 23:50 + 30m grace, the app asleep until 00:05). `due_state` alone looks only at
+/// today, so without this such an occurrence is neither fired nor recorded — silently lost. Returns
+/// the Due plus the day key the outcome must be recorded under (today's, or yesterday's when a
+/// recovered occurrence fires). Pure, unit-tested.
+#[allow(clippy::too_many_arguments)]
+fn effective_due(
+    time_min: i64,
+    days: &[u8],
+    grace_min: i64,
+    now_min: i64,
+    today_weekday: u8,
+    today_key: &str,
+    today_fired: bool,
+    yesterday: Option<(u8, String, bool)>, // (weekday, key, fired); None when the key can't be derived
+) -> (Due, String) {
+    let today = due_state(time_min, days, today_weekday, now_min, grace_min, today_fired);
+    // Only look back when today's own occurrence hasn't begun (Wait) and the window could span
+    // midnight — never override a real Fire/Missed for today.
+    if today == Due::Wait && time_min + grace_min >= 1440 {
+        if let Some((yw, yk, yf)) = yesterday {
+            // Yesterday on a continuous timeline: "now" is now_min+1440 minutes after yesterday's
+            // midnight. Recover only a still-in-window FIRE; an already-past yesterday stays ignored
+            // (no launch-in-the-past), exactly as before.
+            if due_state(time_min, days, yw, now_min + 1440, grace_min, yf) == Due::Fire {
+                return (Due::Fire, yk);
+            }
+        }
+    }
+    (today, today_key.to_string())
+}
+
 /// Local wall-clock pieces via chrono-free arithmetic is error-prone; lean on `time` from std:
 /// we only need minutes-since-midnight + ISO weekday + a day key, so shell out to PowerShell is
 /// overkill — use libc-free localtime via the `chrono`-less approach: std has no local tz, so we
@@ -299,10 +368,19 @@ fn tick(app: &AppHandle) {
         }
         let Some(time_min) = parse_hhmm(&s.time) else { continue };
         let grace = s.grace_minutes.unwrap_or(DEFAULT_GRACE_MIN).max(1);
-        match due_state(time_min, &s.days, weekday, now_min, grace, fired_today(s, &day_key)) {
+        // Recover a late-yesterday occurrence whose grace window spilled past midnight; `okey` is the
+        // day key the outcome is recorded under (today's, or yesterday's for a recovered fire).
+        let yesterday = prev_day_key(weekday, &day_key).map(|(yw, yk)| {
+            let yf = fired_today(s, &yk);
+            (yw, yk, yf)
+        });
+        let (due, okey) = effective_due(
+            time_min, &s.days, grace, now_min, weekday, &day_key, fired_today(s, &day_key), yesterday,
+        );
+        match due {
             Due::Wait => {}
             Due::Missed => {
-                set_outcome(s, &day_key, "skipped_missed");
+                set_outcome(s, &okey, "skipped_missed");
                 changed = true;
                 if let Ok(b) = &bus {
                     let _ = crate::session_bus::send(
@@ -319,7 +397,7 @@ fn tick(app: &AppHandle) {
                 if let (Some(maxp), "claude") = (s.quota_gate_max_pct, s.recipe.env.as_str()) {
                     if let Some(h5) = profile_h5(&s.recipe.profile) {
                         if h5 > maxp {
-                            set_outcome(s, &day_key, "skipped_quota");
+                            set_outcome(s, &okey, "skipped_quota");
                             changed = true;
                             if let Ok(b) = &bus {
                                 let _ = crate::session_bus::send(
@@ -338,7 +416,7 @@ fn tick(app: &AppHandle) {
                 if let Some(cmd) = s.precheck.as_deref().filter(|c| !c.trim().is_empty()) {
                     let t = s.precheck_timeout_sec.unwrap_or(PRECHECK_DEFAULT_TIMEOUT_SEC);
                     if let Err(why) = run_precheck(cmd, &s.recipe.folder, t) {
-                        set_outcome(s, &day_key, "skipped_precheck");
+                        set_outcome(s, &okey, "skipped_precheck");
                         changed = true;
                         if let Ok(b) = &bus {
                             let _ = crate::session_bus::send(
@@ -354,7 +432,7 @@ fn tick(app: &AppHandle) {
                 }
                 // Fire: mark pending, hand the launch to the frontend.
                 s.pending = true;
-                set_outcome(s, &day_key, "fired");
+                set_outcome(s, &okey, "fired");
                 changed = true;
                 let _ = app.emit(
                     "agent-schedule-due",
@@ -460,6 +538,43 @@ mod tests {
         // Day filter: Monday-only schedule on Sunday → wait even inside the window.
         assert_eq!(due_state(210, &[1], 7, 215, 30, false), Due::Wait);
         assert_eq!(due_state(210, &[1, 7], 7, 215, 30, false), Due::Fire);
+    }
+
+    #[test]
+    fn prev_day_key_handles_boundaries() {
+        assert_eq!(prev_day_key(3, "2026-07-19"), Some((2, "2026-07-18".into()))); // Wed→Tue
+        assert_eq!(prev_day_key(1, "2026-07-01"), Some((7, "2026-06-30".into()))); // Mon→Sun, month edge
+        assert_eq!(prev_day_key(4, "2026-01-01"), Some((3, "2025-12-31".into()))); // year edge
+        assert_eq!(prev_day_key(1, "2024-03-01"), Some((7, "2024-02-29".into()))); // leap year
+        assert_eq!(prev_day_key(1, "2026-03-01"), Some((7, "2026-02-28".into()))); // non-leap
+        assert_eq!(prev_day_key(3, "garbage"), None);
+        assert_eq!(prev_day_key(3, "2026-13-01"), None); // invalid month
+    }
+
+    #[test]
+    fn effective_due_recovers_yesterday_spilled_grace() {
+        let yest = |fired| Some((2u8, "2026-07-18".to_string(), fired));
+        // 23:50 (1430) + 30m grace, app asleep until 00:05 (now_min=5): yesterday's window
+        // [1430,1460] covers 1445 on the continuous timeline → recover FIRE under yesterday's key.
+        assert_eq!(
+            effective_due(1430, &[], 30, 5, 3, "2026-07-19", false, yest(false)),
+            (Due::Fire, "2026-07-18".to_string())
+        );
+        // Woke at 00:25 (1465 > 1460): past yesterday's window → no launch-in-the-past, today waits.
+        assert_eq!(
+            effective_due(1430, &[], 30, 25, 3, "2026-07-19", false, yest(false)),
+            (Due::Wait, "2026-07-19".to_string())
+        );
+        // Yesterday already acted → no re-fire.
+        assert_eq!(
+            effective_due(1430, &[], 30, 5, 3, "2026-07-19", false, yest(true)),
+            (Due::Wait, "2026-07-19".to_string())
+        );
+        // A daytime schedule never enters the midnight branch — today's own fire stands.
+        assert_eq!(
+            effective_due(540, &[], 30, 545, 3, "2026-07-19", false, yest(false)),
+            (Due::Fire, "2026-07-19".to_string())
+        );
     }
 
     #[test]

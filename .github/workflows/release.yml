@@ -38,6 +38,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-06-30
         with:
           toolchain: "1.93.0"   # match rust-toolchain.toml (1.94 breaks the `time` crate)
+          components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
@@ -55,6 +56,17 @@ jobs:
           if ($pkg -ne $tauri -or $pkg -ne $cargo -or $pkg -ne $tag) {
             throw "version mismatch — tag=$tag package.json=$pkg tauri.conf=$tauri Cargo=$cargo"
           }
+      # Run the SAME gates as CI BEFORE the signing key is ever in scope — a release published from a
+      # tag whose CI never ran (or failed) must not ship signed installers carrying a type/i18n/test/
+      # clippy regression, which the signing key would make look fully trusted (Codex MEDIUM-10).
+      - run: npm run check          # svelte-check — type + i18n shape gate (0/0)
+      - run: npm run check:i18n     # ru/en/zh leaf-key parity
+      - run: npm test               # vitest
+      # cargo gates need the frontend bundle (generate_context! reads ../build); the signed build below
+      # rebuilds it, but the gates must pass first.
+      - run: npm run build
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
       # tauri build runs `npm run build` (beforeBuildCommand) then bundles every
       # target — standalone exe + NSIS setup + WiX MSI (bundle.targets = "all").
       # The two TAURI_SIGNING_* env vars make the bundler sign the updater artifacts

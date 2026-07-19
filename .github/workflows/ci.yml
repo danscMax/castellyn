@@ -10,13 +10,18 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: these jobs only read the repo. The default token would otherwise carry write
+# scopes a compromised action could abuse (Codex LOW-03).
+permissions:
+  contents: read
+
 jobs:
   # Fast feedback: the frontend gates that don't need a Rust toolchain.
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
@@ -30,8 +35,8 @@ jobs:
   rust:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
@@ -41,7 +46,7 @@ jobs:
         with:
           toolchain: "1.93.0"   # match rust-toolchain.toml (1.94 breaks the `time` crate)
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
       - run: npm ci
@@ -55,6 +60,8 @@ jobs:
       - name: PSScriptAnalyzer (tools)
         shell: pwsh
         run: |
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+          # Pin the module version so a compromised/unexpected PSGallery release can't run on the runner
+          # under the workflow token (Codex LOW-03). Bump deliberately, not floating.
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Force -Scope CurrentUser -SkipPublisherCheck
           $issues = Invoke-ScriptAnalyzer -Path tools -Recurse -Severity Warning
           if ($issues) { $issues | Format-Table -AutoSize; throw "PSScriptAnalyzer: $($issues.Count) issue(s)" }

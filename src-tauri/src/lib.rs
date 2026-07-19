@@ -1835,8 +1835,13 @@ fn tar_list(path: &str) -> Result<usize, String> {
 }
 
 fn tar_extract(path: &str, dest: &str) -> Result<(), String> {
+    // `-k` (keep-old-files): never overwrite an existing file in the user-picked dest — these
+    // extract flows are documented NON-destructive, so a zip entry that collides with existing
+    // content must fail loudly, not silently clobber it. Windows bsdtar (libarchive) already strips
+    // absolute paths and refuses `..` traversal by default (only `-P` would re-enable them), so the
+    // remaining exposure was exactly this overwrite (Codex MEDIUM-07).
     let out = std::process::Command::new(system_tar())
-        .args(["-x", "-f", path, "-C", dest])
+        .args(["-x", "-k", "-f", path, "-C", dest])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| trv("err.tar_failed", cur_lang(), &[("e", &e)]))?;
@@ -2317,19 +2322,54 @@ fn valid_profile_name(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// A legitimate ssh target is `[user@]host` (v4/v6 literal or name) or a `~/.ssh/config` Host alias —
-/// a single token. It must NOT begin with `-`, contain whitespace, or carry option/shell metachars:
-/// `--%` stops PowerShell re-parsing the ssh line but NOT ssh.exe's own option parsing, so a "target"
-/// like `-oProxyCommand=calc.exe host` (which can arrive from a persisted/synced session recipe or an
-/// imported ~/.ssh/config entry, not just live typing) would run an arbitrary local program before
-/// connecting. Keep the charset tight — space + a leading dash are what the attack needs.
-fn valid_ssh_target(s: &str) -> bool {
-    let s = s.trim();
+/// True for a single bare `[user@]host` token (v4/v6 literal, name, or `~/.ssh/config` alias): no
+/// leading `-`, no whitespace, tight charset.
+fn valid_ssh_host_token(s: &str) -> bool {
     !s.is_empty()
-        && s.len() <= 255
         && !s.starts_with('-')
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | ':' | '[' | ']'))
+}
+
+/// A launch ssh target is what the UI's `sshTarget()` builds: `[user@]host` optionally followed by
+/// ` -p <port>` and then ` -i "<keypath>"`, in THAT order and nothing else. `--%` stops PowerShell
+/// re-parsing the ssh line but NOT ssh.exe's own option parsing, so a target from a persisted/synced
+/// recipe or an imported ~/.ssh/config could otherwise smuggle `-oProxyCommand=calc.exe` and run a
+/// local program before connecting. We accept ONLY `-p`/`-i` in their known positions with validated
+/// values (port = digits in range; key = a double-quoted path free of quotes/newlines) and reject
+/// everything else — the earlier single-token rule wrongly rejected every custom-port/key host the UI
+/// safely produced (Codex MEDIUM-03), while a looser "no leading dash" rule would let the injection in.
+fn valid_ssh_target(s: &str) -> bool {
+    let mut rest = s.trim();
+    if rest.is_empty() || rest.len() > 255 {
+        return false;
+    }
+    // Peel an optional trailing `-i "<path>"` first (the quoted path may itself contain spaces). The
+    // real flag is the FIRST ` -i ` — host/port tokens never contain a space, so it can't appear before.
+    if let Some(idx) = rest.find(" -i ") {
+        let key = rest[idx + 4..].trim();
+        let inner_ok = key.len() >= 2
+            && key.starts_with('"')
+            && key.ends_with('"')
+            && !key[1..key.len() - 1].contains(['"', '\r', '\n']);
+        if !inner_ok {
+            return false;
+        }
+        rest = rest[..idx].trim_end();
+    }
+    // Then an optional trailing `-p <port>`.
+    if let Some(idx) = rest.find(" -p ") {
+        let port = rest[idx + 4..].trim();
+        let port_ok = !port.is_empty()
+            && port.chars().all(|c| c.is_ascii_digit())
+            && port.parse::<u32>().map(|p| (1..=65535).contains(&p)).unwrap_or(false);
+        if !port_ok {
+            return false;
+        }
+        rest = rest[..idx].trim_end();
+    }
+    // Whatever remains must be a single bare `[user@]host` token.
+    valid_ssh_host_token(rest.trim())
 }
 
 /// Profile lifecycle: add / remove / rename / recolor / redescribe / set-links via Manage-Profiles.ps1.
@@ -13353,7 +13393,8 @@ mod audit_fixes_tests {
 
     #[test]
     fn valid_ssh_target_blocks_option_injection() {
-        // Rejected: leading-dash option injection, embedded spaces (a second `-o…` token), empty.
+        // Rejected: leading-dash option injection, embedded spaces (a second `-o…` token), empty,
+        // and injection attempts THROUGH the -p/-i extension (bad port, unquoted/multi key, trailing opt).
         for bad in [
             "-oProxyCommand=calc.exe host",
             "-oProxyCommand=calc.exe",
@@ -13361,11 +13402,30 @@ mod audit_fixes_tests {
             "user@host; calc",
             "",
             "   ",
+            "host -p 22 -oProxyCommand=calc.exe",
+            "host -p notaport",
+            "host -p 0",
+            "host -p 70000",
+            "host -i unquoted",
+            "host -i \"a\" -oEvil",
+            "host -i \"a\" -i \"b\"",
+            "host -i \"key\"; calc",
         ] {
             assert!(!valid_ssh_target(bad), "should reject {bad:?}");
         }
-        // Allowed: ordinary targets, aliases, IPv4/IPv6 literals, user@host.
-        for ok in ["host", "user@host.example.com", "my-server_1", "192.168.1.10", "user@[::1]", "10.0.0.5"] {
+        // Allowed: ordinary targets, aliases, IPv4/IPv6 literals, user@host — AND the UI's custom
+        // port / key forms (Codex MEDIUM-03: these were wrongly rejected before).
+        for ok in [
+            "host",
+            "user@host.example.com",
+            "my-server_1",
+            "192.168.1.10",
+            "user@[::1]",
+            "10.0.0.5",
+            "user@host -p 2222",
+            "host -i \"C:\\Users\\me\\.ssh\\id_ed25519\"",
+            "user@host -p 22 -i \"C:\\Users\\me\\my keys\\id\"",
+        ] {
             assert!(valid_ssh_target(ok), "should allow {ok:?}");
         }
     }
@@ -13844,14 +13904,19 @@ fn import_config(src: String) -> Result<HubConfig, String> {
     let v: serde_json::Value = parse_json_bom(&text)
         .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))?;
     if v.get("schemaVersion").is_some() && v.get("config").is_some() {
-        // New bundle: restore the fork registry to its durable path, return the config for the UI.
+        // New bundle. Deserialize (validate) the config BEFORE touching disk — a malformed config must
+        // leave the fork registry byte-for-byte unchanged. Previously forks.json was overwritten first,
+        // so a bundle with a valid `forks` but an invalid `config` reported failure yet had already
+        // mutated the live registry (Codex MEDIUM-04).
+        let config = serde_json::from_value::<HubConfig>(v.get("config").cloned().unwrap_or_default())
+            .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))?;
+        // Config is valid → now restore the fork registry to its durable path.
         if let Some(forks) = v.get("forks").filter(|f| !f.is_null()) {
             if let (Some(fp), Ok(fj)) = (fork_config_path(), serde_json::to_string_pretty(forks)) {
                 let _ = write_json_atomic(&fp, &fj);
             }
         }
-        serde_json::from_value::<HubConfig>(v.get("config").cloned().unwrap_or_default())
-            .map_err(|e| trv("err.bad_config_file", cur_lang(), &[("e", &e.to_string())]))
+        Ok(config)
     } else {
         // Legacy flat HubConfig (pre-R8 exports).
         serde_json::from_value::<HubConfig>(v)
@@ -14519,11 +14584,20 @@ fn cancel_all(
     // 3. A bulk plugin sweep OR a bulk profile Repair-All stops at the next item boundary.
     BULK_PLUGINS_CANCEL.store(true, Ordering::SeqCst);
     PROFILES_BULK_CANCEL.store(true, Ordering::SeqCst);
-    // 4. Every live PTY session (drain so their reader threads end on EOF).
+    // 4. Every live PTY session (drain so their reader threads end on EOF). Tree-kill each so agent
+    //    descendants (MCP/server children) die too — the app keeps running, so the kill-on-close Job
+    //    Object won't reap them here (Codex MEDIUM-08).
     {
         let mut map = sessions.0.lock().unwrap_or_else(|e| e.into_inner());
         for (_, mut s) in map.drain() {
-            let _ = s.killer.kill();
+            match s.pid {
+                Some(pid) => {
+                    let _ = kill_tree(pid);
+                }
+                None => {
+                    let _ = s.killer.kill();
+                }
+            }
         }
     }
     update_tray_tooltip(&app);
@@ -14851,6 +14925,10 @@ struct PtySession {
     // Killer handle only: the Child itself moves into the reader thread so it can wait() for the
     // real exit code. session_kill signals termination through this.
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    // Root child pid (the pwsh launcher). `killer.kill()` ends only that root; session_kill also
+    // tree-kills this so a descendant the agent spawned (an MCP/server child) doesn't outlive the pane
+    // until app exit (Codex MEDIUM-08). None if the PTY backend didn't report a pid.
+    pid: Option<u32>,
     // Every attached window's output channel as (token, chan); reader broadcasts to all, dropping
     // dead ones. The token lets a specific window detach its channel (session_detach) without a kill.
     chans: std::sync::Arc<Mutex<Vec<(u64, OutChan)>>>,
@@ -14975,6 +15053,12 @@ fn session_spawn(
         if !valid_ssh_target(t) {
             return Err(trv("err.invalid_ssh_target", cur_lang(), &[("target", &t)]));
         }
+    }
+    // Legacy `tool == "ssh"`: the target rides `args` (`extra`) and is dropped into `ssh --% {extra}`
+    // the same way, so gate it identically — a synced/imported legacy recipe must not smuggle an
+    // option either (the structured path above was gated but this one wasn't; Codex HIGH-04).
+    if tool == "ssh" && !extra.is_empty() && !valid_ssh_target(extra) {
+        return Err(trv("err.invalid_ssh_target", cur_lang(), &[("target", &extra)]));
     }
     let remote = remote_dir
         .as_deref()
@@ -15102,7 +15186,8 @@ fn session_spawn(
     drop(pair.slave); // close the slave in the parent so EOF arrives when the child exits
                       // Tie the child's process tree to the kill-on-close Job Object (#4): a crash/forced exit then
                       // can't leave orphaned node/ssh grandchildren running. Best-effort — never fail a spawn over it.
-    if let Some(pid) = child.process_id() {
+    let child_pid = child.process_id();
+    if let Some(pid) = child_pid {
         assign_to_kill_job(pid);
     }
     // Keep a killer handle for session_kill; the Child moves into the reader thread so it can wait()
@@ -15157,6 +15242,7 @@ fn session_spawn(
                 master: pair.master,
                 writer,
                 killer,
+                pid: child_pid,
                 chans: chans.clone(),
                 ring: ring.clone(),
                 next_token: std::sync::atomic::AtomicU64::new(1),
@@ -15305,7 +15391,18 @@ fn session_kill(app: AppHandle, state: State<'_, SessionState>, id: String) -> R
         .unwrap_or_else(|e| e.into_inner())
         .remove(&id)
     {
-        let _ = s.killer.kill();
+        // Tree-kill (taskkill /T) so a descendant the agent spawned — an MCP/server child that outlives
+        // the shell — dies with the pane instead of lingering (holding ports/files) until app exit
+        // (Codex MEDIUM-08). `killer.kill()` alone ends only the pwsh root. Fall back to it when the PTY
+        // backend reported no pid.
+        match s.pid {
+            Some(pid) => {
+                let _ = kill_tree(pid);
+            }
+            None => {
+                let _ = s.killer.kill();
+            }
+        }
     }
     update_tray_tooltip(&app);
     Ok(())

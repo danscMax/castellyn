@@ -2467,7 +2467,16 @@
       await listen<{ component: string; code: number }>('run-done', async (e) => {
         // Ф2.5 matrix batch: resolve the awaited step and skip the normal per-component lifecycle
         // (the batch runner holds `running` across steps and reloads/toasts once at the end).
-        if (pendingRun) {
+        // BUT the awaited step always runs in the GLOBAL run-lock domain (serialized, one at a time),
+        // whereas the LLM-stack (ENGINE), per-repo fork runs (FORKS), and a bulk-plugin sweep live in
+        // their OWN domains and emit `run-done` concurrently. Resolving pendingRun on one of those would
+        // hand the awaited step a foreign exit code and desync the batch (Codex HIGH-05) — so ignore
+        // them here and let the awaited run's own `run-done` resolve it (the watchdog covers a lost one).
+        const concurrentDomain =
+          e.payload.component === STREAM_IDS.ENGINE ||
+          e.payload.component === STREAM_IDS.FORKS ||
+          (e.payload.component === STREAM_IDS.PLUGIN_MGR && bulkActive);
+        if (pendingRun && !concurrentDomain) {
           const r = pendingRun;
           pendingRun = null;
           pendingRunFail = null;
@@ -2585,7 +2594,11 @@
               // trust it over the process code (a script can exit 0 with status:error inside).
               let env: { status?: string; timestamp?: string; summary?: string; counts?: { failed?: number } } | null = null;
               try {
-                env = await readStatus(`${id}.last.json`);
+                // Use the component's RESOLVED envelope path (manifest lastJsonRel → absolute), not a
+                // bare `${id}.last.json` read relative to the app CWD — the bare form never resolved,
+                // so the read silently returned null and this exit-0-but-status:error guard did nothing.
+                const statusFile = components.find((cc) => cc.id === id)?.lastJson;
+                env = statusFile ? await readStatus(statusFile) : null;
               } catch {
                 /* no envelope for this op — judge by exit code */
               }
