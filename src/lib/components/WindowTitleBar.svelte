@@ -108,7 +108,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="titlebar" class:inactive={!winFocused} data-tauri-drag-region ondblclick={toggleMaximize}>
+<div class="titlebar" class:inactive={!winFocused} data-tauri-drag-region ondblclick={onTitlebarDblClick}>
   <!-- Browser-style tab history — mirrors mouse buttons 3/4 and Alt+←/→ (handlers in +page). -->
   <div class="nav">
     <button class="tb-btn tb-nav" onclick={() => navGo('back')} disabled={navHistory.back.length === 0}

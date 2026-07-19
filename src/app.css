@@ -19,8 +19,13 @@
    The values are CSS-var references, so the .light / .dense overrides re-theme them live.
    Colors: with no opacity modifier a `--color-sw-*` resolves to the raw var() (preserving any
    baked-in alpha, e.g. rgba card bg); with a `/NN` modifier v4 wraps it in color-mix()
-   automatically — same capability the old withAlpha() helper provided. */
-@theme {
+   automatically — same capability the old withAlpha() helper provided.
+   `inline` is required, not cosmetic: every value here REFERENCES another custom property. Without
+   it Tailwind resolves e.g. --spacing-sw-4 to a literal on :root, and the utilities inherit that
+   literal — so the .dense overrides (applied to a descendant div, not <html>) could never reach a
+   spacing utility (p-sw-4, gap-sw-2, …) and Compact density was a near no-op. With `inline` the
+   utility carries var(--sw-space-4) itself, re-resolving at whatever level the token is overridden. */
+@theme inline {
   /* Colors → text-/bg-/border-sw-* */
   --color-sw-bg: var(--sw-bg-primary);
   --color-sw-bg-secondary: var(--sw-bg-secondary);
@@ -103,7 +108,6 @@
   --sw-accent-solid: #2563eb;
   --sw-accent-glow: rgba(59, 130, 246, 0.2);
   --sw-input-bg: rgba(30, 41, 59, 0.5);
-  --sw-input-border: rgba(71, 85, 105, 0.5);
   --sw-sidebar-bg: rgba(15, 23, 42, 0.95);
   --sw-sidebar-item-hover: rgba(51, 65, 85, 0.5);
   --sw-sidebar-item-active: rgba(59, 130, 246, 0.15);
@@ -192,10 +196,9 @@
   --sw-status-done: #0d9488;
   /* red-700 so error text clears AA on the near-white surface (the dark #f87171 is too pale). */
   --sw-status-bad: #b91c1c;
-  /* V5: inputs/Select triggers had no light values → stayed dark-slate plaques on the light theme.
-     Near-white fill + a visible slate border, in tone with --sw-bg-card / --sw-border. */
+  /* V5: input/Select-trigger FILLS had no light values → stayed dark-slate plaques on the light
+     theme. Near-white fill, in tone with --sw-bg-card. Their borders come from --sw-border. */
   --sw-input-bg: rgba(255, 255, 255, 0.9);
-  --sw-input-border: rgba(148, 163, 184, 0.6);
   /* V8: emerald-600 so decorative success text/fills read on near-white (dark #34d399 is too pale). */
   --sw-success: #059669;
   /* amber-700: the dark amber-500 --sw-warn is too pale on the near-white surface. Consumers used to

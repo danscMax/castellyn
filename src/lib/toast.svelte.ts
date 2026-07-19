@@ -66,9 +66,11 @@ export const toastStore = $state<{ items: Toast[]; history: { items: ToastWithMe
 // (errors are sticky and never armed). The remembered ttl lets resume restart a fresh countdown.
 const timers = new Map<number, { ttl: number; handle: ReturnType<typeof setTimeout> }>();
 
-// Tracks hover-pause state so a duplicate arrival (see pushToast) doesn't re-arm a live timer
-// while the user is hovering — otherwise it would defeat the hover-pause guarantee below.
-let paused = false;
+// Pause REFCOUNT, not a flag: the host pauses on hover and each toast pauses on focus, so the two
+// overlap (tab into a hovered toast, or focus a button then move the mouse away). With one shared
+// boolean whichever resume fired first cancelled the other's pause and the toast vanished mid-read.
+// Also read by pushToast so a duplicate arrival doesn't re-arm a timer that is currently paused.
+let pauseDepth = 0;
 
 function arm(id: number, ttl: number): void {
   timers.set(id, { ttl, handle: setTimeout(() => dismiss(id), ttl) });
@@ -89,7 +91,7 @@ export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
     const tm = timers.get(dup.id);
     if (tm) {
       clearTimeout(tm.handle);
-      if (!paused) arm(dup.id, tm.ttl);
+      if (pauseDepth === 0) arm(dup.id, tm.ttl);
     }
     return dup.id;
   }
@@ -105,11 +107,15 @@ export function pushToast(t: Omit<Toast, 'id'>, ttlMs = 6000): number {
 // Pause/resume every pending auto-dismiss — wired to the toast host's hover so an actionable toast
 // (Open log / jump-to-tab) doesn't vanish mid-read or while the user reaches for its button.
 export function pauseToasts(): void {
-  paused = true;
+  pauseDepth++;
+  if (pauseDepth > 1) return; // already frozen by the other pause source
   for (const tm of timers.values()) clearTimeout(tm.handle);
 }
 export function resumeToasts(): void {
-  paused = false;
+  // Clamp: an unpaired resume (a focusout with no matching focusin) must not push the count
+  // negative and leave the next real pause unable to reach zero again.
+  pauseDepth = Math.max(0, pauseDepth - 1);
+  if (pauseDepth > 0) return; // another source still holds the pause
   for (const [id, tm] of [...timers]) arm(id, tm.ttl);
 }
 

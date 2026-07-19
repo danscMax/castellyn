@@ -310,7 +310,9 @@
               <span class="badge {ob.cls}" title={t('forks.outcomeTip')}>{ob.label}</span>
               {#if pb}
                 {#if b.url}
-                  <a class="badge {pb.cls} hover:underline" href={b.url} target="_blank" rel="noreferrer" title={t('forks.prLinkTip')}>{pb.label}{b.prNumber ? ` #${b.prNumber}` : ''}</a>
+                  <!-- openUrl, not <a target=_blank>: nothing routes a WebView2 new-window request to
+                       the system browser, and open_url is the scheme-guarded path every other link uses. -->
+                  <button type="button" class="badge {pb.cls} cursor-pointer hover:underline" onclick={() => b.url && openUrl(b.url)} title={t('forks.prLinkTip')}>{pb.label}{b.prNumber ? ` #${b.prNumber}` : ''}</button>
                 {:else}
                   <span class="badge {pb.cls}">{pb.label}{b.prNumber ? ` #${b.prNumber}` : ''}</span>
                 {/if}
@@ -321,7 +323,7 @@
             {#if b.action}<p class="text-sw-xs text-sw-text-muted">{b.action}</p>{/if}
             {#if (b.aheadOfUpstream ?? 0) > 0 && (b.outcome === 'clean' || b.outcome === 'local-only')}
               {@const cu = compareUrl(b.name)}
-              {#if cu}<a class="text-sw-xs hover:underline" style="color:var(--sw-accent-text)" href="{cu}?expand=1" target="_blank" rel="noreferrer" title={t('forks.contributeTip')}>{t('forks.contribute')} ↗</a>{/if}
+              {#if cu}<button type="button" class="text-sw-xs cursor-pointer hover:underline" style="color:var(--sw-accent-text)" onclick={() => openUrl(`${cu}?expand=1`)} title={t('forks.contributeTip')}>{t('forks.contribute')} ↗</button>{/if}
             {/if}
             {#if confFiles(b.conflictFiles).length}
               <p class="text-sw-xs {statusTextClass('bad')}">{t('forks.conflictInFiles', { files: confFiles(b.conflictFiles).join(', ') })}</p>

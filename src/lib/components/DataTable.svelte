@@ -398,8 +398,14 @@
     background: var(--sw-accent-glow, rgba(59, 130, 246, 0.12));
     font-size: var(--sw-text-xs);
   }
+  /* The sticky <thead> needs a scrollport that actually scrolls VERTICALLY. Without a height cap the
+     wrapper is content-height, its vertical overflow is zero, and sticky never engages — the page's
+     <main> is the element that scrolls, and it's an ancestor of the scrollport so it can't drive the
+     offset. Cap the height here so the header stays put while long tables scroll inside the card. */
   .dt-scroll {
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
   }
   table.dt {
     width: 100%;

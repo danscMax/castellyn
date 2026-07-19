@@ -56,7 +56,9 @@
                synchronous loop, so several entries share a Date.now() and Svelte throws on the
                duplicate key. `id` is unique per entry and resumes above the restored history. -->
           {#each history.items as item, i (item.id)}
-            {@const Icon = kindIcon[item.kind]}
+            <!-- History is restored from localStorage across upgrades and its `kind` isn't shape-
+                 checked on load: an unknown kind would render `undefined` and blank the whole panel. -->
+            {@const Icon = kindIcon[item.kind] ?? Info}
             <div class="entry {item.kind}">
               <span class="icon" class:icon-success={item.kind === 'success'} class:icon-warn={item.kind === 'warn'} class:icon-error={item.kind === 'error'} class:icon-info={item.kind === 'info'}><Icon size={11} aria-hidden="true" /></span>
               <div class="body">

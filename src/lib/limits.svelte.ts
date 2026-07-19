@@ -5,6 +5,7 @@
 // no prop-drilling across the layout boundary). +page wires the listener once on mount.
 
 import type { LimitsStatusEvent } from '$lib/ipc';
+import { LIMITS_STALE_MS } from '$lib/limitSwitch';
 
 /** A stored reading plus the moment it arrived. A transport error emits no event at all, so without
  *  an arrival stamp the last successful numbers look current forever — and auto-switch would trust
@@ -24,8 +25,11 @@ export function pushLimits(e: LimitsStatusEvent) {
  *  `window` is '5h' | '7d' | the scoped cap's model label (rendered verbatim in the strip). */
 export function peakUtilization(): { profile: string; pct: number; window: string } | null {
   let best: { profile: string; pct: number; window: string } | null = null;
+  const now = Date.now();
   for (const e of Object.values(limitsStore.byProfile)) {
-    if (e.expired) continue;
+    // A transport error emits no event at all, so a reading that stopped arriving would otherwise
+    // be reported as current forever. Same freshness window auto-switch already honours.
+    if (e.expired || now - (e.receivedAt ?? 0) > LIMITS_STALE_MS) continue;
     const cands: Array<[number | null, string]> = [
       [e.h5, '5h'],
       [e.d7, '7d'],

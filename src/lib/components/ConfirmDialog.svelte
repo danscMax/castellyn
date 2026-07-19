@@ -113,7 +113,7 @@
   }
   .confirm-type {
     display: block;
-    margin: 0 0 var(--sw-space-5);
+    margin: 0 0 var(--sw-space-4);
     font-size: var(--sw-text-xs);
     color: var(--sw-text-secondary);
   }

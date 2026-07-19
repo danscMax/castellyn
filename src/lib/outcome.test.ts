@@ -37,6 +37,41 @@ describe('deriveOutcome', () => {
     expect(o.action).toBeUndefined();
   });
 
+  // A fork-sync run that exits 0 without rewriting its envelope leaves the PREVIOUS run's counts on
+  // disk. With a run-start reference they must be ignored, not reported as this run's result.
+  it('forks with a STALE envelope ignores the previous run’s counts', () => {
+    const o = deriveOutcome({
+      id: 'forks',
+      name: 'Форки',
+      code: 0,
+      mode: 'check',
+      status: {
+        timestamp: '2026-07-08T10:00:00Z',
+        summary: { repos: 6, merged: 1, open: 2, conflict: 3, needHands: 4 }
+      },
+      startedAt: Date.parse('2026-07-08T12:00:00Z')
+    });
+    expect(o.kind).toBe('success'); // not the stale needHands=4 warn
+    expect(o.detail).toBeUndefined();
+    expect(o.action).toBeUndefined();
+  });
+
+  it('forks with a FRESH envelope still reports its counts', () => {
+    const o = deriveOutcome({
+      id: 'forks',
+      name: 'Форки',
+      code: 0,
+      mode: 'check',
+      status: {
+        timestamp: '2026-07-08T12:00:05Z',
+        summary: { repos: 6, merged: 1, open: 2, conflict: 3, needHands: 4 }
+      },
+      startedAt: Date.parse('2026-07-08T12:00:00Z')
+    });
+    expect(o.kind).toBe('warn');
+    expect(o.action?.target).toBe('forks');
+  });
+
   it('update component check with changes → info', () => {
     const o = deriveOutcome({
       id: 'speckit',

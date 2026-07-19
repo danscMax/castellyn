@@ -17,14 +17,36 @@
   let panes = $state<Array<DetachPane & { _key: string }>>([]);
   let loaded = $state(false);
 
-  onMount(async () => {
-    try {
-      const spec = await takeDetach(win.label);
-      panes = (spec?.panes ?? []).map((p, i) => ({ ...p, _key: String(i) }));
-    } catch {
-      panes = [];
-    }
-    loaded = true;
+  onMount(() => {
+    // Funnel EVERY close gesture through closeWin(): Alt+F4, the taskbar close and Task View bypass
+    // our own ✕ entirely, and Rust only intercepts CloseRequested for the "main" label — so without
+    // this the window died with its sessions still owned here (killed on teardown, or orphaned with
+    // no UI path back). `closing` lets closeWin's own win.close() through the handler it re-triggers.
+    let unClose: (() => void) | undefined;
+    let dead = false;
+    win
+      .onCloseRequested((e) => {
+        if (closing) return;
+        e.preventDefault();
+        void closeWin();
+      })
+      .then((u) => (dead ? u() : (unClose = u)))
+      .catch(() => {});
+
+    (async () => {
+      try {
+        const spec = await takeDetach(win.label);
+        panes = (spec?.panes ?? []).map((p, i) => ({ ...p, _key: String(i) }));
+      } catch {
+        panes = [];
+      }
+      loaded = true;
+    })();
+
+    return () => {
+      dead = true;
+      unClose?.();
+    };
   });
 
   const cols = $derived(Math.max(1, Math.min(3, Math.ceil(Math.sqrt(panes.length)))));
@@ -57,7 +79,10 @@
     markMoved(id);
     closePane(p._key);
   }
+  let closing = false;
   async function closeWin() {
+    if (closing) return; // a second close gesture while the hand-back is in flight
+    closing = true;
     // Panes here OWN their sessions (owns:true), so a bare win.close() would let each TerminalPane's
     // onDestroy sessionKill it — closing a monitor window must NOT silently end (paid) sessions. Hand
     // every live session back to the main window first (markMoved suppresses the kill; the emit lets

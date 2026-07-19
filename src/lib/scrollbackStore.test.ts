@@ -70,6 +70,20 @@ describe('scrollbackStore', () => {
     expect([...got].every((ch) => ch === '😀')).toBe(true); // every code point intact
   });
 
+  // The cap used to subtract a BYTE overage from a UTF-16 index, so any buffer averaging >= 2 B/char
+  // was trimmed to nothing. These panes must keep a full cap's worth, not an empty string.
+  it.each([
+    ['cjk', '中'.repeat(300000)],
+    ['cyrillic', 'привет '.repeat(50000)],
+    ['emoji', '😀'.repeat(80000)]
+  ])('keeps a full cap of %s content instead of over-trimming to empty', (_name, big) => {
+    saveScrollback('multibyte', big);
+    const got = takeScrollback('multibyte')!;
+    expect(byteLen(got)).toBeLessThanOrEqual(CAP);
+    expect(byteLen(got)).toBeGreaterThan(CAP - 8); // a whole cap, minus at most one split char
+    expect(big.endsWith(got)).toBe(true); // still a suffix: only the OLDEST content was dropped
+  });
+
   it('prunes foreign keys (panes not in the live layout), keeps live ones', () => {
     saveScrollback('live-a', 'a');
     saveScrollback('live-b', 'b');

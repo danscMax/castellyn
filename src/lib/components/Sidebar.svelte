@@ -139,8 +139,15 @@
 
   // Drag a nav item over another to reorder (live), persisted on drop.
   let dragId = $state<string | null>(null);
+  // dragover mutates the shared order live (the preview), and dragend fires on a CANCEL (Esc, drop
+  // outside a target) exactly as it does after a drop — so keep the pre-drag order and restore it
+  // unless a real drop committed, otherwise an aborted drag silently persists the preview.
+  let preDrag: string[] | null = null;
+  let dropped = false;
   function onDragStart(e: DragEvent, id: string) {
     dragId = id;
+    preDrag = [...navOrder.ids];
+    dropped = false;
     e.dataTransfer?.setData('text/plain', id);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
   }
@@ -158,7 +165,13 @@
     previewNavOrder(cur);
   }
   function onDrop() {
+    dropped = true;
     setNavOrder(navOrder.ids);
+    dragId = null;
+  }
+  function onDragEnd() {
+    if (!dropped && preDrag) previewNavOrder(preDrag);
+    preDrag = null;
     dragId = null;
   }
 
@@ -217,7 +230,7 @@
             ondragstart={(e) => onDragStart(e, it.id)}
             ondragover={(e) => onDragOver(e, it.id)}
             ondrop={onDrop}
-            ondragend={onDrop}
+            ondragend={onDragEnd}
             onkeydown={(e) => moveItem(e, it.id)}
             onclick={() => it.enabled && onSelect(it.id)}
             onpointerup={(e) => e.currentTarget.blur()}

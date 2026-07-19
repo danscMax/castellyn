@@ -10,21 +10,17 @@ const CAP_BYTES = 262144; // 256 KiB per pane
 const STALE_MS = 14 * 24 * 60 * 60 * 1000; // TTL: drop buffers of panes not restored in 2 weeks
 
 const enc = new TextEncoder();
-const byteLen = (s: string): number => enc.encode(s).length;
 
-// Trim from the START (oldest lines) so the newer, more valuable tail survives the cap. Optimizer F5:
-// no binary search re-encoding O(n log n) — take the last CAP_BYTES UTF-16 units as a fast first cut
-// (ANSI is mostly ASCII, so this is at most 2× over-long in code units), then walk forward from the
-// cheap cut only if the tail still exceeds the byte cap. One encode per iteration over a shrinking
-// tail beats log(n) encodes of the whole slice.
+// Trim from the START (oldest lines) so the newer, more valuable tail survives the cap. Cut in the
+// BYTE domain: an earlier version subtracted a byte overage from a UTF-16 code-unit index, which
+// over-trimmed in proportion to bytes-per-char and returned an EMPTY buffer for any pane averaging
+// >= 2 B/char (Cyrillic, CJK, emoji) — the whole cold-restore scrollback silently vanished. Slicing
+// the encoded bytes can land mid-sequence; the decoder turns those stray continuation bytes into
+// leading U+FFFD, which we drop (this also subsumes the old orphaned-low-surrogate special case).
 function trimStartToCap(ansi: string): string {
-  if (byteLen(ansi) <= CAP_BYTES) return ansi;
-  let tail = ansi.slice(-CAP_BYTES); // ≥ the final cut (bytes ≥ code units for any string)
-  let over = byteLen(tail) - CAP_BYTES;
-  if (over > 0) tail = tail.slice(over); // near-exact: multi-byte chars make this a slight over-trim
-  const c = tail.charCodeAt(0);
-  if (c >= 0xdc00 && c <= 0xdfff) tail = tail.slice(1); // don't start on an orphaned low surrogate
-  return tail;
+  const bytes = enc.encode(ansi);
+  if (bytes.length <= CAP_BYTES) return ansi;
+  return new TextDecoder().decode(bytes.slice(-CAP_BYTES)).replace(/^�+/, '');
 }
 
 function scrollbackKeys(): string[] {

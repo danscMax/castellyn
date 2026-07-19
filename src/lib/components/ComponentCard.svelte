@@ -2,13 +2,28 @@
   import type { Component } from '$lib/ipc';
   import { glossaryText } from '$lib/glossary';
   import { componentName } from '$lib/componentLabel';
-  import { t, pUpdate, plural } from '$lib/i18n';
+  import { t, pUpdate, plural, hasTranslation } from '$lib/i18n';
   import { relTime, relOrAbs, formatAbsTime, parseTsMs } from '$lib/relativeTime';
   import { countOf, isUnknownStatus } from '$lib/envelope';
   import Spinner from './Spinner.svelte';
 
   // A run older than this reads as stale — the "last run" value is flagged, not silently trusted.
   const STALE_MS = 14 * 24 * 60 * 60 * 1000;
+
+  // The manifest's `group` labels are Russian-only literals. Map them to locale keys; a group this
+  // build ships no translation for keeps the manifest's own text — the same fallback contract as
+  // componentName(), so a user-added component still renders.
+  const GROUP_KEY: Record<string, string> = {
+    Оркестратор: 'orchestrator',
+    Claude: 'claude',
+    Git: 'git',
+    'CLI-инструменты': 'cli',
+    Обслуживание: 'maintenance'
+  };
+  function componentGroup(group: string): string {
+    const key = `components.groups.${GROUP_KEY[group] ?? ''}`;
+    return GROUP_KEY[group] && hasTranslation(key) ? t(key) : group;
+  }
 
   let {
     comp,
@@ -112,7 +127,7 @@
   <div class="flex items-start justify-between gap-sw-2">
     <div class="min-w-0">
       <h3 class="font-medium">{componentName(comp.id, comp.name)}</h3>
-      <p class="text-sw-xs text-sw-text-muted">{comp.group}</p>
+      <p class="text-sw-xs text-sw-text-muted">{componentGroup(comp.group)}</p>
     </div>
     <span class="badge {health.cls} shrink-0">{health.label}</span>
   </div>

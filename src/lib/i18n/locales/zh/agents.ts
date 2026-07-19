@@ -24,6 +24,7 @@ export default {
   tplCodex: 'Codex 子代理（通过 CLI）',
   fldName: '名称',
   fldNamePh: '例如 code-reviewer（小写、连字符）',
+  dupName: '已存在同名代理 — 请换一个名称',
   fldDesc: '描述 — 何时使用',
   fldDescPh: '主代理何时应将任务委派给此子代理',
   fldModel: '模型',

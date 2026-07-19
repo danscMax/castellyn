@@ -924,8 +924,11 @@
 
   // F14: generic destructive confirm — one callback-driven dialog so every ✕ gates first
   // (project rule: destructive actions confirm before mutating). Each caller passes its own copy + run().
-  let confirmAsk = $state<{ title: string; message: string; details?: string[]; run: () => void } | null>(null);
-  function askConfirm(opts: { title: string; message: string; details?: string[]; run: () => void }) {
+  // confirmLabel: the dialog backs six non-delete flows too (close all / close project / forget
+  // layout) — those must not say "Удалить". Omitted → the delete wording stays.
+  type ConfirmAsk = { title: string; message: string; details?: string[]; confirmLabel?: string; run: () => void };
+  let confirmAsk = $state<ConfirmAsk | null>(null);
+  function askConfirm(opts: ConfirmAsk) {
     // R8: honor the global confirm-destructive toggle — same gate as +page's askConfirm.
     if (!confirmDestructive) {
       opts.run();
@@ -1022,6 +1025,7 @@
     askConfirm({
       title: t('sessions.forgetLayoutConfirmTitle'),
       message: t('sessions.forgetLayoutConfirmMsg'),
+      confirmLabel: t('sessions.forgetLayout'),
       run: () => {
         try {
           localStorage.removeItem(MLKEY);
@@ -1231,6 +1235,7 @@
     askConfirm({
       title: t('sessions.closeAllConfirmTitle'),
       message: t('sessions.closeAllConfirmMsg', { n: panes.length, live }),
+      confirmLabel: t('sessions.closeAll'),
       run: doCloseAll
     });
   }
@@ -1249,6 +1254,20 @@
   let colFr = $state<number[]>([1, 1]);
   let rowFr = $state<number[]>([1]);
   let gridEl: HTMLDivElement | undefined = $state();
+  // W2: TerminalPane keys its persisted scrollback on the launch recipe, which two clones share.
+  // Hand each pane its position among same-recipe panes so their histories stay separate; the order
+  // of `panes` is what restore replays, so the ordinals come back the same after a restart.
+  const scrollbackSlots = $derived.by(() => {
+    const used = new Map<string, number>();
+    const out: Record<string, number> = {};
+    for (const p of panes) {
+      const recipe = `${p.tool}|${p.profile}|${p.sshTarget ?? ''}|${p.cwd}`;
+      const n = used.get(recipe) ?? 0;
+      out[p.key] = n;
+      used.set(recipe, n + 1);
+    }
+    return out;
+  });
   const activePanes = $derived(panes.filter((p) => !p.background));
   const bgPanes = $derived(panes.filter((p) => p.background));
   // herdr W2 rail helpers: env icon, status-dot class (mirrors TerminalPane), click-to-focus.
@@ -1434,6 +1453,7 @@
     askConfirm({
       title: t('sessions.closeSpaceTitle'),
       message: t('sessions.closeSpaceMsg', { n: keys.length }),
+      confirmLabel: t('sessions.closeSpace'),
       run: () => {
         let wtSeq = 0; // F9: stagger, not burst
         for (const p of panes) if (keys.includes(p.key) && p.worktree) void cleanupWorktree(p.worktree, 400 * wtSeq++);
@@ -2555,7 +2575,9 @@
       ) {
         args = `${args} --resume ${s.claudeSid}`.trim();
       }
-      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name, space: s.space, limitMode: s.limitMode });
+      // worktree must survive the restart too, or closePane can't clean up the isolated checkout
+      // and addPane records the ephemeral path into the folder/recent lists.
+      addPane({ tool: s.tool, profile: s.profile, cwd: s.cwd, args, remoteDir: s.remoteDir, sshTarget: s.sshTarget, name: s.name, space: s.space, limitMode: s.limitMode, worktree: s.worktree });
     }
     // addPane's cap guard silently drops panes past the limit — tell the user how many landed.
     const restored = panes.length - before;
@@ -2604,13 +2626,14 @@
   </div>
 </ModalShell>
 
-<!-- F14: generic destructive confirm for ✕ actions (remove favorite / SSH host / workspace). -->
+<!-- F14: generic destructive confirm — ✕ actions (remove favorite / SSH host / workspace / project)
+     and the close/forget flows, which pass their own confirmLabel instead of the delete wording. -->
 <ConfirmDialog
   open={!!confirmAsk}
   title={confirmAsk?.title ?? ''}
   message={confirmAsk?.message ?? ''}
   details={confirmAsk?.details ?? []}
-  confirmLabel={t('common.delete')}
+  confirmLabel={confirmAsk?.confirmLabel ?? t('common.delete')}
   danger
   onConfirm={() => {
     confirmAsk?.run();
@@ -2754,9 +2777,14 @@
               {#if sched?.enabled}<span class="pm-sched-on" title={t('sessions.schedTitle')}>⏰ {sched.time}</span>{/if}
               <span class="pm-path" title={f.locId ? f.remoteDir : f.folder}>{f.locId ? f.remoteDir : f.folder}</span>
             </button>
-            <button type="button" class="pm-x pm-clock" class:on={schedOpenFor === f.id || !!sched?.enabled}
-              onclick={() => openSchedule(f)} title={t('sessions.schedTitle')} aria-label={t('sessions.schedTitle')}
-              aria-expanded={schedOpenFor === f.id}>⏰</button>
+            <!-- A ScheduleRecipe carries no locId/remoteDir, so scheduling an SSH favorite would fire it
+                 as a LOCAL pane and report success. Offer the button on local rows only; an already
+                 stored schedule keeps its ⏰ so it stays removable. -->
+            {#if !f.locId || sched}
+              <button type="button" class="pm-x pm-clock" class:on={schedOpenFor === f.id || !!sched?.enabled}
+                onclick={() => openSchedule(f)} title={t('sessions.schedTitle')} aria-label={t('sessions.schedTitle')}
+                aria-expanded={schedOpenFor === f.id}>⏰</button>
+            {/if}
             <button type="button" class="pm-x" onclick={() => askRemoveFav(f)} title={t('common.delete')} aria-label={t('common.delete')}>✕</button>
           </div>
           {#if schedOpenFor === f.id}
@@ -3167,7 +3195,8 @@
             </div>
             <div class="srv-add">
               <input class="sw-input text-sw-xs" style="width:130px" bind:value={srvName} placeholder={t('sessions.dlgSshName')} spellcheck="false" autocomplete="off" />
-              <input class="sw-input grow font-mono text-sw-xs" bind:value={srvTarget} placeholder={t('sessions.dlgSshTargetPlaceholder')} spellcheck="false" autocomplete="off" />
+              <!-- Editing the target invalidates the ✓/✕ verdict — a green tick next to an untested host lies. -->
+              <input class="sw-input grow font-mono text-sw-xs" bind:value={srvTarget} oninput={() => (srvTest = null)} placeholder={t('sessions.dlgSshTargetPlaceholder')} spellcheck="false" autocomplete="off" />
               <input class="sw-input font-mono text-sw-xs" style="width:170px" bind:value={srvDir} placeholder={t('sessions.dlgSshRemoteDir')} spellcheck="false" autocomplete="off" />
               <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={!srvTarget.trim() || srvTesting} onclick={testServer}>{t('sessions.dlgSshTest')}</button>
               {#if srvTest === 'ok'}<span class="text-sw-xs" style="color:var(--sw-status-up)">✓ {t('sessions.dlgSshTestOk')}</span>{/if}
@@ -3422,8 +3451,10 @@
             paneKey={pane.key}
             agentState={displayStateById[pane.key]}
             autoResumeLabel={autoResumeById[pane.key] ?? null}
-            visible={visible && (maximized == null || maximized === pane.key)}
+            visible={visible && paneSpace(pane) === activeSpace && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
+            scrollbackSlot={scrollbackSlots[pane.key] ?? 0}
+            {confirmDestructive}
             showUsage={!railVisible || activeKey === pane.key}
             {broadcast}
             onInput={broadcastInput}
@@ -3504,6 +3535,8 @@
         autoResumeLabel={autoResumeById[pane.key] ?? null}
         visible={false}
         maximized={false}
+        scrollbackSlot={scrollbackSlots[pane.key] ?? 0}
+        {confirmDestructive}
         {broadcast}
         onInput={broadcastInput}
         {onIdChange}
@@ -4833,18 +4866,6 @@
     align-items: center;
     gap: var(--sw-space-1);
     margin-bottom: var(--sw-space-3);
-  }
-  /* Council V-14: the ＋/✕ actions crowd the pill — reveal them on hover/focus only. */
-  .space-tab .space-plus,
-  .space-tab .space-x {
-    opacity: 0;
-    transition: opacity 0.12s;
-  }
-  .space-tab:hover .space-plus,
-  .space-tab:hover .space-x,
-  .space-tab .space-plus:focus-visible,
-  .space-tab .space-x:focus-visible {
-    opacity: 1;
   }
   .space-tab {
     display: inline-flex;

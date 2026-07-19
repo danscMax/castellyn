@@ -2,6 +2,13 @@
 // The manifest is read from disk at runtime and may carry components we ship no translation for,
 // so every lookup falls back to the manifest's own `name` (see lib/componentLabel.ts).
 export default {
+  groups: {
+    orchestrator: 'Orchestrator',
+    claude: 'Claude',
+    git: 'Git',
+    cli: 'CLI tools',
+    maintenance: 'Maintenance'
+  },
   all: { name: 'Update everything' },
   plugins: { name: 'Claude plugins' },
   forks: { name: 'Forks (fork-sync)' },

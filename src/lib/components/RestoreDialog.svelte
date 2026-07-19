@@ -37,24 +37,36 @@
   // True once a preview/restore has been triggered from THIS dialog — gates the in-dialog output
   // panel. Reset on any input change (snapshot/selection/creds) so a stale plan never lingers.
   let ran = $state(false);
-  // R4: restore completion tracking. A finished restore used to leave the danger button live
-  // (busy fell, hasPreviewed stayed true) with no "done" signal — one stray click re-ran the whole
-  // destructive restore. Now we detect the busy rise→fall of a restore run, show "done", and force
-  // a fresh preview before another restore can fire.
-  let restoreArmed = $state(false); // a restore was requested; watching its run to finish
-  let restoreSawBusy = $state(false);
+  // R4: run tracking. A finished restore used to leave the danger button live (busy fell,
+  // hasPreviewed stayed true) with no "done" signal — one stray click re-ran the whole destructive
+  // restore. We watch the busy rise→fall of the run WE asked for and settle it here.
+  // ONE pending slot on purpose: a newer request supersedes an older one by construction.
+  // Known ceiling: `busy` is the GLOBAL run flag (BackupTab derives it from `running`), not a
+  // restore-specific one, so a pending slot left behind by a cancelled type-to-confirm would be
+  // settled by ANY later run. In practice unreachable — this dialog is modal, and every `running`
+  // assignment sits in a user-triggered handler, so no run can start behind it — except via a
+  // global accelerator. Closing it properly needs the parent to report whether the run actually
+  // started (`onRestore` returning that fact); worth doing if the accelerator path ever bites.
+  let pending = $state<'preview' | 'restore' | null>(null);
+  let sawBusy = $state(false);
   let restoreDone = $state(false);
   $effect(() => {
-    if (!restoreArmed) return;
+    if (!pending) return;
     if (busy) {
-      restoreSawBusy = true;
+      sawBusy = true;
       return;
     }
-    if (restoreSawBusy) {
-      restoreArmed = false;
+    if (!sawBusy) return; // the run has not started yet (or never will)
+    if (pending === 'restore') {
       restoreDone = true;
       hasPreviewed = false; // disarm the danger button: a new restore needs a new preview
+    } else {
+      // Arm the danger button only once a preview has actually RUN — clicking "Show plan" while
+      // another backup op holds the run lock spawns nothing, and used to arm it regardless.
+      hasPreviewed = true;
     }
+    pending = null;
+    sawBusy = false;
   });
 
   // Default every (newly seen) profile to selected.
@@ -69,11 +81,16 @@
     ran = false;
   }
 
-  // New snapshot => force a fresh preview before a real restore is allowed.
+  // New snapshot (or a close/reopen) => force a fresh preview before a real restore is allowed and
+  // drop any arm left over from a run that was requested but never confirmed. The component stays
+  // mounted for the app's lifetime, so `busy` keeps ticking for unrelated backup runs meanwhile.
   $effect(() => {
     void snapshot;
+    void open;
     hasPreviewed = false;
     ran = false;
+    pending = null;
+    sawBusy = false;
   });
 
   function toggle(p: string) {
@@ -93,14 +110,16 @@
   function preview() {
     ran = true;
     restoreDone = false; // a fresh plan clears the previous "done" badge
+    hasPreviewed = false; // re-armed by the watcher once this preview run finishes
+    pending = 'preview';
+    sawBusy = false;
     onPreview(opts());
-    hasPreviewed = true;
   }
   function restore() {
     ran = true;
     restoreDone = false;
-    restoreArmed = true;
-    restoreSawBusy = false;
+    pending = 'restore';
+    sawBusy = false;
     onRestore(opts());
   }
 </script>

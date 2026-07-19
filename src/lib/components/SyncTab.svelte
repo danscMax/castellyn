@@ -109,7 +109,9 @@
       return;
     }
     expanded = name;
-    if (diffCache[name]) return;
+    // No cache short-circuit: a drift action (sync-now/relink) refreshes driftData in place without
+    // remounting, so a cached diff would be re-shown as if it were the post-action state. The read
+    // is a cheap local file read and the panel already renders a loading state.
     diffLoading[name] = true;
     try {
       const d = await readDriftDiff(name);

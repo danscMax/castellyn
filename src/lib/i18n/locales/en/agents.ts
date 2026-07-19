@@ -25,6 +25,7 @@ export default {
   tplCodex: 'Codex subagent (via CLI)',
   fldName: 'Name',
   fldNamePh: 'e.g. code-reviewer (lowercase, hyphenated)',
+  dupName: 'An agent with this name already exists — pick another',
   fldDesc: 'Description — when to use it',
   fldDescPh: 'When the main agent should delegate a task to this subagent',
   fldModel: 'Model',

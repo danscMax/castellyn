@@ -29,6 +29,11 @@
   let models = $state<string[]>([]);
   let loading = $state(false);
   let seeded = '';
+  // Generation counter for the model fetch (same pattern as ProviderEditDialog's modelsSeq).
+  // The engine id alone cannot identify a request: reopening the SAME engine reseeds to the same
+  // id, so a still-pending fetch from the previous open would pass an id-based guard and overwrite
+  // the newer list / clear `loading` out from under the request still in flight.
+  let seq = 0;
 
   $effect(() => {
     if (!open) {
@@ -38,6 +43,7 @@
     const seed = engine?.id ?? '';
     if (engine && seed !== seeded) {
       seeded = seed;
+      const gen = ++seq;
       model = '';
       profile = profiles[0] ?? '';
       apiKey = '';
@@ -46,15 +52,15 @@
       loading = true;
       readEngineModels(engine.baseUrl)
         .then((m) => {
-          if (seeded !== seed) return; // a newer open/engine superseded this request
+          if (gen !== seq) return; // a newer open/engine superseded this request
           models = m;
           if (m.length && !model) model = m[0];
         })
         .catch(() => {
-          if (seeded === seed) models = [];
+          if (gen === seq) models = [];
         })
         .finally(() => {
-          if (seeded === seed) loading = false;
+          if (gen === seq) loading = false;
         });
     }
   });

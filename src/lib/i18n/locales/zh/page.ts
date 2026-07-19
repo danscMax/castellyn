@@ -40,6 +40,7 @@ export default {
   home_stackRunning: '{up}/{total} 运行中',
   home_stackStart: '启动技术栈',
   home_stackStop: '停止技术栈',
+  home_stackIdle: '技术栈已关闭',
   home_sessions: '会话',
   home_sessionsActive: '{n} 个活动',
   home_checkAll: '全部检查',

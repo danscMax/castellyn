@@ -190,6 +190,14 @@
   import { deriveOutcome } from '$lib/outcome';
   import { t, locale } from '$lib/i18n';
   import { componentName } from '$lib/componentLabel';
+  import {
+    askConfirm as gateAsk,
+    doConfirm as gateDo,
+    closeConfirm as gateClose,
+    emptyConfirmState,
+    type ConfirmState,
+    type ConfirmOpts
+  } from '$lib/confirmGate';
   import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, shareCommands, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, runCodexOmniroute, type EnvInfo, type SkillRow } from '$lib/ipc';
 
   let components = $state<Component[]>([]);
@@ -304,27 +312,8 @@
   // All of the user's GitHub repos (gh repo list) — to surface repos not cloned locally.
   let githubRepos = $state<GithubRepo[]>([]);
   let githubLoaded = $state(false);
-  let confirm = $state<{
-    open: boolean;
-    title: string;
-    message: string;
-    confirmLabel: string;
-    action: (() => void) | null;
-    onCancel: (() => void) | null;
-    details: string[];
-    requireText: string | null;
-    danger: boolean;
-  }>({
-    open: false,
-    title: '',
-    message: '',
-    confirmLabel: t('common.confirm'),
-    action: null,
-    onCancel: null,
-    details: [],
-    requireText: null,
-    danger: false
-  });
+  // The gate's logic lives in $lib/confirmGate (unit-tested); this holds only its reactive state.
+  let confirm = $state<ConfirmState>(emptyConfirmState());
 
   let unlisten: UnlistenFn[] = [];
 
@@ -474,57 +463,15 @@
     startRun(id, 'check');
   }
 
-  function closeConfirm() {
-    const cancelled = confirm.onCancel;
-    confirm = {
-      open: false,
-      title: '',
-      message: '',
-      confirmLabel: t('common.confirm'),
-      action: null,
-      onCancel: null,
-      details: [],
-      requireText: null,
-      danger: false
-    };
-    cancelled?.();
-  }
-
-  function askConfirm(
+  const closeConfirm = () => gateClose(confirm);
+  const doConfirm = () => gateDo(confirm);
+  const askConfirm = (
     title: string,
     message: string,
     confirmLabel: string,
     action: () => void,
-    opts: { details?: string[]; requireText?: string | null; danger?: boolean; onCancel?: () => void } = {}
-  ) {
-    // #120: when confirm-prompts are disabled, run immediately — except type-to-confirm actions
-    // (restore/reinstall), which are destructive enough to always require explicit confirmation.
-    if (!confirmDestructive && !opts.requireText) {
-      action();
-      return;
-    }
-    // L131: don't silently replace an already-open dialog — a promise-based confirm relies on
-    // onCancel firing to resolve, and overwriting `confirm` here would otherwise leak it forever.
-    if (confirm.open) confirm.onCancel?.();
-    confirm = {
-      open: true,
-      title,
-      message,
-      confirmLabel,
-      action,
-      onCancel: opts.onCancel ?? null,
-      details: opts.details ?? [],
-      requireText: opts.requireText ?? null,
-      danger: opts.danger ?? false
-    };
-  }
-
-  function doConfirm() {
-    const a = confirm.action;
-    confirm.onCancel = null; // confirmed — closeConfirm must not fire the cancel path
-    closeConfirm();
-    a?.();
-  }
+    opts: ConfirmOpts = {}
+  ) => gateAsk(confirm, confirmDestructive, title, message, confirmLabel, action, opts);
 
   function onApply(comp: Component) {
     askConfirm(
@@ -614,8 +561,9 @@
     }
   }
 
-  function startBackup(action: BackupAction, opts?: RestoreOpts) {
-    if (running) return;
+  /** Returns false when the global run lock rejected the spawn — nothing was started. */
+  function startBackup(action: BackupAction, opts?: RestoreOpts): boolean {
+    if (running) return false;
     running = 'backup';
     const verb =
       action === 'backup'
@@ -627,6 +575,7 @@
             : t('page.backup_verb_restore');
     log = [t('page.backup_log', { verb })];
     runBackup(action, opts).catch(onSpawnErr);
+    return true;
   }
 
   function onBackupAction(action: BackupAction, opts?: RestoreOpts) {
@@ -637,8 +586,14 @@
         t('page.confirm_restore_msg', { snap }),
         t('page.confirm_restore_btn'),
         () => {
-          pendingUndo = opts ? { snapshot: opts.timestamp ?? '', profiles: opts.profiles, includeCredentials: opts.includeCredentials } : null;
-          startBackup('restore', opts);
+          // Arm the undo ONLY if the spawn was accepted: startBackup no-ops while the global run
+          // lock is held, and a stale pendingUndo would later attach an "undo the restore" toast —
+          // whose action launches a real destructive restore — to an unrelated backup run.
+          const started = startBackup('restore', opts);
+          pendingUndo =
+            started && opts
+              ? { snapshot: opts.timestamp ?? '', profiles: opts.profiles, includeCredentials: opts.includeCredentials }
+              : null;
         },
         { danger: true, requireText: opts?.timestamp ?? null }
       );
@@ -1148,8 +1103,11 @@
   async function reloadSkillMatrix() {
     try {
       envsMatrix = await readSkillMatrix();
-    } catch {
-      envsMatrix = null;
+    } catch (e) {
+      // null means "still loading" to the tab (it renders the skeleton), so a FAILED read must not
+      // reuse it — that showed a permanent spinner. Land on an empty matrix and say what went wrong.
+      envsMatrix = [];
+      pushToast({ kind: 'error', title: t('environments.matrixLoadError'), detail: String(e) });
     }
   }
 
@@ -1738,7 +1696,6 @@
   async function reloadSchedules() {
     try {
       schedulesData = await readSchedules();
-      schedulesLoaded = true;
     } catch {
       schedulesData = null;
     }
@@ -1747,6 +1704,9 @@
   // Lazy-load schedules the first time the tab is opened (query spawns pwsh).
   $effect(() => {
     if (active === 'schedule' && !schedulesLoaded) {
+      // L54: set the flag SYNCHRONOUSLY — a quick tab toggle during the (slow, spawning) load
+      // would otherwise re-fire the effect while the first IPC is still in flight.
+      schedulesLoaded = true;
       setLoading('schedule', true);
       reloadSchedules().finally(() => setLoading('schedule', false));
     }
@@ -1830,7 +1790,6 @@
       pluginSyncData = null;
     }
     await reloadPluginUpdates();
-    extensionsLoaded = true;
   }
 
   // Sidebar "needs attention" indicators, from already-loaded data.
@@ -1856,6 +1815,9 @@
   // Lazy-load on first open (list_plugins spawns the claude CLI).
   $effect(() => {
     if (active === 'extensions' && !extensionsLoaded) {
+      // L54: synchronous flag — the load spawns the claude CLI, and a tab toggle mid-flight used to
+      // fire this loader a second time.
+      extensionsLoaded = true;
       setLoading('extensions', true);
       reloadExtensions().finally(() => setLoading('extensions', false));
     }
@@ -2476,6 +2438,18 @@
           e.payload.component === STREAM_IDS.ENGINE ||
           e.payload.component === STREAM_IDS.FORKS ||
           (e.payload.component === STREAM_IDS.PLUGIN_MGR && bulkActive);
+        // CAST-028: run_stack shares the ENGINE stream id with the router install, but owns its own
+        // slot and clears its own busy state in runStack().finally. Letting it fall through the
+        // GLOBAL lifecycle below would release `running` — and consume lastRunMode / lastForkAction /
+        // pendingUndo, and emit a bogus "done" toast — on behalf of an unrelated maintenance op that
+        // legitimately holds the engine slot. `concurrentDomain` already excludes ENGINE above; this
+        // makes the release side agree with it.
+        if (e.payload.component === STREAM_IDS.ENGINE && stackRunning) {
+          appendLog(t('page.log_done', { code: e.payload.code }));
+          await reloadStack();
+          await reloadProviders();
+          return;
+        }
         if (pendingRun && !concurrentDomain) {
           const r = pendingRun;
           pendingRun = null;

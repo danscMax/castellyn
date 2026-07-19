@@ -431,7 +431,10 @@
             { key: 'skill', label: t('plugins.catSkills'), typeLabel: t('plugins.detTypeSkill'), items: c.skills, icon: Puzzle },
             { key: 'agent', label: t('plugins.catAgents'), typeLabel: t('plugins.detTypeAgent'), items: c.agents, icon: Bot }
           ].filter((g) => g.items.length)}
-          {@const flat = groups.flatMap((g) => g.items.map((it) => ({ g, it, key: `${g.key}:${it.name}` })))}
+          <!-- Keyed on `path`, never on `name`: a skill's name comes from third-party SKILL.md
+               frontmatter, so two skills in one plugin can declare the same one and crash the
+               keyed each (each_key_duplicate). The path is unique per item by construction. -->
+          {@const flat = groups.flatMap((g) => g.items.map((it) => ({ g, it, key: `${g.key}:${it.path}` })))}
           {@const cur = flat.find((f) => f.key === detSel[p.id]) ?? flat[0]}
           {@const pname = split(p.id).name}
           <div class="detail md">
@@ -441,8 +444,8 @@
               {#each groups as g (g.key)}
                 {@const GIcon = g.icon}
                 <p class="detlabel"><GIcon size={12} aria-hidden="true" /> {g.label} <span class="ph">{g.items.length}</span></p>
-                {#each g.items as item (item.name)}
-                  {@const k = `${g.key}:${item.name}`}
+                {#each g.items as item (item.path)}
+                  {@const k = `${g.key}:${item.path}`}
                   <button type="button" class="mditem" class:sel={cur?.key === k} aria-pressed={cur?.key === k}
                     onclick={() => (detSel[p.id] = k)}>
                     {g.key === 'cmd' ? `/${pname}:${item.name}` : item.name}

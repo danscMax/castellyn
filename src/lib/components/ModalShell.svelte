@@ -93,6 +93,14 @@
       if (!f.length) return;
       const first = f[0];
       const last = f[f.length - 1];
+      // The card itself (tabindex=-1) holds focus on open, and the backdrop sits BEFORE it in the
+      // overlay — without this branch Shift+Tab walked out of the dialog entirely, taking the
+      // Escape handler (bound on .overlay) with it.
+      if (!cardEl.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
       if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
@@ -106,7 +114,9 @@
 
 {#if open}
   <div class="overlay" onkeydown={onKeydown} role="presentation">
-    <button type="button" class="backdrop" aria-label={t('common.close')} onclick={onBackdrop} transition:fade={{ duration: 130 }}></button>
+    <!-- tabindex=-1: a mouse-only affordance. In the tab order it is a stop BEFORE the card that
+         leads nowhere, and Escape already provides the keyboard close. -->
+    <button type="button" class="backdrop" tabindex="-1" aria-label={t('common.close')} onclick={onBackdrop} transition:fade={{ duration: 130 }}></button>
     <div
       bind:this={cardEl}
       class="card"

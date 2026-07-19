@@ -46,6 +46,7 @@ export default {
   skillsSyncedTip: 'Все доступные скиллы видны во всех средах — расшаривать нечего',
   colSkill: 'Скилл',
   matrixShareable: 'можно расшарить',
+  matrixLoadError: 'Не удалось загрузить матрицу скиллов',
   none: 'нет',
   openProvidersTip: 'Открыть вкладку «Провайдеры»',
   addProviderTip: 'Провайдеров нет — открыть вкладку «Провайдеры»',

@@ -48,16 +48,23 @@
       fullSize = null;
       measureErr = '';
       measuring = null;
+      // What is currently PERSISTED, in the exact shape apply() would write. measure() has to save
+      // before it can measure, so without this Cancel silently kept those edits (see cancel()).
+      saved = selection();
+      measureWrote = false;
     }
   });
 
-  function selection(): { mode: 'full' | 'lean'; mcp: string[]; claudeMd: boolean } {
+  type Selection = { mode: 'full' | 'lean'; mcp: string[]; claudeMd: boolean };
+  function selection(): Selection {
     return {
       mode: lean ? 'lean' : 'full',
       mcp: availableMcp.filter((m) => mcpSel[m]),
       claudeMd
     };
   }
+  let saved: Selection | null = null;
+  let measureWrote = $state(false);
 
   // R7: gate the in-flight save like the sibling measure() does — a double-click used to fire
   // onSave twice before the dialog closed.
@@ -78,12 +85,32 @@
     }
   }
 
+  // Cancel must actually cancel: measure() commits the selection, so roll back to what was
+  // persisted when the dialog opened. Only apply() is allowed to leave edits behind.
+  async function cancel() {
+    if (applying) return;
+    if (measureWrote && saved) {
+      applying = true;
+      applyErr = '';
+      try {
+        await onSave(saved);
+      } catch (e) {
+        applyErr = String((e as { message?: string })?.message ?? e);
+        return; // stay open — the rollback did NOT land, so don't pretend it was cancelled
+      } finally {
+        applying = false;
+      }
+    }
+    onCancel();
+  }
+
   // Measure always reflects what's on screen: persist the selection first, then measure.
   async function measure(which: 'lean' | 'full') {
     measureErr = '';
     measuring = which;
     try {
       await onSave(selection());
+      measureWrote = true;
       const tokens = await onMeasure(which === 'lean');
       if (which === 'lean') leanSize = tokens;
       else fullSize = tokens;
@@ -100,7 +127,7 @@
   }
 </script>
 
-<ModalShell open={open && !!profile} onClose={onCancel} size="md">
+<ModalShell open={open && !!profile} onClose={cancel} size="md">
   {#if profile}
       <h3 class="dlg-h">{t('profiles.lcTitle', { name: profile.name })}</h3>
 
@@ -178,7 +205,7 @@
       {/if}
 
       <div class="dlg-row">
-        <button class="sw-btn sw-btn-ghost" onclick={onCancel} title={t('profiles.lcCancelTip')}>{t('common.cancel')}</button>
+        <button class="sw-btn sw-btn-ghost" disabled={applying} onclick={cancel} title={t('profiles.lcCancelTip')}>{t('common.cancel')}</button>
         <button class="sw-btn sw-btn-primary" disabled={!!measuring || applying} onclick={apply} title={t('profiles.lcApplyTip')}>{t('common.apply')}</button>
       </div>
   {/if}

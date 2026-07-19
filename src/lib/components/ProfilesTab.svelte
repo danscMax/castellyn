@@ -177,7 +177,11 @@
   let lcOpen = $state(false);
   let lcProfile = $state<ProfileLaunch | null>(null);
   function openLaunchCfg(name: string) {
-    lcProfile = launchByName.get(name) ?? null;
+    // The dialog renders nothing for a null profile (launch config failed to load), so opening it
+    // would be a silent no-op — keep the state consistent and let the disabled menu entry explain it.
+    const p = launchByName.get(name);
+    if (!p) return;
+    lcProfile = p;
     lcOpen = true;
   }
 
@@ -219,16 +223,23 @@
   // L17: mask secret-shaped values before they hit the DOM or the clipboard. settings.json commonly
   // embeds MCP-server env API keys in plaintext; this viewer was the one surface that showed them raw.
   const viewerDisplay = $derived(redactSecrets(viewerContent));
+  // Generation token: switching file/profile fires a second read while the first is in flight, and
+  // whichever settles LAST would otherwise win — showing one file's text under another's heading.
+  let viewerReq = 0;
   async function loadViewer() {
+    const my = ++viewerReq;
     viewerLoading = true;
     viewerErr = '';
     viewerContent = '';
     try {
-      viewerContent = await readProfileFile(viewerName, viewerWhich);
+      const text = await readProfileFile(viewerName, viewerWhich);
+      if (my !== viewerReq) return;
+      viewerContent = text;
     } catch (e) {
+      if (my !== viewerReq) return;
       viewerErr = String(e);
     } finally {
-      viewerLoading = false;
+      if (my === viewerReq) viewerLoading = false;
     }
   }
   function openViewer(name: string) {
@@ -262,7 +273,7 @@
         label: t('profiles.menuTools'),
         title: t('profiles.menuToolsTip'),
         onClick: () => openLaunchCfg(p.name),
-        disabled: !p.exists
+        disabled: !p.exists || !launchByName.has(p.name)
       }
     ];
     if (p.exists) {

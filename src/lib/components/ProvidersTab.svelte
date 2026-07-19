@@ -9,6 +9,7 @@
   } from '$lib/ipc';
   import { updateEngine, checkMyProvider, checkProviderUrl, checkProviderBalance, readStackProcs, freellmapiAuthStatus, gatewayBaseUrl, stackLogPath, openPath, type StackProc, type ProviderBalance } from '$lib/ipc';
   import { t } from '$lib/i18n';
+  import { isValidHttpUrl } from '$lib/url';
   import EmptyState from './EmptyState.svelte';
   import { pushToast } from '$lib/toast.svelte';
   import { statusTextClass } from '$lib/statusColor';
@@ -214,8 +215,11 @@
     editUrl = e.baseUrl;
     editPort = e.port;
   }
+  // Same accept rule as the two provider-edit dialogs: an empty or non-http baseUrl saved here
+  // lands in engines.json and then propagates into a profile on the next bind.
+  const editUrlOk = $derived(isValidHttpUrl(editUrl.trim()));
   async function saveEdit() {
-    if (!editId) return;
+    if (!editId || !editUrlOk) return;
     try {
       await updateEngine(editId, editUrl.trim(), Number(editPort) || 0);
       editId = null;
@@ -574,10 +578,11 @@
                 <p class="mb-sw-2 text-sw-xs font-medium text-sw-text-secondary">{t('providers.endpointEditorTitle')}</p>
                 <div class="flex flex-col gap-sw-2">
                   <input class="sw-input text-sw-xs" bind:value={editUrl} placeholder="http://localhost:1234" spellcheck="false" title={t('providers.editUrlInputTip')} />
+                  {#if !editUrlOk}<span class="text-sw-xs text-sw-danger">{t('myProviders.errInvalidUrl')}</span>{/if}
                   <input class="sw-input text-sw-xs" type="number" bind:value={editPort} placeholder={t('providers.portPlaceholder')} title={t('providers.editPortInputTip')} />
                 </div>
                 <div class="mt-sw-2 flex gap-sw-2">
-                  <button class="sw-btn text-sw-xs" onclick={saveEdit} title={t('providers.saveEngineTitle')}>{t('providers.save')}</button>
+                  <button class="sw-btn text-sw-xs" disabled={!editUrlOk} onclick={saveEdit} title={t('providers.saveEngineTitle')}>{t('providers.save')}</button>
                   <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={() => (editId = null)} title={t('providers.cancelEditTip')}>{t('common.cancel')}</button>
                 </div>
               </div>

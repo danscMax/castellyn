@@ -46,6 +46,7 @@ export default {
   skillsSyncedTip: '所有可共享技能在各工具中均可见——无需共享',
   colSkill: '技能',
   matrixShareable: '可共享',
+  matrixLoadError: '无法加载技能矩阵',
   none: '无',
   openProvidersTip: '打开「提供商」标签',
   addProviderTip: '没有提供商——打开「提供商」标签',

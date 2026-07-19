@@ -74,9 +74,17 @@ export function deriveOutcome(input: DeriveInput): Outcome {
     };
   }
 
-  // Forks: summarise from the dedicated summary block and route to the Forks tab.
+  // Update / maintenance components via the unified envelope. A STALE envelope (older than this run's
+  // start = the script exited 0 without rewriting it — e.g. Write-StatusJson threw) must NOT drive the
+  // verdict with a prior run's status/counts; ignore them and fall through to the exit-0 success. Only
+  // gate when we actually have a run-start reference (>0) — no reference keeps the prior behavior.
+  const stale = startedAt ? !envelopeFresh(status, startedAt) : false;
+
+  // Forks: summarise from the dedicated summary block and route to the Forks tab. Sits BELOW the
+  // staleness gate — a fork-sync that exits 0 without rewriting fork-sync.last.json must not report
+  // the PREVIOUS run's needHands/merged/open counts as this run's result.
   if (id === 'forks') {
-    const s = status?.summary;
+    const s = stale ? undefined : status?.summary;
     const need = s?.needHands ?? 0;
     if (need > 0) {
       return {
@@ -97,11 +105,6 @@ export function deriveOutcome(input: DeriveInput): Outcome {
     };
   }
 
-  // Update / maintenance components via the unified envelope. A STALE envelope (older than this run's
-  // start = the script exited 0 without rewriting it — e.g. Write-StatusJson threw) must NOT drive the
-  // verdict with a prior run's status/counts; ignore them and fall through to the exit-0 success. Only
-  // gate when we actually have a run-start reference (>0) — no reference keeps the prior behavior.
-  const stale = startedAt ? !envelopeFresh(status, startedAt) : false;
   const changed = stale ? 0 : countOf(status, 'changed');
   const failed = stale ? 0 : countOf(status, 'failed');
   const st = stale ? undefined : (status?.status as string | undefined);

@@ -46,6 +46,7 @@ export default {
   skillsSyncedTip: 'Every shareable skill is visible in all harnesses — nothing left to share',
   colSkill: 'Skill',
   matrixShareable: 'shareable',
+  matrixLoadError: 'Could not load the skill matrix',
   none: 'none',
   openProvidersTip: 'Open the Providers tab',
   addProviderTip: 'No providers — open the Providers tab',

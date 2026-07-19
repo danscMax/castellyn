@@ -40,6 +40,7 @@ export default {
   home_stackRunning: '{up}/{total} running',
   home_stackStart: 'Start stack',
   home_stackStop: 'Stop stack',
+  home_stackIdle: 'stack is off',
   home_sessions: 'Sessions',
   home_sessionsActive: '{n} active',
   home_checkAll: 'Check all',

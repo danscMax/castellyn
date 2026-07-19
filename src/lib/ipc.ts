@@ -1199,8 +1199,6 @@ export type HubConfig = {
   rev?: number;
 };
 
-/** A single entry in the global-shortcut mapping. */
-export type ShortcutEntry = { action: string; accelerator: string };
 export type AppPaths = {
   scriptsRoot: string;
   configPath: string | null;

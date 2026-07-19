@@ -207,8 +207,20 @@
   const attention = $derived(chips.filter((c) => c.level === 'bad' || c.level === 'warn'));
   const calm = $derived(chips.filter((c) => c.level !== 'bad' && c.level !== 'warn'));
   const issues = $derived(attention.length);
+  // A fully stopped stack keeps its 'muted' chip (being off is a legitimate idle state), but the
+  // summary badge must not claim "all OK" while every enabled service is down — the two surfaces
+  // disagreed: stack_health raises an error toast for the same condition.
+  const stackIdle = $derived(
+    !!stack?.some((s) => s.enabled) && !stack.some((s) => s.enabled && s.running)
+  );
   const overall = $derived(
-    chips.some((c) => c.level === 'bad' || c.level === 'warn') ? 'warn' : chips.some((c) => c.level === 'ok') ? 'ok' : 'muted'
+    chips.some((c) => c.level === 'bad' || c.level === 'warn')
+      ? 'warn'
+      : stackIdle
+        ? 'idle'
+        : chips.some((c) => c.level === 'ok')
+          ? 'ok'
+          : 'muted'
   );
 
   // Recent runs (spec §4): the freshest *.last.json envelopes, newest first. Data the Updates
@@ -249,8 +261,14 @@
 
   <!-- Status strip (spec §4): overall verdict + freshest run + quick actions in one line. -->
   <div class="mb-sw-4 sw-card flex flex-wrap items-center gap-sw-3">
-    <span class="badge {overall === 'ok' ? 'badge-ok' : overall === 'muted' ? 'badge-muted' : 'badge-warn'}">
-      {overall === 'ok' ? t('page.home_allOk') : overall === 'muted' ? t('page.home_noData') : t('page.home_issues', { n: issues })}
+    <span class="badge {overall === 'ok' ? 'badge-ok' : overall === 'warn' ? 'badge-warn' : 'badge-muted'}">
+      {overall === 'ok'
+        ? t('page.home_allOk')
+        : overall === 'warn'
+          ? t('page.home_issues', { n: issues })
+          : overall === 'idle'
+            ? t('page.home_stackIdle')
+            : t('page.home_noData')}
     </span>
     {#if lastRun}
       <span class="text-sw-sm text-sw-text-muted">{t('page.home_lastMaint', { time: lastRun.when })}</span>

@@ -40,6 +40,7 @@ export default {
   home_stackRunning: '{up}/{total} запущено',
   home_stackStart: 'Запустить стек',
   home_stackStop: 'Остановить стек',
+  home_stackIdle: 'стек выключен',
   home_sessions: 'Сессии',
   home_sessionsActive: '{n} активных',
   home_checkAll: 'Проверить всё',

@@ -111,6 +111,12 @@
         return; // stay on the step — the path was NOT persisted
       }
     }
+    // Re-probe whenever we leave the scripts step with a root: "I don't have these scripts" (or a
+    // failed first probe) must not stick for the rest of the wizard once a real root is supplied —
+    // this also self-heals the case where the user fixed the path outside the app.
+    if (stepIdx === 1 && scriptsRoot.trim()) {
+      scriptsPresent = await scriptsAvailable().catch(() => null);
+    }
     if (stepIdx < TOTAL - 1) stepIdx += 1;
   }
   function back() {

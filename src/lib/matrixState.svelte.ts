@@ -179,10 +179,10 @@ export class MatrixState {
       folders: on ? [...new Set([...cur, folder])] : cur.filter((f) => f !== folder)
     };
   }
-  // Amber the chip when the profile isn't fully linked (needs attention / relink).
-  folderWarn(r: MatrixRow, name: string): boolean {
-    const sel = this.draft[name]?.folders ?? [];
-    if (sel.length < r.folders.length) return true;
+  // Amber the chip when the profile isn't fully linked (needs attention / relink). Compares only
+  // DESIRED folders: an earlier check against `r.folders.length` (the full candidate set) ambered
+  // every profile that deliberately shares a subset, forever, even with every link intact.
+  folderWarn(r: MatrixRow, _name: string): boolean {
     return r.folders.some((f) => f.desired && f.actual !== 'linked');
   }
 

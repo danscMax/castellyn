@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { renumberHistory, pushToast, dismiss, clearHistory, toastStore } from './toast.svelte';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  renumberHistory,
+  pushToast,
+  dismiss,
+  clearHistory,
+  toastStore,
+  pauseToasts,
+  resumeToasts
+} from './toast.svelte';
 
 // RT-001: the notification panel keys its {#each} by `item.id`, and Svelte throws on a duplicate key.
 // `seq` restarts at 0 on every load, so a history persisted across several runs carries colliding ids
@@ -45,6 +53,40 @@ describe('pushToast dedup (×N)', () => {
     const c = pushToast({ kind: 'error', title: 'boom', detail: 'y' });
     expect(new Set([a, b, c]).size).toBe(3);
     [a, b, c].forEach(dismiss);
+  });
+});
+
+// The host pauses auto-dismiss on hover; each toast also pauses on focus. Those overlap, so the
+// pause is refcounted — a single shared flag let whichever resume fired first unfreeze the timers
+// while the other source was still holding them, and the toast vanished mid-read.
+describe('pause refcounting', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps the toast alive while one pause source is still holding it', () => {
+    vi.useFakeTimers();
+    const id = pushToast({ kind: 'info', title: 'hold me' }, 1000);
+    pauseToasts(); // host hover
+    pauseToasts(); // focus lands on the toast
+    resumeToasts(); // focus leaves — but the pointer is STILL over the host
+    vi.advanceTimersByTime(5000);
+    expect(toastStore.items.some((x) => x.id === id)).toBe(true);
+    resumeToasts(); // pointer finally leaves
+    vi.advanceTimersByTime(5000);
+    expect(toastStore.items.some((x) => x.id === id)).toBe(false);
+  });
+
+  it('does not strand the next pause after an unpaired resume', () => {
+    vi.useFakeTimers();
+    resumeToasts(); // stray focusout with no matching focusin
+    const id = pushToast({ kind: 'info', title: 'clamp' }, 1000);
+    pauseToasts();
+    vi.advanceTimersByTime(5000);
+    expect(toastStore.items.some((x) => x.id === id)).toBe(true);
+    resumeToasts();
+    vi.advanceTimersByTime(5000);
+    expect(toastStore.items.some((x) => x.id === id)).toBe(false);
   });
 });
 

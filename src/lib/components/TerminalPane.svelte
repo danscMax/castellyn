@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { Terminal, type ILink } from '@xterm/xterm';
+  import { colAt } from '$lib/termColumns';
   import { FitAddon } from '@xterm/addon-fit';
   import { SearchAddon } from '@xterm/addon-search';
   import { WebglAddon } from '@xterm/addon-webgl';
@@ -72,7 +73,9 @@
     autoResumeLabel = null,
     displayName = '',
     onRename,
-    showUsage = true
+    showUsage = true,
+    scrollbackSlot = 0,
+    confirmDestructive = true
   }: {
     profile: string;
     tool?: SessionTool;
@@ -91,6 +94,10 @@
     onRename?: (key: string, name: string) => void;
     /** Redesign 2026-07: hide the header usage badge when the rail already shows it (dedup). */
     showUsage?: boolean;
+    /** Ordinal among panes sharing this launch recipe — keeps their scrollback keys distinct (W2). */
+    scrollbackSlot?: number;
+    /** Mirrors the global "confirm destructive actions" toggle; false → relaunch skips its dialog. */
+    confirmDestructive?: boolean;
     visible?: boolean;
     maximized?: boolean;
     broadcast?: boolean;
@@ -152,13 +159,17 @@
   // is NOT stable — seq resets every app start — but the LAUNCH RECIPE is: layout-restore recreates
   // a pane from exactly this tuple (tool/profile/cwd/target/args). The one volatile bit is the
   // `--resume <sid>` restore appends to a claude pane's args, so strip it to match the original save.
+  // The recipe alone isn't unique — two panes launched from the SAME recipe would share one key and
+  // overwrite each other's history, so the tab hands each one its ordinal within that recipe group
+  // (reproduced in order by layout restore).
   const scrollbackId = $derived(
     [
       tool,
       profile,
       sshTarget ?? '',
       cwd ?? '',
-      args.replace(/--resume\s+[\w-]+/g, '').replace(/\s+/g, ' ').trim()
+      args.replace(/--resume\s+[\w-]+/g, '').replace(/\s+/g, ' ').trim(),
+      `#${scrollbackSlot}`
     ].join('|')
   );
 
@@ -203,6 +214,9 @@
     // Attached mirrors don't own persisted scrollback — the backend replays it on attach, and the
     // owning window is the one that persists. Only a self-spawned pane writes here.
     if (attachId || !term || !serialize) return;
+    // P1 buffers output while the pane is off-screen; serializing without draining would persist a
+    // buffer the terminal has never seen. No-op when nothing is pending (as in openSearch/exportLog).
+    drainPending();
     try {
       // excludeAltBuffer: a dead full-screen TUI's alt-screen is gone on restart — restore the normal
       // scrollback that led up to it. scrollback omitted → full history (capped in the store).
@@ -437,6 +451,7 @@
     if (!term || !fit) return;
     exited = false;
     error = '';
+    gotData = false; // a relaunched SSH pane is connecting again — don't claim "connected" until bytes arrive
     // Spawn the PTY at the FINAL fitted size. The PTY — and the full-screen TUI it runs (e.g.
     // Claude Code on the alternate screen) — inherit cols/rows at launch. If we spawned at
     // xterm's default 80×24 and only fitted a frame later, the TUI would paint at 80 cols and
@@ -512,7 +527,8 @@
   }
 
   // F14: relaunch resets the terminal — confirm first so a stray click doesn't wipe the finished
-  // session's scrollback (the only record left once the PTY is gone).
+  // session's scrollback (the only record left once the PTY is gone). Honors the global
+  // confirm-destructive toggle, like every other destructive action in the app.
   let confirmRelaunch = $state(false);
   async function relaunch() {
     unlisteners.forEach((u) => u());
@@ -592,16 +608,21 @@
     // Conservative (absolute paths only) to avoid false positives and broken relative-path opens.
     term.registerLinkProvider({
       provideLinks(y, callback) {
-        const text = term?.buffer.active.getLine(y - 1)?.translateToString(true) ?? '';
+        const bufLine = term?.buffer.active.getLine(y - 1);
+        const text = bufLine?.translateToString(true) ?? '';
         const re = /([A-Za-z]:\\[^\s:*?"<>|%&^()`]+):(\d+)(?::\d+)?/g;
         const links: ILink[] = [];
         let m: RegExpExecArray | null;
         while ((m = re.exec(text))) {
           const path = m[1];
           const line = Number(m[2]);
-          const x = m.index + 1;
+          // xterm's range is 1-based inclusive on the left and 0-based exclusive on the right, i.e.
+          // +1 on start.x only (@xterm/addon-web-links says so verbatim).
           links.push({
-            range: { start: { x, y }, end: { x: x + m[0].length, y } },
+            range: {
+              start: { x: colAt(bufLine, m.index) + 1, y },
+              end: { x: colAt(bufLine, m.index + m[0].length), y }
+            },
             text: m[0],
             activate: () => openInEditor(path, line)
           });
@@ -823,7 +844,7 @@
     {#if autoResumeLabel}<span class="autoresume" title={t('sessions.autoResumeTip')}><RotateCw size={12} /> {autoResumeLabel}</span>{/if}
     <span class="spacer"></span>
     {#if exited || error}
-      <button class="x relaunch" onclick={() => (confirmRelaunch = true)} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
+      <button class="x relaunch" onclick={() => (confirmDestructive ? (confirmRelaunch = true) : relaunch())} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
     {/if}
     <!-- Council A (2026-07): the bar held ~10 unlabeled icon buttons in a tight row and «close»
          sat one slip away from «maximize». Frequent actions stay (search / maximize / close);

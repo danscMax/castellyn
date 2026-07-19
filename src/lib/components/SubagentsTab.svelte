@@ -156,7 +156,13 @@ Rules:
     }
   }
 
-  const canSave = $derived(!!name.trim() && !saving && !loading && !loadError);
+  // save_agent bumps a colliding FILENAME (foo.md → foo-2.md) but writes the frontmatter `name:`
+  // verbatim, so a duplicate name yields two agents declaring the same name and resolution picks
+  // one arbitrarily. Block it at the source instead — editing keeps its own name.
+  const dupName = $derived(
+    !editing && agents.some((a) => a.name.toLowerCase() === name.trim().toLowerCase())
+  );
+  const canSave = $derived(!!name.trim() && !dupName && !saving && !loading && !loadError);
 
   async function save() {
     if (!canSave) return;
@@ -262,6 +268,7 @@ Rules:
   <label class="dlg-fld">
     <span>{t('agents.fldName')}</span>
     <input class="sw-input" bind:value={name} placeholder={t('agents.fldNamePh')} spellcheck="false" />
+    {#if dupName}<span class="text-sw-xs text-sw-danger">{t('agents.dupName')}</span>{/if}
   </label>
 
   <label class="dlg-fld">

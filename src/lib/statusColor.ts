@@ -58,23 +58,9 @@ export const PROFILE_SWATCH: Record<string, string> = {
   DarkRed: '#b91c1c'
 };
 
-// The colour names offered in the picker, in display order.
-export const PROFILE_COLORS: string[] = [
-  'Cyan',
-  'Green',
-  'Yellow',
-  'Magenta',
-  'Blue',
-  'Red',
-  'White',
-  'Gray',
-  'DarkCyan',
-  'DarkGreen',
-  'DarkYellow',
-  'DarkMagenta',
-  'DarkBlue',
-  'DarkRed'
-];
+// The colour names offered in the picker, in display order — derived from the swatch map so a
+// colour can't be pickable-but-grey (or vice versa). Object literal insertion order IS the order.
+export const PROFILE_COLORS: string[] = Object.keys(PROFILE_SWATCH);
 
 const PROFILE_DOT_FALLBACK = '#94a3b8';
 /** Hex for a profile's stored colour name; a neutral slate for unknown/legacy names. */
