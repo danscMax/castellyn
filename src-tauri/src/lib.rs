@@ -3352,8 +3352,77 @@ fn valid_stack_id(s: &str) -> bool {
 // pid → Stop always closes them; port-checked before spawn → no start race; output → a per-service log
 // file. PIDs persist to disk so Stop works across an app restart. Ships dark (scripts stay default)
 // until the owner flips stackNative and smokes it live.
+/// Process creation time (Win32 FILETIME as u64), or None if the pid can't be queried. Windows
+/// recycles pids, so after an app restart a persisted service pid may belong to an unrelated process;
+/// comparing the creation time captured at spawn against the live one distinguishes ours from an
+/// impostor before we force-kill its whole tree (Codex MEDIUM-06).
+#[cfg(windows)]
+fn pid_creation_time(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let (mut c, mut e, mut k, mut u) = (
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+        );
+        let res = GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u);
+        let _ = CloseHandle(h);
+        res.ok()?;
+        Some(((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64)
+    }
+}
+#[cfg(not(windows))]
+fn pid_creation_time(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Safe to force-kill this tracked pid? Rejects ONLY on a CONFIRMED creation-time mismatch (a reused
+/// pid). Any unknown — a legacy record with no stored time, or a live pid that's gone/unqueryable —
+/// falls back to `true` so a flaky query can never block a legitimate Stop. Pure, unit-tested.
+fn creation_time_ok(persisted: Option<u64>, live: Option<u64>) -> bool {
+    match (persisted, live) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
+/// A tracked service process: top-of-tree pid + the creation time captured at spawn. The time is
+/// persisted in stack-procs.json so Stop can reject a REUSED pid after a restart (see above).
+#[derive(Clone, Copy, serde::Serialize)]
+struct TrackedProc {
+    pid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<u64>,
+}
+
+// Backward-compat load: stack-procs.json written before the `created` field held a bare pid number
+// per service. Accept both that legacy form and the new object form.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum TrackedProcRepr {
+    Full {
+        pid: u32,
+        #[serde(default)]
+        created: Option<u64>,
+    },
+    Legacy(u32),
+}
+impl From<TrackedProcRepr> for TrackedProc {
+    fn from(r: TrackedProcRepr) -> Self {
+        match r {
+            TrackedProcRepr::Full { pid, created } => TrackedProc { pid, created },
+            TrackedProcRepr::Legacy(pid) => TrackedProc { pid, created: None },
+        }
+    }
+}
+
 #[derive(Default)]
-struct StackProcs(Mutex<std::collections::HashMap<String, u32>>);
+struct StackProcs(Mutex<std::collections::HashMap<String, TrackedProc>>);
 
 // Cancel flag: a Stop signals an in-flight native start to abort its sequential spawn loop (mirrors
 // BULK_PLUGINS_CANCEL). Without it, Stop would kill the services started so far while the start loop
@@ -3370,13 +3439,14 @@ fn stack_procs_path() -> Option<std::path::PathBuf> {
         .ok()
         .map(|a| std::path::Path::new(&a).join("castellyn").join("stack-procs.json"))
 }
-fn load_stack_procs() -> std::collections::HashMap<String, u32> {
+fn load_stack_procs() -> std::collections::HashMap<String, TrackedProc> {
     stack_procs_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str(&c).ok())
+        .and_then(|c| serde_json::from_str::<std::collections::HashMap<String, TrackedProcRepr>>(&c).ok())
+        .map(|m| m.into_iter().map(|(k, v)| (k, v.into())).collect())
         .unwrap_or_default()
 }
-fn save_stack_procs(m: &std::collections::HashMap<String, u32>) {
+fn save_stack_procs(m: &std::collections::HashMap<String, TrackedProc>) {
     if let Some(p) = stack_procs_path() {
         // Route through the atomic writer (temp+rename): a crash mid-write must never leave a
         // half-written/blanked PID map — a blanked map orphans running services (Stop can't find
@@ -3761,7 +3831,12 @@ async fn native_stack_start(app: &AppHandle, procs: &StackProcs, only: Option<&s
             Some(pid) => {
                 {
                     let mut m = procs.0.lock().unwrap_or_else(|e| e.into_inner());
-                    m.insert(sid.clone(), pid);
+                    // Capture the creation time now so a restart's Stop can tell our service from a
+                    // process that later reuses this pid (Codex MEDIUM-06).
+                    m.insert(
+                        sid.clone(),
+                        TrackedProc { pid, created: pid_creation_time(pid) },
+                    );
                     save_stack_procs(&m);
                 }
                 started_pids.push((sid.clone(), pid));
@@ -3926,14 +4001,17 @@ async fn native_stack_stop(
             .to_string();
         let port = svc.get("port").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
         let mut killed = false;
-        if let Some(pid) = tracked.get(&sid) {
+        if let Some(sp) = tracked.get(&sid) {
             // Guard the persisted pid: after a restart `tracked` comes from disk (stack-procs.json)
-            // and Windows may have reused it. Our tracked pid is always the `cmd /c` wrapper, so
-            // require the live image to still be ours before force-killing its whole tree.
-            // ponytail: residual = a reused pid that itself became cmd/node/python; narrow, accepted.
-            if *pid != 0
-                && pid_image_name(*pid).map(|n| is_ours_process(&n)).unwrap_or(false)
-                && kill_tree(*pid).is_ok()
+            // and Windows may have reused it. Two independent checks before force-killing its whole
+            // tree: (1) the live image is still one of ours (cmd/node/python), and (2) the process
+            // creation time still matches the one captured at spawn — a reused pid has a DIFFERENT
+            // creation time, so this rejects the impostor node/python job the old image-name check
+            // alone would have killed (Codex MEDIUM-06). Unknown creation time falls back to (1).
+            if sp.pid != 0
+                && pid_image_name(sp.pid).map(|n| is_ours_process(&n)).unwrap_or(false)
+                && creation_time_ok(sp.created, pid_creation_time(sp.pid))
+                && kill_tree(sp.pid).is_ok()
             {
                 killed = true;
             }
@@ -13322,6 +13400,49 @@ fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> 
 #[cfg(test)]
 mod audit_fixes_tests {
     use super::*;
+
+    #[test]
+    fn creation_time_ok_only_rejects_a_confirmed_mismatch() {
+        // The kill-guard must reject ONLY when both times are known AND differ (a reused pid); every
+        // unknown falls back to "proceed" so a flaky query can't wedge a legitimate Stop (MEDIUM-06).
+        assert!(creation_time_ok(Some(100), Some(100)), "same time → our service, kill it");
+        assert!(!creation_time_ok(Some(100), Some(200)), "reused pid (differing times) → skip");
+        assert!(creation_time_ok(None, Some(200)), "legacy record, no stored time → fall back");
+        assert!(creation_time_ok(Some(100), None), "live pid gone/unqueryable → don't block Stop");
+        assert!(creation_time_ok(None, None), "nothing known → status quo");
+    }
+
+    #[test]
+    fn tracked_proc_load_accepts_legacy_bare_pid_and_new_object() {
+        use std::collections::HashMap;
+        let conv = |s: &str| -> HashMap<String, TrackedProc> {
+            serde_json::from_str::<HashMap<String, TrackedProcRepr>>(s)
+                .unwrap()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect()
+        };
+        // Legacy stack-procs.json: bare pid numbers → no creation time.
+        let legacy = conv(r#"{"router": 1234}"#);
+        assert_eq!(legacy["router"].pid, 1234);
+        assert_eq!(legacy["router"].created, None);
+        // New object form carries the creation time.
+        let modern = conv(r#"{"router": {"pid": 5678, "created": 999}}"#);
+        assert_eq!(modern["router"].pid, 5678);
+        assert_eq!(modern["router"].created, Some(999));
+        // Round-trip: serialize the in-memory map → re-load → identical.
+        let out = serde_json::to_string(&modern).unwrap();
+        let back = conv(&out);
+        assert_eq!(back["router"].pid, 5678);
+        assert_eq!(back["router"].created, Some(999));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pid_creation_time_reads_own_process_and_rejects_bogus() {
+        assert!(pid_creation_time(std::process::id()).is_some(), "own process has a creation time");
+        assert!(pid_creation_time(0xFFFF_FFF0).is_none(), "a bogus pid has none");
+    }
 
     #[test]
     fn tmp_secret_base_recovers_target_from_legacy_and_unique_temp_names() {
