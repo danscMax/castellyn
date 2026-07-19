@@ -37,7 +37,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-06-30
         with:
-          toolchain: "1.93.0"   # match rust-toolchain.toml (1.94 breaks the `time` crate)
+          toolchain: "1.94.0"   # must match rust-toolchain.toml — bump the two together
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -62,6 +62,17 @@ jobs:
       - run: npm run check          # svelte-check — type + i18n shape gate (0/0)
       - run: npm run check:i18n     # ru/en/zh leaf-key parity
       - run: npm test               # vitest
+      # "The SAME gates as CI" has to include the PowerShell one, or the claim above is false: the
+      # release bundles tools/*.ps1 and ships them to users.
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Force -Scope CurrentUser -SkipPublisherCheck
+          $issues = @()
+          foreach ($f in (git ls-files '*.ps1' '*.psm1')) {
+            $issues += Invoke-ScriptAnalyzer -Path $f -Settings ./PSScriptAnalyzerSettings.psd1
+          }
+          if ($issues) { $issues | Format-Table Severity, ScriptName, Line, RuleName -AutoSize; throw "PSScriptAnalyzer: $($issues.Count) issue(s)" }
       # cargo gates need the frontend bundle (generate_context! reads ../build); the signed build below
       # rebuilds it, but the gates must pass first.
       - run: npm run build

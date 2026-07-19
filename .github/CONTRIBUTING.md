@@ -10,8 +10,8 @@ npm install        # first time
 npm run tauri dev  # full app, hot reload   (npm run dev = frontend only)
 ```
 
-You need a recent **Node** (24.x); the Rust toolchain is **pinned to 1.93.0** via
-`rust-toolchain.toml` (rustup selects it automatically — 1.94 breaks the `time` crate). On Windows
+You need a recent **Node** (24.x); the Rust toolchain is **pinned to 1.94.0** via
+`rust-toolchain.toml` (rustup selects it automatically). On Windows
 nothing else is required (WebView2 ships with the OS); on Linux/macOS install the
 [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 

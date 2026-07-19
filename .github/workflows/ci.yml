@@ -44,24 +44,30 @@ jobs:
       # ref should not float). `v1` exists as a tag, but tags move; a SHA does not.
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-06-30
         with:
-          toolchain: "1.93.0"   # match rust-toolchain.toml (1.94 breaks the `time` crate)
+          toolchain: "1.94.0"   # must match rust-toolchain.toml — bump the two together
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
       - run: npm ci
-      # generate_context! reads frontendDist (../build), so the lib won't
-      # compile — clippy/test included — until the frontend is built.
-      - run: npm run build
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
-      # PowerShell static analysis on the maintenance backend (tools/*.ps1 is the script layer the app
-      # spawns). Windows runner already has PowerShell; PSScriptAnalyzer is installed per-run.
-      - name: PSScriptAnalyzer (tools)
+      # PowerShell static analysis on EVERY tracked script, not just tools/: build_all.ps1, verify.ps1
+      # and the notify hook live outside it and are just as capable of breaking a user's machine.
+      # Rules and severities come from PSScriptAnalyzerSettings.psd1 so this and verify.ps1 can never
+      # disagree. Ordered BEFORE the cargo gates on purpose: while it sat last, a red cargo test meant
+      # this step never executed at all, and the lint gate silently did nothing for weeks.
+      - name: PSScriptAnalyzer
         shell: pwsh
         run: |
           # Pin the module version so a compromised/unexpected PSGallery release can't run on the runner
           # under the workflow token (Codex LOW-03). Bump deliberately, not floating.
           Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Force -Scope CurrentUser -SkipPublisherCheck
-          $issues = Invoke-ScriptAnalyzer -Path tools -Recurse -Severity Warning
-          if ($issues) { $issues | Format-Table -AutoSize; throw "PSScriptAnalyzer: $($issues.Count) issue(s)" }
+          $issues = @()
+          foreach ($f in (git ls-files '*.ps1' '*.psm1')) {
+            $issues += Invoke-ScriptAnalyzer -Path $f -Settings ./PSScriptAnalyzerSettings.psd1
+          }
+          if ($issues) { $issues | Format-Table Severity, ScriptName, Line, RuleName -AutoSize; throw "PSScriptAnalyzer: $($issues.Count) issue(s)" }
+      # generate_context! reads frontendDist (../build), so the lib won't
+      # compile — clippy/test included — until the frontend is built.
+      - run: npm run build
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
