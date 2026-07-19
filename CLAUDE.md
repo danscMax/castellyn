@@ -31,8 +31,11 @@ output; the Svelte UI renders their `*.last.json` status envelopes.
 - **Tauri v2** single binary. Frontend **SvelteKit (static adapter, SPA) + Svelte 5 runes**;
   backend **Rust** (`src-tauri/`). No DB, no sidecar process.
 - **Backend** is essentially one file: `src-tauri/src/lib.rs` — all `#[tauri::command]`s.
-  - `spawn_streamed(...)` is the single DRY entry for running a script and streaming
-    `run-log` / `run-done` events to the UI. One run at a time; `cancel_run` kills the tree.
+  - `pump_and_wait(...)` is the single streaming primitive (child stdout/stderr → `run-log`,
+    exit → `run-done`). Reach it through an existing wrapper: `spawn_streamed` → `_io` → `_prog`
+    for a script under the single-run `RunState` guard, `spawn_pwsh_phase` / `spawn_stack_phase`
+    for stack phases, `run_fork_repo` for the concurrent per-repo fork runs. `cancel_run` kills
+    the tree.
   - Native (no-script) readers exist where cheaper: `read_mcp`, `read_providers`,
     `port_listening`, plugin/skill scans.
   - **All process spawns set `CREATE_NO_WINDOW`** (0x08000000) — otherwise a black console
@@ -40,8 +43,8 @@ output; the Svelte UI renders their `*.last.json` status envelopes.
   - Config: `HubConfig` in `%APPDATA%\castellyn\config.json` (`config_path()`), with a
     legacy-path read fallback (`legacy_config_path`) kept for the pre-rename location.
   - Autostart: HKCU\…\Run value `Castellyn` (`AUTOSTART_NAME`); migrated once from `AgentHub`.
-  - Tray menu labels are **localized** via `src-tauri/src/i18n.rs` (`tr("tray.*", lang)`,
-    ~`lib.rs:7548`); `set_language` relabels the tray live when the UI locale changes.
+  - Tray menu labels are **localized** via `src-tauri/src/i18n.rs` (`tr("tray.*", lang)`, used in
+    `build_tray`); `set_language` relabels the tray live when the UI locale changes.
 - **Frontend** (`src/`):
   - `routes/+page.svelte` — the orchestrator: tab state, all `run_*`/`read_*` calls,
     the confirm dialog (`askConfirm`/`doConfirm`), run-log + toasts.
@@ -68,8 +71,9 @@ counts:{changed,failed,total}, summary }`. Scripts emit it via `Write-StatusJson
 
 ## Conventions (follow these)
 
-- **DRY**: search before adding. Backend → reuse `spawn_streamed`; never add a second
-  streaming path. Frontend → reuse `common.*` i18n keys, `askConfirm`, existing components.
+- **DRY**: search before adding. Backend → every streamed run must terminate in `pump_and_wait`;
+  never add a second streaming path. Frontend → reuse `common.*` i18n keys, `askConfirm`,
+  existing components.
 - **i18n**: every user-facing string goes through `t('ns.key')`. Keep ru/en/zh in parity
   (enforced by `npm run check:i18n` + `src/lib/i18n/index.test.ts`). **Never** name an
   `{#each … as t}` loop var or a function param `t` — it shadows the translation function.
@@ -91,11 +95,14 @@ npm run check          # svelte-check (type + i18n shape gate) — keep 0/0
 npm test               # vitest (i18n parity, outcome, attention)
 npm run check:i18n     # ru/en/zh leaf-key parity (tsx)
 npm run build          # frontend → build/
+npm run verify         # ALL gates in order (verify.ps1) — the single source of truth
 .\build_all.ps1        # release exe (castellyn.exe) + desktop shortcut (Castellyn.lnk)
 ```
 
-Green gates before declaring done: `npm run check` (0/0), `npm test`, `npm run build`, and a
-release build via `build_all.ps1`. See `docs/BUILD.md`.
+Green gates before declaring done: `npm run verify` (i18n parity → PSScriptAnalyzer →
+svelte-check 0/0 → vitest → frontend build → `cargo clippy -D warnings` → cargo test), and a
+release build via `build_all.ps1`. Don't hand-maintain that list here — read `verify.ps1`.
+See `docs/BUILD.md`.
 
 ## Isolated test instance (safe full click-through)
 
@@ -130,9 +137,13 @@ pwsh -File tools/iso-test.ps1 -Stop      # tear down (kills exe + frees vite 142
 
 ## Icon / branding
 
-App icon master is `src-tauri/icons/icon.png` (1024). Regenerate all formats with
-`python tools/make-icon.py` → `npm run tauri -- icon <printed path>`. Brand blue
-`#3b82f6 → #2563eb`.
+Production icon master is `src-tauri/icons/icon-master.png` (1024×1024 citadel/gatehouse
+emblem). Regenerate every format from it with
+`npm run tauri -- icon src-tauri/icons/icon-master.png` — this overwrites `icon.png`,
+`icon.ico`, `icon.icns` and the `Square*` set. Brand blue `#3b82f6 → #2563eb`.
+`tools/make-icon.py` is **only an offline fallback**: it draws the LEGACY hub-and-nodes mark
+with Pillow, not the shipped emblem — feeding its output to `tauri icon` replaces the app icon.
+Details in `docs/BUILD.md`.
 
 ## Docs
 

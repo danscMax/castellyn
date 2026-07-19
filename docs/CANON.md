@@ -7,8 +7,10 @@ source of truth (executable, can't lie); this file is the human map, rendered fr
 
 **Guard idiom.** Frontend cross-cutting scans extend `src/lib/contrast.test.ts` (vitest reads
 `app.css` + every `.svelte <style>` block). Backend scans are Rust `#[test]`s over
-`include_str!("lib.rs")`, co-located with the canon. Everything runs in `.github/workflows/ci.yml`
-(`npm run check` + `check:i18n` + `npm test`, then `cargo clippy -D warnings` + `cargo test`).
+`include_str!("lib.rs")`, co-located with the canon. Everything runs in `.github/workflows/ci.yml` and in
+`verify.ps1` (`npm run verify`), which is the single source of truth for the gate list:
+i18n parity → PSScriptAnalyzer (all tracked `*.ps1`/`*.psm1`) → `npm run check` → `npm test` →
+frontend build → `cargo clippy -D warnings` → `cargo test`.
 
 ## Visual
 | Canon | Home | Adoption guard |
@@ -30,7 +32,7 @@ source of truth (executable, can't lie); this file is the human map, rendered fr
 | Canon | Home | Adoption guard |
 |---|---|---|
 | Every process spawn hides its console (`CREATE_NO_WINDOW`) | `CREATE_NO_WINDOW` const (`lib.rs:29`) + convention | **`spawn_window_guard` (`lib.rs`)** — every `Command::new` sets a `creation_flags` call before the next spawn |
-| One streamed-run path | `spawn_streamed → _io → _prog` (`lib.rs`) | single-instance by construction (no rival path) |
+| One streamed-run path | `pump_and_wait` (`lib.rs`) ← `spawn_streamed_prog` / `spawn_pwsh_phase` / `spawn_stack_phase` / `run_fork_repo` | by construction — every streamed run must terminate in `pump_and_wait`; the wrappers differ only in slot/registry bookkeeping |
 | UTF-8-safe parsing of user files | `str::get` / `split_once` / `from_utf8_lossy` | *backlog* — the 2 known parsers are fixed + regression-tested; a general `clippy::string_slice` guard is too noisy to ratchet (findings CN-5) |
 | Config-path migration fallback | `config_path → legacy_config_path` (`lib.rs`) | migration code |
 

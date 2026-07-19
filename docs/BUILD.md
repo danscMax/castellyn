@@ -21,9 +21,20 @@ npm run check:i18n     # ru/en/zh leaf-key parity (needs tsx, a devDependency)
 
 ### Local CI (run all gates at once)
 
-`verify.ps1` runs every gate in order (i18n parity → svelte-check → vitest → frontend
-build → cargo check → cargo test) and stops at the first failure. It's the single source
-of truth for the gate list.
+`verify.ps1` runs every gate in order and stops at the first failure. It's the single source
+of truth for the gate list — read the file rather than trusting this summary:
+
+1. `npm run check:i18n` — ru/en/zh leaf-key parity
+2. **PSScriptAnalyzer** — every tracked `*.ps1`/`*.psm1` (`git ls-files`), rules in
+   `PSScriptAnalyzerSettings.psd1`; installs the module once (CurrentUser) if missing
+3. `npm run check` — svelte-check (types + i18n shape)
+4. `npm test` — vitest
+5. `npm run build` — frontend build
+6. `cargo clippy --all-targets -- -D warnings` (**not** `cargo check` — warnings are errors)
+7. `cargo test`
+
+`.github/workflows/ci.yml` runs the same set; PSScriptAnalyzer there also precedes the cargo
+gates and covers the whole repo, not just `tools/`.
 
 ```bash
 npm run verify         # or: powershell -ExecutionPolicy Bypass -File verify.ps1
@@ -76,7 +87,8 @@ await page.screenshot({ path: 'shot.png' });
 
 - Output exe: `src-tauri\target\release\castellyn.exe` (the binary follows the lowercase crate
   name; the display product name is **Castellyn**).
-- The exe is standalone (~9 MB); it reads `SCRIPTS_ROOT` (env → Settings → default `E:\Scripts`),
+- The exe is standalone (tens of MB — check the artifact, don't trust a number here); it reads
+  `SCRIPTS_ROOT` (env → Settings → default `E:\Scripts`),
   so it runs from anywhere as long as the scripts are reachable.
 
 Under the hood: `npm run tauri build` (`@tauri-apps/cli`). Config in `src-tauri/tauri.conf.json`

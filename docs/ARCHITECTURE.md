@@ -26,12 +26,19 @@ single binary.
 
 One file holds all commands. Key pieces:
 
-- **`spawn_streamed(component, program, args, state)`** — the single way to run an external
-  process. Streams stdout/stderr line-by-line as `run-log` events and a final `run-done`
-  (exit code) event. Enforces **one run at a time** (a `RunState` mutex holds the child PID);
-  `cancel_run` does `taskkill /T /F`. Every command that runs a script funnels through it
-  (`run_component`, `run_forks`, `run_backup`, `run_profiles`, `run_mcp`, `run_sync`,
-  `run_engine`, `run_provider`, `run_router`, `run_schedule`, `run_plugin`, …).
+- **`pump_and_wait(app, id, child, log_event, done_event)`** — the single shared streaming path:
+  pumps a child's stdout/stderr line-by-line as `run-log` events and emits a final `run-done`
+  (exit code) event. Everything that streams a process ends here; the wrappers differ only in
+  slot/registry bookkeeping:
+  - **`spawn_streamed(component, script, args, state)`** → `spawn_streamed_io` (optional stdin for
+    secrets, keeping them out of argv) → `spawn_streamed_prog`. Enforces **one run at a time**
+    (a `RunState` mutex holds the child PID); `cancel_run` does `taskkill /T /F`. Every command
+    that runs a maintenance script funnels through it (`run_component`, `run_forks`, `run_backup`,
+    `run_profiles`, `run_mcp`, `run_sync`, `run_engine`, `run_provider`, `run_router`,
+    `run_schedule`, `run_plugin`, …).
+  - **`spawn_pwsh_phase` / `spawn_stack_phase`** — per-phase runs with their own done-event.
+  - **`run_fork_repo`** — the concurrent per-repo fork runner (`fork-log` / `fork-done`), which
+    is deliberately *not* under the single-run guard.
 - **Native readers** (no script, pure Rust) where it's cheaper/safer: `read_mcp`,
   `read_providers` (reads each profile's `settings.json` env, never returns tokens — only
   `hasToken`), `read_engines` (+ TCP `port_listening`), `read_config_drift` (shared-config link
@@ -54,14 +61,16 @@ One file holds all commands. Key pieces:
 - **`limits.rs`** — OAuth usage monitors: per-profile Claude (5h/7d/scoped) AND the Codex plan
   (`~/.codex/auth.json` → `chatgpt.com/backend-api/wham/usage`, event `codex-limits-status`),
   sharing one edge-triggered 85/99 alert path.
-- **Tray / window** — `build_tray` (Show / Check-all / Quit), close-to-tray, autostart via
-  HKCU\…\Run value `Castellyn` (migrated once from the old `AgentHub` value). Tray menu labels are
-  localized via `src-tauri/src/i18n.rs` (`tr("tray.*", lang)`) and relabeled live on a locale change
-  (`set_language`); the tooltip is the brand name `Castellyn`.
+- **Tray / window** — `build_tray` (Show window, Check all, Refresh forks/providers, Start/Stop
+  stack, Open Backup/Settings, Cancel all, Quit), close-to-tray, autostart via HKCU\…\Run value
+  `Castellyn` (migrated once from the old `AgentHub` value). Tray menu labels are localized via
+  `src-tauri/src/i18n.rs` (`tr("tray.*", lang)`) and relabeled live on a locale change
+  (`set_language`). The tooltip is dynamic (`update_tray_tooltip`): the brand name when idle,
+  otherwise the session count plus a blocked/limited/down attention line.
 
 **Registered commands** — the canonical, authoritative list is the `tauri::generate_handler![…]`
-block at the bottom of `lib.rs` (~80 commands; frontend calls them via typed wrappers in
-`lib/ipc.ts`). Don't maintain a copy here — it rots. They group roughly as:
+block at the bottom of `lib.rs` (frontend calls them via typed wrappers in `lib/ipc.ts`). Don't
+maintain a copy or a count here — it rots. They group roughly as:
 
 - **components / updates** — `list_components`, `read_status`, `run_component`, `cancel_run`
 - **forks** — `run_forks`, `run_fork_repo`, `cancel_fork_repo`, `read_fork_repo_status`, `list_github_repos`
@@ -93,13 +102,14 @@ block at the bottom of `lib.rs` (~80 commands; frontend calls them via typed wra
   (`$effect`), and centralizes the **confirm dialog** (`askConfirm`/`doConfirm`) and the
   **run lifecycle** (`run-log` appends to the console log; `run-done` reloads the relevant
   tab's data and surfaces a toast via `lib/outcome.ts`).
-- **Components** (`lib/components/`, ~42 files): one per tab — `HomeTab` (USE-1 health overview),
+- **Components** (`lib/components/` — `ls` it rather than trusting a count here): one per tab —
+  `HomeTab` (USE-1 health overview),
   `UpdatesTab`, `ForksTab`, `BackupTab`, `ProfilesTab`, `McpTab`, `EnvironmentsTab` (the «Среды»
   cross-harness tab), `SyncTab`, `ProvidersTab`,
   `PluginsTab`, `ScheduleTab`, `SessionsTab`, `SubagentsTab` (the «Субагенты» agents tab),
   `AnalyticsTab`, `SettingsTab` — plus dialogs (all
   built on `ModalShell`: `ConfirmDialog`, `RestoreDialog`, `ProfileEditDialog`, `LaunchConfigDialog`,
-  `SessionLaunchDialog`, `ProviderEditDialog`, `MyProviderEditDialog`, `RouterConnectDialog`,
+  `ProviderEditDialog`, `MyProviderEditDialog`, `RouterConnectDialog`,
   `HotkeyHelp`), shell (`Sidebar`, `Console`, `WindowTitleBar`, `ToastHost`, `CommandPalette`),
   and shared widgets (`Toggle`, `Select`, `FolderField`, `DropdownMenu`, `DataTable`,
   `Sparkline`, `Spinner`, `SecretInput`, `TerminalPane`, `ComponentCard`, `StackHealthCard`).
