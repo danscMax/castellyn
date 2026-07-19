@@ -3,12 +3,13 @@
 All notable changes to **Castellyn** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] — 2026-07-13
+## [0.7.0] — 2026-07-19
 
 The multi-agent-and-gateway release. Castellyn grows from a Claude Code maintenance shell into a
 control center for a whole local AI-coding stack: a single OmniRoute front gateway for every client,
 first-class Codex/OpenCode agents, a native stack supervisor, a custom-subagent manager, a live
-Anthropic usage-limit monitor, and a large audit-driven reliability + UI-consolidation pass.
+usage-limit monitor for both Anthropic and Codex, parallel git-worktree sessions with a cross-session
+message bus, an agent-session scheduler, and a large audit-driven reliability + UI-consolidation pass.
 
 ### Added
 - **OmniRoute unified gateway** — one front (`:20128`) routes every client: Claude Code (Anthropic `/v1/messages`), Codex (OpenAI `/v1/responses`), and OpenCode (OpenAI `/v1`). A **Connect OmniRoute** button on the Codex environment card wires `~/.codex` to the gateway (Codex 0.142+ format: `wire_api="responses"` + per-profile config file). Verified end-to-end live across all three client protocols.
@@ -19,6 +20,11 @@ Anthropic usage-limit monitor, and a large audit-driven reliability + UI-consoli
 - **Orphan profile management** — the Profiles tab surfaces `~/.claude-<name>` directories that aren't canon profiles, each with **Adopt** and **Delete** (to the Recycle Bin), guarded against canon-profile data loss and against sweeping junction targets.
 - **Cross-profile plugin sync** — on-demand reconcile plus a SessionStart hook that keeps every profile's plugin set aligned.
 - **Sessions: agent status** — lifecycle hooks + PTY activity drive per-pane status with sound and OS notifications; the previous run's session set is restored after a restart; `Shift+PgUp/PgDn` scrollback and `Alt+N` pane focus.
+- **Sessions: git-worktree isolation** — launch a session in its own throwaway git worktree so parallel agents on one repo never collide, with suffix-collision-safe naming, provenance metadata on the branch, and staggered auto-cleanup on close.
+- **Sessions: scrollback persistence** — each pane's terminal scrollback is serialized and restored across restarts (capped, TTL-pruned), so a resumed session keeps its history.
+- **Sessions: cross-session message bus + fan-out** — send a prompt to `@all` / `@idle` sessions (or a fan-out set) from one place; a file-backed mailbox delivers and tracks read state, with a per-tab unread badge.
+- **Agent-session scheduler** — schedule a favorite session recipe to launch on a minute-tick timer, gated by a live quota check and an optional shell precheck; outcomes post back to the session bus.
+- **Codex usage-limit monitor** — the usage watcher now also reads the Codex (ChatGPT) rate-limit window alongside the Anthropic one, so a Codex pane's limits surface the same way.
 - **Updates** — auto re-check of the whole stack after Update-All, with live per-component progress.
 
 ### Changed
@@ -30,6 +36,8 @@ Anthropic usage-limit monitor, and a large audit-driven reliability + UI-consoli
 
 ### Fixed
 - **Global audit hardening (2026-07-12)** — ~155 verified correctness / reliability / quality findings fixed across the backend, frontend, PowerShell, and CI, each validated for reachability. Notably: the launch advisor + auto-switch were dead in production (a profile-key prefix mismatch) and now work end-to-end.
+- **Bug-hunt hardening (2026-07-15)** — 46 more verified fixes, each traced to source: SSH option-injection surface, a disposed-xterm write on pane teardown, DataTable rows that lingered after their data changed, an auto-update version-prefix mismatch that broke self-update, and a window-close path that killed live paid sessions instead of returning them to the main window.
+- **Notifications** — a persistently re-firing background error (e.g. an unreadable plugins file) no longer fills the notification history with identical rows; consecutive duplicates collapse into a single ×N entry, matching the visible-toast dedup, and error toasts auto-expire instead of sticking forever.
 - **Security & reliability hardening** — settings-write races, single-instance handling, status-engine correctness, and confirmed reliability bugs across multiple hardening waves; UTF-8-safe parsing of user files; BOM-tolerant JSON reads.
 - **Providers** — a failed new-key write rolls back the migrated slot 0 instead of losing the key.
 - **Shortcuts** — global shortcuts re-register teardown-first, so changing one while keeping another no longer silently fails.
