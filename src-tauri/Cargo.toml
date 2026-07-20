@@ -53,7 +53,7 @@ toml_edit = "0.25.12"
 # Win32 Job Object so PTY child trees (pwsh → claude/node, ssh.exe) die with the app instead of
 # orphaning on a kill/crash. Windows-only; no-op stub elsewhere.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_JobObjects",
@@ -62,6 +62,9 @@ windows = { version = "0.61", features = [
   # The function lives in System::Diagnostics::Debug; its MESSAGEBOX_STYLE arg needs UI feature.
   "Win32_System_Diagnostics_Debug",
   "Win32_UI_WindowsAndMessaging",
+  # GetLocalTime for schedule ticks (agent_schedules.rs). Explicit since windows 0.62 — 0.61 pulled
+  # SystemInformation in transitively, 0.62 configures it out unless the feature is named.
+  "Win32_System_SystemInformation",
 ] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
