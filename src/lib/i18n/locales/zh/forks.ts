@@ -85,6 +85,19 @@ export default {
   ghColStars: '★',
   ghColActions: '操作',
 
+  // ── ForksTab: my open PRs/issues (gh search, any repo — incl. never cloned) ──
+  myItemsHeading: '我的未关闭 PR 和 issue（{n}）',
+  myItemsTip:
+    '你在所有 GitHub 仓库中未关闭的 PR 和 issue，包括从未克隆的仓库。分叉列表仅显示本地仍存在分支的 PR。',
+  myItemsCommentsTip: '讨论中的评论数',
+  myColKind: '类型',
+  myColRepo: '仓库',
+  myColTitle: '标题',
+  myColComments: '💬',
+  myColUpdated: '更新时间',
+  badgePr: 'PR',
+  badgeIssue: 'issue',
+
   // ── ForksTab: empty state ──
   emptyTitle: '暂无数据',
   emptyHint: '点击「检查」以收集分叉状态。',

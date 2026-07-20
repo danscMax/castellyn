@@ -88,6 +88,19 @@ export default {
   ghColStars: '★',
   ghColActions: 'Действия',
 
+  // ── ForksTab: my open PRs/issues (gh search, any repo — incl. never cloned) ──
+  myItemsHeading: 'Мои открытые PR и issues ({n})',
+  myItemsTip:
+    'Твои незакрытые PR и issues по ВСЕМ репозиториям GitHub, включая те, что не клонированы. Список форков видит PR только у веток, которые ещё существуют локально.',
+  myItemsCommentsTip: 'Комментариев в обсуждении',
+  myColKind: 'Тип',
+  myColRepo: 'Репозиторий',
+  myColTitle: 'Заголовок',
+  myColComments: '💬',
+  myColUpdated: 'Обновлён',
+  badgePr: 'PR',
+  badgeIssue: 'issue',
+
   // ── ForksTab: empty state ──
   emptyTitle: 'Нет данных',
   emptyHint: 'Нажми «Проверить», чтобы собрать статус форков.',

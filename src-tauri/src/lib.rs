@@ -5227,6 +5227,84 @@ async fn list_github_repos() -> Vec<GithubRepo> {
 }
 
 #[derive(Serialize)]
+struct MyGithubItem {
+    repo: String, // "owner/repo"
+    number: u64,
+    title: String,
+    url: String,
+    #[serde(rename = "isPr")]
+    is_pr: bool,
+    #[serde(rename = "updatedAt")]
+    updated_at: String,
+    comments: u64,
+}
+
+/// One `gh search <kind>` page (`kind` = "prs" or "issues") as parsed items. Empty on any
+/// failure — gh missing, unauthenticated, timed out, or unparsable output.
+/// NB: `gh search issues` returns ONLY issues and `gh search prs` ONLY pull requests — despite
+/// the shared `isPullRequest` field. Both are needed to see the whole picture.
+async fn gh_search_mine(kind: &str) -> Vec<MyGithubItem> {
+    let fut = tokio::process::Command::new("gh")
+        .args([
+            "search",
+            kind,
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "repository,number,title,url,updatedAt,isPullRequest,commentsCount",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .kill_on_drop(true) // on timeout the future is dropped — reap the child instead of orphaning gh
+        .output();
+    let Ok(Ok(out)) = tokio::time::timeout(std::time::Duration::from_secs(30), fut).await else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(stdout.trim()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .map(|r| {
+            let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let n = |k: &str| r.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            MyGithubItem {
+                repo: r
+                    .get("repository")
+                    .and_then(|x| x.get("nameWithOwner"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                number: n("number"),
+                title: s("title"),
+                url: s("url"),
+                is_pr: r
+                    .get("isPullRequest")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
+                updated_at: s("updatedAt"),
+                comments: n("commentsCount"),
+            }
+        })
+        .collect()
+}
+
+/// The user's own OPEN PRs and issues across ALL of GitHub. The fork scan only sees PRs whose
+/// topic branch still exists locally (merged branches get deleted → the PR vanishes), and never
+/// sees issues at all — this fills both gaps. Read-only (no network writes).
+#[tauri::command]
+async fn list_my_github_items() -> Vec<MyGithubItem> {
+    let (prs, issues) = tokio::join!(gh_search_mine("prs"), gh_search_mine("issues"));
+    prs.into_iter().chain(issues).collect()
+}
+
+#[derive(Serialize)]
 struct ProfileProvider {
     name: String,
     #[serde(rename = "baseUrl")]
@@ -16738,6 +16816,7 @@ pub fn run() {
             run_connect_router,
             read_engine_models,
             list_github_repos,
+            list_my_github_items,
             read_stack,
             run_stack,
             read_stack_health,

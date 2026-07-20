@@ -57,6 +57,7 @@
     setFreellmapiAuth,
     deleteFreellmapiAuth,
     listGithubRepos,
+  listMyGithubItems,
     cloneRepo,
     pickFolder,
     readStack,
@@ -94,6 +95,7 @@
     type Component,
     type ForkAction,
     type GithubRepo,
+  type MyGithubItem,
     type StackService,
     type OpencodeStatus,
     type BackupAction,
@@ -311,6 +313,7 @@
   };
   // All of the user's GitHub repos (gh repo list) — to surface repos not cloned locally.
   let githubRepos = $state<GithubRepo[]>([]);
+  let myGithubItems = $state<MyGithubItem[]>([]);
   let githubLoaded = $state(false);
   // The gate's logic lives in $lib/confirmGate (unit-tested); this holds only its reactive state.
   let confirm = $state<ConfirmState>(emptyConfirmState());
@@ -1933,6 +1936,11 @@
       listGithubRepos()
         .then((r) => (githubRepos = r))
         .catch(() => (githubRepos = []));
+      // Same trip: your open PRs/issues anywhere on GitHub (the fork scan only sees PRs whose
+      // topic branch still exists locally, and never sees issues at all).
+      listMyGithubItems()
+        .then((r) => (myGithubItems = r))
+        .catch(() => (myGithubItems = []));
     }
   });
 
@@ -2803,7 +2811,7 @@
       {:else if active === 'updates'}
         <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} {scriptsAvail} />
       {:else if active === 'forks'}
-        <ForksTab status={statuses.forks} {githubRepos} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
+        <ForksTab status={statuses.forks} {githubRepos} myItems={myGithubItems} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
       {:else if active === 'backup'}
         <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} {scriptsAvail} />
       {:else if active === 'mcp'}

@@ -88,6 +88,19 @@ export default {
   ghColStars: '★',
   ghColActions: 'Actions',
 
+  // ── ForksTab: my open PRs/issues (gh search, any repo — incl. never cloned) ──
+  myItemsHeading: 'My open PRs and issues ({n})',
+  myItemsTip:
+    "Your open PRs and issues across ALL GitHub repos, including ones you never cloned. The fork list only shows PRs for branches that still exist locally.",
+  myItemsCommentsTip: 'Comments in the thread',
+  myColKind: 'Kind',
+  myColRepo: 'Repository',
+  myColTitle: 'Title',
+  myColComments: '💬',
+  myColUpdated: 'Updated',
+  badgePr: 'PR',
+  badgeIssue: 'issue',
+
   // ── ForksTab: empty state ──
   emptyTitle: 'No data',
   emptyHint: 'Click “Check” to collect fork status.',

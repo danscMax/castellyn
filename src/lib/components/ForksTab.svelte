@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { confFiles, pickFolder, readForkConfig, writeForkConfig, type ForkConfig, type ForkStatus, type ForkAction, type GithubRepo } from '$lib/ipc';
+  import { confFiles, pickFolder, readForkConfig, writeForkConfig, type ForkConfig, type ForkStatus, type ForkAction, type GithubRepo, type MyGithubItem } from '$lib/ipc';
   import { forkMode, t, plural, pRepo, pConflict } from '$lib/i18n';
   import { relTime, relOrAbs, formatAbsTime } from '$lib/relativeTime';
   import { statusTextClass } from '$lib/statusColor';
@@ -14,6 +14,7 @@
   let {
     status,
     githubRepos = [],
+    myItems = [],
     running,
     forkRuns = {},
     onAction,
@@ -29,6 +30,7 @@
   }: {
     status: ForkStatus | null | undefined;
     githubRepos?: GithubRepo[];
+    myItems?: MyGithubItem[];
     running: string | null;
     forkRuns?: Record<string, { line: string; running: boolean; code: number | null }>;
     onAction: (action: ForkAction, path?: string, label?: string) => void;
@@ -231,6 +233,27 @@
     { key: 'kind', label: t('forks.ghColKind'), width: '90px' },
     { key: 'actions', label: t('forks.ghColActions'), width: '165px', align: 'right', interactive: true }
   ]);
+  // My open PRs/issues — newest first, PR/issue kind is a badge (no per-row actions beyond "open").
+  let myOpen = $state(true);
+  const myItemsSorted = $derived(
+    [...(myItems ?? [])].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+  );
+  const MY_COLS: DTColumn[] = $derived([
+    { key: 'kind', label: t('forks.myColKind'), width: '64px' },
+    { key: 'repo', label: t('forks.myColRepo'), width: '190px', sortable: true },
+    { key: 'title', label: t('forks.myColTitle'), grow: true, sortable: true },
+    { key: 'comments', label: t('forks.myColComments'), width: '52px', align: 'right', sortable: true },
+    { key: 'updated', label: t('forks.myColUpdated'), width: '100px', sortable: true },
+    // 110px, not 90 — at 90 the "GitHub ↗" label wrapped onto two lines and doubled the row height.
+    { key: 'actions', label: t('forks.ghColActions'), width: '110px', align: 'right', interactive: true }
+  ]);
+  function mySort(m: MyGithubItem, key: string): string | number {
+    if (key === 'repo') return m.repo.toLowerCase();
+    if (key === 'comments') return m.comments;
+    if (key === 'updated') return m.updatedAt;
+    return m.title.toLowerCase();
+  }
+
   function ghSort(g: Gh, key: string): string | number {
     if (key === 'full') return g.nameWithOwner.toLowerCase();
     if (key === 'updated') return g.updatedAt;
@@ -435,6 +458,53 @@
             </div>
           {/each}
         </div>
+      {/if}
+    </section>
+  {/if}
+
+  {#if myItemsSorted.length}
+    <section class="mt-sw-6">
+      <button
+        class="mb-sw-2 flex items-center gap-sw-2 text-sw-sm font-semibold text-sw-text-secondary hover:text-sw-text"
+        onclick={() => (myOpen = !myOpen)}
+        title={t('forks.myItemsTip')}
+      >
+        <span class="text-sw-text-muted">{myOpen ? '▾' : '▸'}</span>
+        {t('forks.myItemsHeading', { n: myItemsSorted.length })}
+      </button>
+      {#if myOpen}
+        <DataTable
+          columns={MY_COLS}
+          rows={myItemsSorted}
+          rowKey={(m) => m.url}
+          sortAccessor={mySort}
+          search
+          searchValue={(m) => `${m.repo} ${m.title}`}
+          searchPlaceholder={t('forks.myColTitle')}
+          storageKey="forks-my"
+        >
+          {#snippet cell(m, col)}
+            {#if col.key === 'kind'}
+              <span class="badge badge-muted">{m.isPr ? t('forks.badgePr') : t('forks.badgeIssue')}</span>
+            {:else if col.key === 'repo'}
+              <span class="font-mono text-sw-xs text-sw-text-muted truncate block" title={m.repo}>{m.repo}</span>
+            {:else if col.key === 'title'}
+              <span class="truncate block" title={m.title}>#{m.number} {m.title}</span>
+            {:else if col.key === 'comments'}
+              <span class="text-sw-xs text-sw-text-muted tabular-nums" title={t('forks.myItemsCommentsTip')}
+                >{m.comments > 0 ? m.comments : ''}</span
+              >
+            {:else if col.key === 'updated'}
+              <span class="text-sw-xs text-sw-text-muted whitespace-nowrap" title={fmtTime(m.updatedAt)}
+                >{relOrAbs(m.updatedAt)}</span
+              >
+            {:else if col.key === 'actions'}
+              <button class="sw-btn sw-btn-ghost text-sw-xs whitespace-nowrap" onclick={() => onOpenUrl?.(m.url)}
+                title={t('forks.ghOpenTip')}>{t('forks.ghOpenShort')}</button
+              >
+            {/if}
+          {/snippet}
+        </DataTable>
       {/if}
     </section>
   {/if}

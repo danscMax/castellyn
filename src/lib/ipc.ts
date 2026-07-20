@@ -139,6 +139,20 @@ export type GithubRepo = {
 
 export const listGithubRepos = () => invoke<GithubRepo[]>('list_github_repos');
 
+// Your own OPEN PRs/issues anywhere on GitHub. The fork scan only reports PRs whose topic branch
+// still exists locally (merged branches get deleted → the PR vanishes from the cards), and it never
+// reports issues at all — this fills both gaps.
+export type MyGithubItem = {
+  repo: string; // "owner/repo"
+  number: number;
+  title: string;
+  url: string;
+  isPr: boolean;
+  updatedAt: string;
+  comments: number;
+};
+export const listMyGithubItems = () => invoke<MyGithubItem[]>('list_my_github_items');
+
 // --- Backup tab ---
 export type BackupAction = 'backup' | 'restore-preview' | 'restore' | 'delete-snapshot';
 
