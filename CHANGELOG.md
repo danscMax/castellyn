@@ -3,6 +3,37 @@
 All notable changes to **Castellyn** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-07-20
+
+A consolidation release: no new features, one behaviour fix on the paths that protect you from
+irreversible actions, and five dependency updates in the shipped binary.
+
+### Fixed
+
+- **Four of the five confirmation dialogs were missing protections the fifth had.** The gate that
+  asks before a destructive action had been hand-copied into Sessions, Providers, Backup and the
+  terminal pane, and the copies had drifted: each honoured the global "confirm destructive actions"
+  setting, but none carried the type-to-confirm exemption, and none cancelled a dialog they
+  displaced — so a confirmation replaced by another one was silently dropped rather than dismissed.
+  All five now share one implementation.
+
+### Changed
+
+- `@lucide/svelte` 1.23.0 → 1.24.0, `svelte-check` 4.7.1 → 4.7.2, `vite` 8.1.3 → 8.1.4,
+  `@sveltejs/kit` 2.69.1 → 2.69.2, and the `windows` crate 0.61 → 0.62. The last one needed the
+  `Win32_System_SystemInformation` feature named explicitly: 0.62 stopped pulling it in
+  transitively, which is what the schedule tick's `GetLocalTime` was relying on.
+- `askConfirm` takes a request object instead of five positional arguments, and the two defaults
+  that used to hide in markup — the delete wording and the destructive styling — are now stated at
+  the call sites that rely on them.
+- Package metadata gained the `repository`, `homepage` and `bugs` fields it never had.
+
+### Not taken
+
+- **TypeScript 7.** `svelte-check` 4.7.2 — the newest release — cannot run under it: it reaches for
+  `typescript.default.sys`, and TS 7's native port changed the module's export shape. Verified
+  rather than assumed; the bump is a one-liner once svelte-check supports it.
+
 ## [0.7.1] — 2026-07-20
 
 An audit-and-repair release. A full global audit produced 113 findings; 112 are fixed here, along
