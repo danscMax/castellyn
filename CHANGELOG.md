@@ -3,6 +3,58 @@
 All notable changes to **Castellyn** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-07-20
+
+An audit-and-repair release. A full global audit produced 113 findings; 112 are fixed here, along
+with three problems the audit itself missed and two of its own conclusions that turned out to be
+wrong. No new features — this release is about the build being trustworthy and the app not lying to
+you.
+
+**If you are on 0.7.0, this is the release to take.** The 0.7.0 artifacts were built by a workflow
+whose gate steps did not exist yet, so they shipped without a single check having run, and they also
+predate the 15 fixes from the previous audit.
+
+### Fixed — the build could report success without doing anything
+
+- **CI had been failing on every run since 07-14 and nobody could see it.** The gates were only ever run locally, where they passed. Three tests failed on a clean machine; two of them were real defects (below).
+- **`verify.ps1` printed "All gates green." with both Rust gates silently skipped** when `cargo` was not on PATH. Under `Set-StrictMode`, the old one-liner left the variable unassigned rather than null, so the fallback threw, and the previous gate's exit code of 0 carried the run to a green finish. It now fails loudly, and each step resets the exit code it is judged by.
+- **The PSScriptAnalyzer gate had never executed once.** It sat after `cargo test` in CI, which was red. Moved ahead of the Rust gates, widened from `tools/` to every tracked script, added to the release workflow — whose comment already claimed it ran "the SAME gates as CI" — and given a shared settings file so local and CI cannot drift apart. Its severity filter also excluded PSScriptAnalyzer *errors*; it now covers them.
+- **The pre-push hook could not run `verify.ps1` at all** under Windows PowerShell 5.1: a BOM-less file is decoded as ANSI, a mis-decoded em-dash becomes a typographic quote, PowerShell honours it as a string delimiter, and `function Step` was swallowed whole. The 14 scripts carrying non-ASCII now have BOMs and the hook calls `pwsh`, matching `verify.ps1`'s own shebang.
+
+### Fixed — defects that only appeared on machines that were not the developer's
+
+- **`worktree_remove` refused to remove the worktrees it had created**, for anyone whose Windows profile path does not fit 8.3 (any username longer than eight characters). Paths were compared as raw strings, so a short-form path could never match git's canonical long form. The same helper backs the dangerous-path guards, which were therefore silently missing too.
+- **A gate test asserted against the developer's own `stack.json`**, a file that only exists on that machine. Split into a pure mapping the gate can check anywhere, with the environment assertion kept as a manual smoke.
+
+### Fixed — the app telling you things that were not true
+
+- **The restore dialog could report "Restore complete" for a restore that never ran** — the most destructive operation in the app. Previewing armed the danger button whether or not a run started, and the completion watcher, once armed, was settled by any later run.
+- **The Home cockpit called a fully-down stack "All good"**, while treating a partial outage as a warning.
+- **The fork-sync outcome reported the previous run's numbers** when the current run produced a stale status envelope.
+- **`CLAUDE.md` documented a procedure that destroys the shipped app icon**, naming the wrong file as the master and pointing at a legacy fallback generator.
+
+### Fixed — responsiveness
+
+- **Thirteen commands blocked the UI thread while waiting on a subprocess** — backup verify/extract/import, profile reads, repository clone, SSH connection test, the worktree commands, the schedule commands and the deploy pair. The window stopped repainting for the duration of each.
+- **The schedule tick held its lock across a 60-second precheck and a network call**, blocking all four schedule commands. It now decides under the lock, runs the gates without it, then re-locks and re-validates against fresh state — so a schedule you edit during a precheck survives instead of being overwritten.
+
+### Fixed — interface
+
+- **Compact density was very nearly a no-op.** Tailwind's `@theme` resolved the spacing scale on `:root`, where a custom property collapses to a literal, so redeclaring it further down the tree changed nothing. Measured after the fix: card padding 16px → 10px.
+- **Long tables were unusable.** Sticky headers had never worked (there was no vertical scrollport), and worse, roughly 2800px of a long table sat below the window with no way to scroll to it. Both fixed; the last row is now reachable and the header holds its place.
+- Focus trap now includes the backdrop button; the titlebar double-click guard is actually wired up; detached windows hand their session back when closed with Alt+F4; terminal `file:line` links no longer drift right of their text on CJK and emoji; hover-pause and focus-pause no longer cancel each other in the toast stack.
+
+### Changed
+
+- Rust toolchain moved from the 1.93.0 pin to 1.94.0. The `time` regression that forced the pin is gone, verified by a clean check and a full release build.
+- Clipboard read permission granted (write was, read was not, while the app pastes); two unused plugin capability sets removed.
+- Terminal column mapping extracted to `src/lib/termColumns.ts` and the confirm gate to `src/lib/confirmGate.ts`, both under test.
+- `parse_json_bom` shared across modules instead of being hand-copied four times.
+
+### Removed
+
+- `containUntrustedContext` — dead code whose comment promised prompt-injection protection it never provided, with broken truncation arithmetic on top.
+
 ## [0.7.0] — 2026-07-19
 
 The multi-agent-and-gateway release. Castellyn grows from a Claude Code maintenance shell into a
