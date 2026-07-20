@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Build a COMPLETE fake world so an isolated Castellyn sees a "real" system where every
   button is safe to click: profiles, maintenance scripts, forks, agent CLIs.

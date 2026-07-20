@@ -12,12 +12,6 @@
         # Write-Output would pollute the pipeline the callers actually consume.
         'PSAvoidUsingWriteHost'
 
-        # UTF-8 without BOM is the project convention (see CLAUDE.md). It would only corrupt Cyrillic
-        # literals under Windows PowerShell 5.1, and every repo script the backend spawns goes through
-        # `pwsh` 7.x, which decodes BOM-less UTF-8 correctly. The two `powershell.exe` (5.1) call sites
-        # in lib.rs run scripts from SCRIPTS_ROOT, not from this repo.
-        'PSUseBOMForUnicodeEncodedFile'
-
         # Plural nouns in function names (Get-ForkRepos, Sync-Profiles) read better for commands that
         # genuinely act on collections, and renaming them now would break every call site + the docs.
         'PSUseSingularNouns'

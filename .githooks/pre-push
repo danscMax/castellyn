@@ -3,4 +3,7 @@
 #   git config core.hooksPath .githooks
 # Bypass a single push with: git push --no-verify
 root=$(git rev-parse --show-toplevel)
-exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root/verify.ps1"
+# pwsh, not powershell.exe: verify.ps1 says `#!/usr/bin/env pwsh` on line 1 and the whole project
+# targets PowerShell 7. Running it under Windows PowerShell 5.1 also decodes the file as ANSI, which
+# turned a mis-decoded em-dash into a string delimiter and swallowed the Step function whole.
+exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$root/verify.ps1"

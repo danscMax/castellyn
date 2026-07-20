@@ -1,4 +1,4 @@
-# castellyn-notify-version: 2
+﻿# castellyn-notify-version: 2
 # Codex `notify` program -> Castellyn agent-status file.
 #
 # Codex has no lifecycle hook we can wire without editing the user's ~/.codex/config.toml, but it

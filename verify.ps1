@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Local CI — run every green-gate in order, stop at the first failure.
 # Single source of truth for the gates: the pre-push hook (.githooks/pre-push) and
 # `npm run verify` both call this. Mirrors the gate list in CLAUDE.md / docs/BUILD.md.

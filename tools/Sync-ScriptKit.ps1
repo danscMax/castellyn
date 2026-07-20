@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Roll out the canonical ScriptKit.ps1 to every vendored copy under a root.
 

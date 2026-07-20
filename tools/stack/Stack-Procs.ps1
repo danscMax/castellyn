@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     For each given TCP port, report the listening process PID and its uptime in seconds.
     One process snapshot for the whole stack (AgentHub merges it onto the service cards), so the

@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # ScriptKit v2 -- shared console UI + helpers for build / run / setup scripts
 # ============================================================================
 # VENDORED helper. Copy this file into a repo and dot-source it near the top of

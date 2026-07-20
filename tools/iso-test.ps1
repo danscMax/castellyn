@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Spin up an ISOLATED Castellyn dev instance for full UI testing (safe click-through).
 
