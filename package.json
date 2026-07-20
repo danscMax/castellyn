@@ -2,6 +2,14 @@
   "name": "castellyn",
   "version": "0.7.1",
   "description": "Castellyn — control center for your AI coding dev environment",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danscMax/castellyn.git"
+  },
+  "homepage": "https://github.com/danscMax/castellyn#readme",
+  "bugs": {
+    "url": "https://github.com/danscMax/castellyn/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite dev",
