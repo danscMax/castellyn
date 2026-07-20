@@ -13,12 +13,22 @@
 // unit-testable against a plain object.
 import { t } from '$lib/i18n';
 
-export type ConfirmOpts = {
+/**
+ * One request for confirmation. An object rather than a positional list: the gate needs seven
+ * things, three of them optional booleans/strings, and every call site reads better naming them.
+ */
+export type ConfirmRequest = {
+  title: string;
+  message: string;
+  /** Button wording. Omitted → the generic "confirm"; destructive flows pass their own verb. */
+  confirmLabel?: string;
+  /** Concrete items the action will affect — shown so the user sees the scope before agreeing. */
   details?: string[];
   /** Type-to-confirm phrase. Its presence also opts the action OUT of the #120 bypass. */
   requireText?: string | null;
   danger?: boolean;
   onCancel?: () => void;
+  action: () => void;
 };
 
 export type ConfirmState = {
@@ -59,30 +69,22 @@ export function closeConfirm(state: ConfirmState): void {
  * Request confirmation for `action`. `enabled` is the global "confirm destructive actions" setting;
  * when it is off the action runs at once unless `opts.requireText` marks it type-to-confirm.
  */
-export function askConfirm(
-  state: ConfirmState,
-  enabled: boolean,
-  title: string,
-  message: string,
-  confirmLabel: string,
-  action: () => void,
-  opts: ConfirmOpts = {}
-): void {
-  if (!enabled && !opts.requireText) {
-    action();
+export function askConfirm(state: ConfirmState, enabled: boolean, req: ConfirmRequest): void {
+  if (!enabled && !req.requireText) {
+    req.action();
     return;
   }
   if (state.open) state.onCancel?.();
   Object.assign(state, {
     open: true,
-    title,
-    message,
-    confirmLabel,
-    action,
-    onCancel: opts.onCancel ?? null,
-    details: opts.details ?? [],
-    requireText: opts.requireText ?? null,
-    danger: opts.danger ?? false
+    title: req.title,
+    message: req.message,
+    confirmLabel: req.confirmLabel ?? t('common.confirm'),
+    action: req.action,
+    onCancel: req.onCancel ?? null,
+    details: req.details ?? [],
+    requireText: req.requireText ?? null,
+    danger: req.danger ?? false
   });
 }
 

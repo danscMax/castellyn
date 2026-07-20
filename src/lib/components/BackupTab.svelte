@@ -1,5 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import {
+    askConfirm as gateAsk,
+    doConfirm as gateDo,
+    closeConfirm as gateClose,
+    emptyConfirmState,
+    type ConfirmState
+  } from '$lib/confirmGate';
   import type { BackupList, BackupAction, RestoreOpts } from '$lib/ipc';
   import { revealBackup, deleteBackup, verifyBackup, extractBackup, pickFolder, pickOpenFile, importBackupZip } from '$lib/ipc';
   import RestoreDialog from './RestoreDialog.svelte';
@@ -35,7 +42,7 @@
 
   // F9: weekly-archive ops (zip files, not snapshot folders) — direct IPC, not BackupAction.
   let wkBusy = $state(false);
-  let confirmDeleteWeekly = $state<string | null>(null);
+  let confirm = $state<ConfirmState>(emptyConfirmState());
   async function verifyWeekly(name: string) {
     wkBusy = true;
     try {
@@ -60,19 +67,15 @@
       wkBusy = false;
     }
   }
-  // R8: honor the global confirm-destructive toggle — skip the dialog when it's off.
-  function requestDeleteWeekly(name: string) {
-    if (!confirmDestructive) {
-      void deleteWeeklyNow(name);
-      return;
-    }
-    confirmDeleteWeekly = name;
-  }
-  function doDeleteWeekly() {
-    const name = confirmDeleteWeekly;
-    confirmDeleteWeekly = null;
-    if (name) void deleteWeeklyNow(name);
-  }
+  const requestDeleteWeekly = (name: string) =>
+    gateAsk(confirm, confirmDestructive, {
+      title: t('backup.deleteWeeklyTitle'),
+      message: t('backup.deleteWeeklyMsg'),
+      details: [name],
+      confirmLabel: t('common.delete'),
+      danger: true,
+      action: () => void deleteWeeklyNow(name)
+    });
   async function deleteWeeklyNow(name: string) {
     wkBusy = true;
     try {
@@ -297,12 +300,13 @@
 
 <!-- F9: confirm before deleting a weekly archive. -->
 <ConfirmDialog
-  open={confirmDeleteWeekly !== null}
-  title={t('backup.deleteWeeklyTitle')}
-  message={t('backup.deleteWeeklyMsg')}
-  details={confirmDeleteWeekly ? [confirmDeleteWeekly] : []}
-  confirmLabel={t('common.delete')}
-  danger
-  onConfirm={doDeleteWeekly}
-  onCancel={() => (confirmDeleteWeekly = null)}
+  open={confirm.open}
+  title={confirm.title}
+  message={confirm.message}
+  details={confirm.details}
+  confirmLabel={confirm.confirmLabel}
+  requireText={confirm.requireText}
+  danger={confirm.danger}
+  onConfirm={() => gateDo(confirm)}
+  onCancel={() => gateClose(confirm)}
 />

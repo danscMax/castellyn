@@ -8,7 +8,7 @@ describe('askConfirm — the #120 bypass', () => {
   it('opens the dialog and does NOT run the action while the setting is on', () => {
     const s = emptyConfirmState();
     const action = vi.fn();
-    askConfirm(s, true, 'Удалить?', 'навсегда', 'Удалить', action, { danger: true });
+    askConfirm(s, true, { title: 'Удалить?', message: 'навсегда', confirmLabel: 'Удалить', action: action, danger: true });
     expect(action).not.toHaveBeenCalled();
     expect(s.open).toBe(true);
     expect(s.title).toBe('Удалить?');
@@ -19,7 +19,7 @@ describe('askConfirm — the #120 bypass', () => {
   it('runs immediately without opening when the setting is off', () => {
     const s = emptyConfirmState();
     const action = vi.fn();
-    askConfirm(s, false, 't', 'm', 'ok', action, { danger: true });
+    askConfirm(s, false, { title: 't', message: 'm', confirmLabel: 'ok', action: action, danger: true });
     expect(action).toHaveBeenCalledTimes(1);
     expect(s.open).toBe(false);
   });
@@ -29,7 +29,7 @@ describe('askConfirm — the #120 bypass', () => {
   it('still asks for a type-to-confirm action when the setting is off', () => {
     const s = emptyConfirmState();
     const action = vi.fn();
-    askConfirm(s, false, 't', 'm', 'ok', action, { requireText: '2026-07-19' });
+    askConfirm(s, false, { title: 't', message: 'm', confirmLabel: 'ok', action: action, requireText: '2026-07-19' });
     expect(action).not.toHaveBeenCalled();
     expect(s.open).toBe(true);
     expect(s.requireText).toBe('2026-07-19');
@@ -37,7 +37,7 @@ describe('askConfirm — the #120 bypass', () => {
 
   it('carries details through unchanged and defaults the optional fields', () => {
     const s = emptyConfirmState();
-    askConfirm(s, true, 't', 'm', 'ok', () => {}, { details: ['a', 'b'] });
+    askConfirm(s, true, { title: 't', message: 'm', confirmLabel: 'ok', action: () => {}, details: ['a', 'b'] });
     expect(s.details).toEqual(['a', 'b']);
     expect(s.requireText).toBeNull();
     expect(s.danger).toBe(false);
@@ -52,8 +52,8 @@ describe('askConfirm — L131 replacing an open dialog', () => {
   it('fires the displaced dialog’s onCancel exactly once', () => {
     const s = emptyConfirmState();
     const onCancel = vi.fn();
-    askConfirm(s, true, 'first', 'm', 'ok', () => {}, { onCancel });
-    askConfirm(s, true, 'second', 'm', 'ok', () => {});
+    askConfirm(s, true, { title: 'first', message: 'm', confirmLabel: 'ok', action: () => {}, onCancel });
+    askConfirm(s, true, { title: 'second', message: 'm', confirmLabel: 'ok', action: () => {} });
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(s.title).toBe('second');
     expect(s.onCancel).toBeNull(); // the replacement carried no cancel callback of its own
@@ -62,7 +62,7 @@ describe('askConfirm — L131 replacing an open dialog', () => {
   it('does not fire a cancel when nothing was open', () => {
     const s = emptyConfirmState();
     const onCancel = vi.fn();
-    askConfirm(s, true, 'only', 'm', 'ok', () => {}, { onCancel });
+    askConfirm(s, true, { title: 'only', message: 'm', confirmLabel: 'ok', action: () => {}, onCancel });
     expect(onCancel).not.toHaveBeenCalled();
   });
 });
@@ -71,7 +71,7 @@ describe('doConfirm / closeConfirm', () => {
   it('runs the action and resets the dialog', () => {
     const s = emptyConfirmState();
     const action = vi.fn();
-    askConfirm(s, true, 't', 'm', 'ok', action, { details: ['x'], danger: true });
+    askConfirm(s, true, { title: 't', message: 'm', confirmLabel: 'ok', action: action, details: ['x'], danger: true });
     doConfirm(s);
     expect(action).toHaveBeenCalledTimes(1);
     expect(s.open).toBe(false);
@@ -85,7 +85,7 @@ describe('doConfirm / closeConfirm', () => {
   it('does not fire onCancel when the action is confirmed', () => {
     const s = emptyConfirmState();
     const onCancel = vi.fn();
-    askConfirm(s, true, 't', 'm', 'ok', () => {}, { onCancel });
+    askConfirm(s, true, { title: 't', message: 'm', confirmLabel: 'ok', action: () => {}, onCancel });
     doConfirm(s);
     expect(onCancel).not.toHaveBeenCalled();
   });
@@ -94,7 +94,7 @@ describe('doConfirm / closeConfirm', () => {
     const s = emptyConfirmState();
     const onCancel = vi.fn();
     const action = vi.fn();
-    askConfirm(s, true, 't', 'm', 'ok', action, { onCancel });
+    askConfirm(s, true, { title: 't', message: 'm', confirmLabel: 'ok', action: action, onCancel });
     closeConfirm(s);
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(action).not.toHaveBeenCalled();

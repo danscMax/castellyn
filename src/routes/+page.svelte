@@ -196,7 +196,7 @@
     closeConfirm as gateClose,
     emptyConfirmState,
     type ConfirmState,
-    type ConfirmOpts
+    type ConfirmRequest
   } from '$lib/confirmGate';
   import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, shareCommands, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, runCodexOmniroute, type EnvInfo, type SkillRow } from '$lib/ipc';
 
@@ -465,21 +465,15 @@
 
   const closeConfirm = () => gateClose(confirm);
   const doConfirm = () => gateDo(confirm);
-  const askConfirm = (
-    title: string,
-    message: string,
-    confirmLabel: string,
-    action: () => void,
-    opts: ConfirmOpts = {}
-  ) => gateAsk(confirm, confirmDestructive, title, message, confirmLabel, action, opts);
+  const askConfirm = (req: ConfirmRequest) => gateAsk(confirm, confirmDestructive, req);
 
   function onApply(comp: Component) {
-    askConfirm(
-      t('page.confirm_apply_title'),
-      t('page.confirm_apply_msg', { name: componentName(comp.id, comp.name) }),
-      t('page.confirm_apply_btn'),
-      () => startRun(comp.id, 'apply')
-    );
+    askConfirm({
+      title: t('page.confirm_apply_title'),
+      message: t('page.confirm_apply_msg', { name: componentName(comp.id, comp.name) }),
+      confirmLabel: t('page.confirm_apply_btn'),
+      action: () => startRun(comp.id, 'apply')
+    });
   }
 
   // --- Forks tab ---
@@ -513,13 +507,13 @@
       startForkRepo(action, path);
     } else if (path) {
       // Per-repo mutation -> confirm, then run CONCURRENTLY (each repo independent).
-      askConfirm(
-        t('page.confirm_fork_title'),
-        t('page.confirm_fork_msg', { label: label ?? action }),
-        t('page.confirm_fork_btn'),
-        () => startForkRepo(action, path),
-        { danger: action === 'delete' || action === 'delete-wip' || action === 'prune' }
-      );
+      askConfirm({
+        title: t('page.confirm_fork_title'),
+        message: t('page.confirm_fork_msg', { label: label ?? action }),
+        confirmLabel: t('page.confirm_fork_btn'),
+        action: () => startForkRepo(action, path),
+        danger: action === 'delete' || action === 'delete-wip' || action === 'prune'
+      });
     } else {
       startForks(action);
     }
@@ -543,13 +537,13 @@
   // Safe batch: fast-forward all behind forks (ff is non-destructive; fork-sync backs up refs).
   function onBatchFf(names: string[]) {
     if (running || names.length === 0) return;
-    askConfirm(
-      t('page.confirm_batchff_title'),
-      t('page.confirm_batchff_msg', { n: names.length }),
-      t('page.confirm_batchff_btn'),
-      () => startForks('ff'),
-      { details: names }
-    );
+    askConfirm({
+      title: t('page.confirm_batchff_title'),
+      message: t('page.confirm_batchff_msg', { n: names.length }),
+      confirmLabel: t('page.confirm_batchff_btn'),
+      action: () => startForks('ff'),
+      details: names
+    });
   }
 
   // --- Backup tab ---
@@ -581,11 +575,11 @@
   function onBackupAction(action: BackupAction, opts?: RestoreOpts) {
     if (action === 'restore') {
       const snap = opts?.timestamp ?? t('page.backup_snap_last');
-      askConfirm(
-        t('page.confirm_restore_title'),
-        t('page.confirm_restore_msg', { snap }),
-        t('page.confirm_restore_btn'),
-        () => {
+      askConfirm({
+        title: t('page.confirm_restore_title'),
+        message: t('page.confirm_restore_msg', { snap }),
+        confirmLabel: t('page.confirm_restore_btn'),
+        action: () => {
           // Arm the undo ONLY if the spawn was accepted: startBackup no-ops while the global run
           // lock is held, and a stale pendingUndo would later attach an "undo the restore" toast —
           // whose action launches a real destructive restore — to an unrelated backup run.
@@ -595,16 +589,17 @@
               ? { snapshot: opts.timestamp ?? '', profiles: opts.profiles, includeCredentials: opts.includeCredentials }
               : null;
         },
-        { danger: true, requireText: opts?.timestamp ?? null }
-      );
+        danger: true,
+        requireText: opts?.timestamp ?? null
+      });
     } else if (action === 'delete-snapshot') {
-      askConfirm(
-        t('page.confirm_delsnap_title'),
-        t('page.confirm_delsnap_msg', { snap: opts?.timestamp ?? '' }),
-        t('page.confirm_delsnap_btn'),
-        () => startBackup('delete-snapshot', opts),
-        { danger: true }
-      );
+      askConfirm({
+        title: t('page.confirm_delsnap_title'),
+        message: t('page.confirm_delsnap_msg', { snap: opts?.timestamp ?? '' }),
+        confirmLabel: t('page.confirm_delsnap_btn'),
+        action: () => startBackup('delete-snapshot', opts),
+        danger: true
+      });
     } else {
       startBackup(action, opts);
     }
@@ -666,13 +661,13 @@
       runProfileMgmt(args).catch(onSpawnErr);
     };
     if (args.action === 'remove') {
-      askConfirm(
-        t('page.confirm_prof_remove_title', { name: args.name }),
-        t('page.confirm_prof_remove_msg', { name: args.name }),
-        t('page.confirm_prof_remove_btn'),
-        run,
-        { danger: true }
-      );
+      askConfirm({
+        title: t('page.confirm_prof_remove_title', { name: args.name }),
+        message: t('page.confirm_prof_remove_msg', { name: args.name }),
+        confirmLabel: t('page.confirm_prof_remove_btn'),
+        action: run,
+        danger: true
+      });
     } else {
       run();
     }
@@ -682,11 +677,11 @@
   // (not a streamed run), so toast + reload here. Adopt reuses onProfileMgmt({action:'add'}).
   function onDeleteOrphan(name: string) {
     if (running) return;
-    askConfirm(
-      t('page.confirm_orphan_del_title', { name }),
-      t('page.confirm_orphan_del_msg', { name }),
-      t('page.confirm_orphan_del_btn'),
-      async () => {
+    askConfirm({
+      title: t('page.confirm_orphan_del_title', { name }),
+      message: t('page.confirm_orphan_del_msg', { name }),
+      confirmLabel: t('page.confirm_orphan_del_btn'),
+      action: async () => {
         try {
           await deleteOrphanProfile(name);
           pushToast({ kind: 'success', title: t('profiles.orphanDeleted', { name }) });
@@ -695,8 +690,8 @@
         }
         await reloadProfiles();
       },
-      { danger: true }
-    );
+      danger: true
+    });
   }
 
   function startProfiles(action: ProfileAction, name?: string) {
@@ -722,31 +717,32 @@
     } else if (action === 'fix-onboarding') {
       // Writes into the profile's .claude.json. Backed up + read-back verified by the script, but a
       // live session of that profile races the write — so the user gets a say first.
-      askConfirm(
-        t('page.confirm_fix_onboarding_title'),
-        t('page.confirm_fix_onboarding_msg', { name: name ?? '' }),
-        t('page.confirm_fix_onboarding_btn'),
-        () => startProfiles('fix-onboarding', name)
-      );
+      askConfirm({
+        title: t('page.confirm_fix_onboarding_title'),
+        message: t('page.confirm_fix_onboarding_msg', { name: name ?? '' }),
+        confirmLabel: t('page.confirm_fix_onboarding_btn'),
+        action: () => startProfiles('fix-onboarding', name)
+      });
     } else if (action === 'create') {
       // Additive (creates one missing profile) — no destructive-reinstall confirmation.
       startProfiles('create', name);
     } else if (action === 'reinstall') {
-      askConfirm(
-        t('page.confirm_reinstall_title'),
-        t('page.confirm_reinstall_msg'),
-        t('page.confirm_reinstall_btn'),
-        () => startProfiles('reinstall'),
-        { danger: true, requireText: t('page.confirm_reinstall_word') }
-      );
+      askConfirm({
+        title: t('page.confirm_reinstall_title'),
+        message: t('page.confirm_reinstall_msg'),
+        confirmLabel: t('page.confirm_reinstall_btn'),
+        action: () => startProfiles('reinstall'),
+        danger: true,
+        requireText: t('page.confirm_reinstall_word')
+      });
     } else if (action === 'clean-conflicts') {
-      askConfirm(
-        t('page.confirm_clean_title'),
-        t('page.confirm_clean_msg'),
-        t('page.confirm_clean_btn'),
-        () => startProfiles('clean-conflicts'),
-        { danger: true }
-      );
+      askConfirm({
+        title: t('page.confirm_clean_title'),
+        message: t('page.confirm_clean_msg'),
+        confirmLabel: t('page.confirm_clean_btn'),
+        action: () => startProfiles('clean-conflicts'),
+        danger: true
+      });
     } else {
       startProfiles(action);
     }
@@ -761,10 +757,21 @@
         .then(reloadProfiles)
         .catch(toastErr);
     if (action === 'keep-local')
-      askConfirm(t('page.confirm_clean_title'), t('page.confirm_clean_msg'), t('page.confirm_clean_btn'), run,
-        { danger: true });
+      askConfirm({
+        title: t('page.confirm_clean_title'),
+        message: t('page.confirm_clean_msg'),
+        confirmLabel: t('page.confirm_clean_btn'),
+        action: run,
+        danger: true
+      });
     else
-      askConfirm(t('common.confirm'), t('page.confirm_keepother_msg'), t('sync.keepOther'), run, { danger: true });
+      askConfirm({
+        title: t('common.confirm'),
+        message: t('page.confirm_keepother_msg'),
+        confirmLabel: t('sync.keepOther'),
+        action: run,
+        danger: true
+      });
   }
 
   // Finish a half-built profile's folder symlinks with a one-off elevated repair (UAC).
@@ -863,13 +870,14 @@
     const present = parseInt((onbSteps ?? []).find((s) => s.id === 'profiles')?.detail ?? '0', 10) || 0;
     if (present <= 0) return Promise.resolve(true);
     return new Promise((resolve) => {
-      askConfirm(
-        t('page.onb_title'),
-        t('page.onb_install_confirm', { n: present }),
-        t('page.prof_verb_reinstall'),
-        () => resolve(true),
-        { danger: true, onCancel: () => resolve(false) }
-      );
+      askConfirm({
+        title: t('page.onb_title'),
+        message: t('page.onb_install_confirm', { n: present }),
+        confirmLabel: t('page.prof_verb_reinstall'),
+        action: () => resolve(true),
+        danger: true,
+        onCancel: () => resolve(false)
+      });
     });
   }
   // Fail-closed: returns false on any error, non-zero exit, or user decline — onbRunAll stops there.
@@ -1003,9 +1011,13 @@
       startMcp('deploy', profiles);
       return;
     }
-    askConfirm(t('page.confirm_mcp_title'), t('page.confirm_mcp_msg'), t('page.confirm_mcp_btn'), () =>
+    askConfirm({
+      title: t('page.confirm_mcp_title'),
+      message: t('page.confirm_mcp_msg'),
+      confirmLabel: t('page.confirm_mcp_btn'),
+      action: () =>
       startMcp('deploy', profiles ?? undefined)
-    );
+    });
   }
 
   // Canonical .mcp.json CRUD (native invokes; reload + toast, no run-log stream).
@@ -1021,11 +1033,11 @@
     }
   }
   function onMcpRemoveServer(name: string) {
-    askConfirm(
-      t('page.confirm_mcp_remove_title'),
-      t('page.confirm_mcp_remove_msg', { name }),
-      t('common.delete'),
-      async () => {
+    askConfirm({
+      title: t('page.confirm_mcp_remove_title'),
+      message: t('page.confirm_mcp_remove_msg', { name }),
+      confirmLabel: t('common.delete'),
+      action: async () => {
         try {
           await mcpRemoveServer(name);
           await reloadMcp();
@@ -1034,15 +1046,15 @@
           toastErr(e);
         }
       },
-      { danger: true }
-    );
+      danger: true
+    });
   }
   function onMcpRemoveExtra(name: string, profile: string) {
-    askConfirm(
-      t('page.confirm_mcp_extra_title'),
-      t('page.confirm_mcp_extra_msg', { name, profile }),
-      t('common.delete'),
-      async () => {
+    askConfirm({
+      title: t('page.confirm_mcp_extra_title'),
+      message: t('page.confirm_mcp_extra_msg', { name, profile }),
+      confirmLabel: t('common.delete'),
+      action: async () => {
         try {
           await mcpRemoveExtra(name, profile);
           await reloadMcp();
@@ -1051,8 +1063,8 @@
           toastErr(e);
         }
       },
-      { danger: true }
-    );
+      danger: true
+    });
   }
 
   // --- Environments tab (read-only cross-harness overview) ---
@@ -1090,13 +1102,13 @@
       doEnvRtk(true);
     } else {
       // Disabling deletes the plugin file — gate it behind a confirm (#7).
-      askConfirm(
-        t('environments.rtkDisableTitle'),
-        t('environments.rtkDisableConfirm'),
-        t('environments.rtkDisable'),
-        () => doEnvRtk(false),
-        { danger: true }
-      );
+      askConfirm({
+        title: t('environments.rtkDisableTitle'),
+        message: t('environments.rtkDisableConfirm'),
+        confirmLabel: t('environments.rtkDisable'),
+        action: () => doEnvRtk(false),
+        danger: true
+      });
     }
   }
 
@@ -1123,7 +1135,12 @@
   }
   // Fan-outs write into another harness's config file — confirm the exact target first.
   const confirmFanout = (target: string, run: () => void) =>
-    askConfirm(t('page.confirm_fanout_title', { target }), t('page.confirm_fanout_body', { target }), t('page.confirm_mcp_btn'), run);
+    askConfirm({
+      title: t('page.confirm_fanout_title', { target }),
+      message: t('page.confirm_fanout_body', { target }),
+      confirmLabel: t('page.confirm_mcp_btn'),
+      action: run
+    });
   // Codex MCP is honest about partial failure: {added, failed}. Warn (not error) when some
   // servers failed but others landed; the ledger only advances when failed is empty.
   async function deployCodexMcp() {
@@ -1188,11 +1205,11 @@
 
   // Share skills into ~/.agents/skills (additive junctions) so OpenCode + Codex see them all.
   function onShareSkills() {
-    askConfirm(
-      t('environments.shareConfirmTitle'),
-      t('environments.shareConfirmMsg'),
-      t('environments.shareConfirmBtn'),
-      async () => {
+    askConfirm({
+      title: t('environments.shareConfirmTitle'),
+      message: t('environments.shareConfirmMsg'),
+      confirmLabel: t('environments.shareConfirmBtn'),
+      action: async () => {
         try {
           const r = await shareSkills();
           pushToast({
@@ -1206,16 +1223,16 @@
           pushToast({ kind: 'error', title: t('environments.shareError'), detail: String(e) });
         }
       }
-    );
+    });
   }
 
   // Wrap your own slash-commands as SKILL.md into ~/.agents/skills so Codex/OpenCode can run them.
   function onShareCommands() {
-    askConfirm(
-      t('environments.shareCmdConfirmTitle'),
-      t('environments.shareCmdConfirmMsg'),
-      t('environments.shareCmdConfirmBtn'),
-      async () => {
+    askConfirm({
+      title: t('environments.shareCmdConfirmTitle'),
+      message: t('environments.shareCmdConfirmMsg'),
+      confirmLabel: t('environments.shareCmdConfirmBtn'),
+      action: async () => {
         try {
           const r = await shareCommands();
           pushToast({
@@ -1229,7 +1246,7 @@
           pushToast({ kind: 'error', title: t('environments.shareError'), detail: String(e) });
         }
       }
-    );
+    });
   }
 
   // --- Sync tab ---
@@ -1279,11 +1296,11 @@
     }
   }
   function onGcDelete(ids: string[], labels: string[]) {
-    askConfirm(
-      t('page.home_gc_confirm_title'),
-      t('page.home_gc_confirm_msg'),
-      t('page.home_gc_confirm_btn'),
-      async () => {
+    askConfirm({
+      title: t('page.home_gc_confirm_title'),
+      message: t('page.home_gc_confirm_msg'),
+      confirmLabel: t('page.home_gc_confirm_btn'),
+      action: async () => {
         try {
           const rep = await runGcDelete(ids);
           pushToast({
@@ -1302,8 +1319,9 @@
         }
         await reloadGc();
       },
-      { danger: true, details: labels }
-    );
+      danger: true,
+      details: labels
+    });
   }
   async function reloadHome() {
     // Ф2-GC: kick the heavy scan once, off the critical path (don't await it here).
@@ -1422,8 +1440,12 @@
       startSync('set', enabled);
       return;
     }
-    askConfirm(t('page.confirm_sync_title'), t('page.sync_apply_off', { off: off.join(', ') }),
-      t('page.confirm_sync_btn'), () => startSync('set', enabled));
+    askConfirm({
+      title: t('page.confirm_sync_title'),
+      message: t('page.sync_apply_off', { off: off.join(', ') }),
+      confirmLabel: t('page.confirm_sync_btn'),
+      action: () => startSync('set', enabled)
+    });
   }
 
   // --- Config drift (FUN-7): shares the 'sync' run slot + outcome/toast ---
@@ -1453,11 +1475,19 @@
     if (action === 'check') {
       startConfigDrift('check');
     } else if (action === 'relink') {
-      askConfirm(t('page.confirm_relink_title'), t('page.confirm_relink_msg'),
-        t('page.confirm_relink_btn'), () => startConfigDrift('relink'));
+      askConfirm({
+        title: t('page.confirm_relink_title'),
+        message: t('page.confirm_relink_msg'),
+        confirmLabel: t('page.confirm_relink_btn'),
+        action: () => startConfigDrift('relink')
+      });
     } else {
-      askConfirm(t('page.confirm_driftsync_title'), t('page.confirm_driftsync_msg'),
-        t('page.confirm_driftsync_btn'), () => startConfigDrift('sync-now'));
+      askConfirm({
+        title: t('page.confirm_driftsync_title'),
+        message: t('page.confirm_driftsync_msg'),
+        confirmLabel: t('page.confirm_driftsync_btn'),
+        action: () => startConfigDrift('sync-now')
+      });
     }
   }
 
@@ -1545,12 +1575,12 @@
     };
     // Confirm only the destructive "stop the whole stack"; single-service stop is cheap to undo.
     if (action === 'stop' && !only) {
-      askConfirm(
-        t('page.confirm_stack_stop_title'),
-        t('page.confirm_stack_stop_msg'),
-        t('page.confirm_stack_stop_btn'),
-        go
-      );
+      askConfirm({
+        title: t('page.confirm_stack_stop_title'),
+        message: t('page.confirm_stack_stop_msg'),
+        confirmLabel: t('page.confirm_stack_stop_btn'),
+        action: go
+      });
     } else {
       go();
     }
@@ -1576,12 +1606,12 @@
   // Used by ProfilesTab's per-profile "reset provider" menu item (ProfilesTab.svelte:281).
   function onProviderClear(name: string) {
     if (running) return;
-    askConfirm(
-      t('page.confirm_provider_clear_title'),
-      t('page.confirm_provider_clear_msg', { name }),
-      t('page.confirm_provider_clear_btn'),
-      () => startProvider({ action: 'clear', name })
-    );
+    askConfirm({
+      title: t('page.confirm_provider_clear_title'),
+      message: t('page.confirm_provider_clear_msg', { name }),
+      confirmLabel: t('page.confirm_provider_clear_btn'),
+      action: () => startProvider({ action: 'clear', name })
+    });
   }
 
   function onOpenUrl(url: string) {
@@ -1595,15 +1625,15 @@
       .catch(toastErr);
   }
   function onMyProviderDelete(id: string) {
-    askConfirm(
-      t('myProviders.confirmDeleteTitle'),
-      t('myProviders.confirmDeleteMsg'),
-      t('myProviders.delete'),
-      () =>
+    askConfirm({
+      title: t('myProviders.confirmDeleteTitle'),
+      message: t('myProviders.confirmDeleteMsg'),
+      confirmLabel: t('myProviders.delete'),
+      action: () =>
         deleteMyProvider(id)
           .then(() => reloadProviders())
           .catch(toastErr)
-    );
+    });
   }
   function onMyProviderConnect(id: string) {
     if (running) return;
@@ -1651,16 +1681,16 @@
 
   function onConnectRouter(engine: EngineStatus, model: string, profile: string) {
     if (running) return;
-    askConfirm(
-      t('page.confirm_router_title'),
-      t('page.confirm_router_msg', { profile, engine: engine.name, model }),
-      t('page.confirm_router_btn'),
-      () => {
+    askConfirm({
+      title: t('page.confirm_router_title'),
+      message: t('page.confirm_router_msg', { profile, engine: engine.name, model }),
+      confirmLabel: t('page.confirm_router_btn'),
+      action: () => {
         running = 'provider';
         log = [t('page.router_log', { engine: engine.name, model, profile })];
         runConnectRouter(engine.baseUrl, model, profile, engine.id).catch(onSpawnErr);
       }
-    );
+    });
   }
 
   // Point opencode at an OpenAI-compatible engine (writes opencode.json). The gateway engine
@@ -1680,16 +1710,16 @@
     if (key.trim()) args.key = key.trim();
     else if (existing?.hasKey) args.keepKey = true;
     else args.envKey = 'FREELLMAPI_API_KEY';
-    askConfirm(
-      t('page.confirm_opencode_title'),
-      t('page.confirm_opencode_msg', { engine: engine.name, model }),
-      t('page.confirm_opencode_btn'),
-      () => {
+    askConfirm({
+      title: t('page.confirm_opencode_title'),
+      message: t('page.confirm_opencode_msg', { engine: engine.name, model }),
+      confirmLabel: t('page.confirm_opencode_btn'),
+      action: () => {
         running = 'provider';
         log = [t('page.opencode_log', { engine: engine.name, model })];
         runOpencodeProvider(args).catch(onSpawnErr);
       }
-    );
+    });
   }
 
   // --- Schedule tab ---
@@ -1733,12 +1763,12 @@
 
   function onScheduleAction(action: ScheduleAction, id: string, time?: string) {
     if (action === 'delete') {
-      askConfirm(
-        t('page.confirm_sched_delete_title'),
-        t('page.confirm_sched_delete_msg', { id }),
-        t('page.confirm_sched_delete_btn'),
-        () => startSchedule('delete', id)
-      );
+      askConfirm({
+        title: t('page.confirm_sched_delete_title'),
+        message: t('page.confirm_sched_delete_msg', { id }),
+        confirmLabel: t('page.confirm_sched_delete_btn'),
+        action: () => startSchedule('delete', id)
+      });
     } else {
       startSchedule(action, id, time);
     }
@@ -1861,11 +1891,11 @@
     await reloadAgents();
   }
   function onAgentDelete(a: AgentInfo) {
-    askConfirm(
-      t('agents.deleteTitle'),
-      t('agents.deleteConfirm', { name: a.name }),
-      t('agents.delete'),
-      async () => {
+    askConfirm({
+      title: t('agents.deleteTitle'),
+      message: t('agents.deleteConfirm', { name: a.name }),
+      confirmLabel: t('agents.delete'),
+      action: async () => {
         try {
           await deleteAgent(a.path);
           pushToast({ kind: 'success', title: t('agents.deleted', { name: a.name }) });
@@ -1874,8 +1904,8 @@
           pushToast({ kind: 'error', title: t('agents.deleteError'), detail: String(e) });
         }
       },
-      { danger: true }
-    );
+      danger: true
+    });
   }
 
   // A tab shows the "refreshing" overlay + sidebar spinner while it fetches fresh data.
@@ -1953,11 +1983,11 @@
   // A managed-policy-blocked plugin can't be enabled per-profile — the real fix is removing its
   // explicit `false` from the SOURCE managed-settings.json and redeploying (one UAC prompt).
   function onPluginUnblock(id: string) {
-    askConfirm(
-      t('page.confirm_unblock_title'),
-      t('page.confirm_unblock_msg', { id }),
-      t('page.confirm_unblock_btn'),
-      async () => {
+    askConfirm({
+      title: t('page.confirm_unblock_title'),
+      message: t('page.confirm_unblock_msg', { id }),
+      confirmLabel: t('page.confirm_unblock_btn'),
+      action: async () => {
         try {
           await unblockManagedPlugin(id);
           const res = await runManagedDeploy();
@@ -1977,20 +2007,20 @@
           toastErr(e);
         }
       }
-    );
+    });
   }
 
   function onPluginAction(action: PluginAction, id: string) {
     // 'disable' is reversible (re-enable any time) → no confirm, matching bulk-disable. Only the
     // irreversible 'remove' gates behind a danger confirm.
     if (action === 'remove') {
-      askConfirm(
-        t('page.confirm_plugin_remove_title'),
-        t('page.confirm_plugin_remove_msg', { id }),
-        t('page.confirm_plugin_remove_btn'),
-        () => startPlugin('remove', id),
-        { danger: true }
-      );
+      askConfirm({
+        title: t('page.confirm_plugin_remove_title'),
+        message: t('page.confirm_plugin_remove_msg', { id }),
+        confirmLabel: t('page.confirm_plugin_remove_btn'),
+        action: () => startPlugin('remove', id),
+        danger: true
+      });
     } else {
       startPlugin(action, id);
     }
@@ -2041,13 +2071,14 @@
   function onBulkPlugin(action: PluginAction, ids: string[]) {
     if (!ids.length) return;
     if (action === 'remove') {
-      askConfirm(
-        t('page.confirm_plugin_remove_title'),
-        t('page.confirm_plugin_bulk_remove_msg', { count: ids.length }),
-        t('page.confirm_plugin_remove_btn'),
-        () => runBulkPlugins('remove', ids),
-        { danger: true, details: ids }
-      );
+      askConfirm({
+        title: t('page.confirm_plugin_remove_title'),
+        message: t('page.confirm_plugin_bulk_remove_msg', { count: ids.length }),
+        confirmLabel: t('page.confirm_plugin_remove_btn'),
+        action: () => runBulkPlugins('remove', ids),
+        danger: true,
+        details: ids
+      });
     } else {
       runBulkPlugins(action, ids);
     }
@@ -2061,17 +2092,17 @@
     openPath(dir).catch(toastErr);
   }
   function onDeleteSkill(dir: string, name: string) {
-    askConfirm(
-      t('page.confirm_skill_delete_title'),
-      t('page.confirm_skill_delete_msg', { name }),
-      t('page.confirm_skill_delete_btn'),
-      () => {
+    askConfirm({
+      title: t('page.confirm_skill_delete_title'),
+      message: t('page.confirm_skill_delete_msg', { name }),
+      confirmLabel: t('page.confirm_skill_delete_btn'),
+      action: () => {
         deleteSkill(dir)
           .then(() => reloadExtensions())
           .catch(toastErr);
       },
-      { danger: true }
-    );
+      danger: true
+    });
   }
 
   async function cancel() {
@@ -2675,13 +2706,13 @@
       // F19: tray Quit no longer hard-exits — it asks here first, surfacing how many live sessions die.
       await listen('tray-quit-request', async () => {
         const n = await globalSessionCount().catch(() => 0);
-        askConfirm(
-          t('page.quitTitle'),
-          n > 0 ? t('page.quitMsgSessions', { n }) : t('page.quitMsg'),
-          t('page.quitBtn'),
-          () => quitApp(),
-          { danger: true }
-        );
+        askConfirm({
+          title: t('page.quitTitle'),
+          message: n > 0 ? t('page.quitMsgSessions', { n }) : t('page.quitMsg'),
+          confirmLabel: t('page.quitBtn'),
+          action: () => quitApp(),
+          danger: true
+        });
       })
     );
     // F18: extended tray entries → the same handlers the in-app buttons use.

@@ -1,4 +1,11 @@
 <script lang="ts">
+  import {
+    askConfirm as gateAsk,
+    doConfirm as gateDo,
+    closeConfirm as gateClose,
+    emptyConfirmState,
+    type ConfirmState
+  } from '$lib/confirmGate';
   import type {
     EngineStatus,
     ProfileProvider,
@@ -421,20 +428,15 @@
   // Removing a key deletes it from Credential Manager (irreversible) — gate behind a confirm,
   // consistent with the provider Delete/Clear actions. The parent owns the global confirm dialog,
   // but key removal is local to this surface, so confirm here via the canonical ConfirmDialog.
-  let removeKeyTarget = $state<{ id: string; index: number } | null>(null);
-  function confirmRemoveKey(id: string, index: number) {
-    // R8: honor the global confirm-destructive toggle.
-    if (!confirmDestructive) {
-      onMyProviderRemoveKey(id, index);
-      return;
-    }
-    removeKeyTarget = { id, index };
-  }
-  function doRemoveKey() {
-    const tgt = removeKeyTarget;
-    removeKeyTarget = null;
-    if (tgt) onMyProviderRemoveKey(tgt.id, tgt.index);
-  }
+  let confirm = $state<ConfirmState>(emptyConfirmState());
+  const confirmRemoveKey = (id: string, index: number) =>
+    gateAsk(confirm, confirmDestructive, {
+      title: t('myProviders.removeKey'),
+      message: t('myProviders.removeKeyTitle'),
+      confirmLabel: t('myProviders.removeKey'),
+      danger: true,
+      action: () => onMyProviderRemoveKey(id, index)
+    });
 </script>
 
 <div class="p-sw-6">
@@ -468,13 +470,15 @@
   />
 
   <ConfirmDialog
-    open={removeKeyTarget !== null}
-    title={t('myProviders.removeKey')}
-    message={t('myProviders.removeKeyTitle')}
-    confirmLabel={t('myProviders.removeKey')}
-    danger={true}
-    onConfirm={doRemoveKey}
-    onCancel={() => (removeKeyTarget = null)}
+    open={confirm.open}
+    title={confirm.title}
+    message={confirm.message}
+    details={confirm.details}
+    confirmLabel={confirm.confirmLabel}
+    requireText={confirm.requireText}
+    danger={confirm.danger}
+    onConfirm={() => gateDo(confirm)}
+    onCancel={() => gateClose(confirm)}
   />
 
   {#if stack === null && engines === null}

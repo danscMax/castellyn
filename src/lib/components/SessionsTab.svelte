@@ -1,5 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
+  import {
+    askConfirm as gateAsk,
+    doConfirm as gateDo,
+    closeConfirm as gateClose,
+    emptyConfirmState,
+    type ConfirmState,
+    type ConfirmRequest
+  } from '$lib/confirmGate';
   import TerminalPane from './TerminalPane.svelte';
   import FolderField from './FolderField.svelte';
   import Toggle from './Toggle.svelte';
@@ -922,20 +930,11 @@
     sendAllTrusted = true;
   }
 
-  // F14: generic destructive confirm — one callback-driven dialog so every ✕ gates first
-  // (project rule: destructive actions confirm before mutating). Each caller passes its own copy + run().
-  // confirmLabel: the dialog backs six non-delete flows too (close all / close project / forget
-  // layout) — those must not say "Удалить". Omitted → the delete wording stays.
-  type ConfirmAsk = { title: string; message: string; details?: string[]; confirmLabel?: string; run: () => void };
-  let confirmAsk = $state<ConfirmAsk | null>(null);
-  function askConfirm(opts: ConfirmAsk) {
-    // R8: honor the global confirm-destructive toggle — same gate as +page's askConfirm.
-    if (!confirmDestructive) {
-      opts.run();
-      return;
-    }
-    confirmAsk = opts;
-  }
+  // F14: generic destructive confirm — one callback-driven dialog so every ✕ gates first (project
+  // rule: destructive actions confirm before mutating). The logic lives in $lib/confirmGate, shared
+  // with every other confirming surface and unit-tested there; this holds only the dialog's state.
+  let confirm = $state<ConfirmState>(emptyConfirmState());
+  const askConfirm = (req: ConfirmRequest) => gateAsk(confirm, confirmDestructive, req);
 
   // A persisted monitor-layout pane: a launch config (no live session) plus the captured claude
   // session id, so a restore after an app restart can respawn with `--resume`. claudeSid is optional
@@ -1023,10 +1022,11 @@
   // Council U-5: it erases a saved fleet layout, so it confirms first like every other destructive ✕.
   function forgetLayout() {
     askConfirm({
+      danger: true,
       title: t('sessions.forgetLayoutConfirmTitle'),
       message: t('sessions.forgetLayoutConfirmMsg'),
       confirmLabel: t('sessions.forgetLayout'),
-      run: () => {
+      action: () => {
         try {
           localStorage.removeItem(MLKEY);
         } catch {
@@ -1233,10 +1233,11 @@
   function closeAll() {
     const live = panes.filter((p) => sessionIds[p.key]).length;
     askConfirm({
+      danger: true,
       title: t('sessions.closeAllConfirmTitle'),
       message: t('sessions.closeAllConfirmMsg', { n: panes.length, live }),
       confirmLabel: t('sessions.closeAll'),
-      run: doCloseAll
+      action: doCloseAll
     });
   }
   function doCloseAll() {
@@ -1435,9 +1436,11 @@
       return;
     }
     askConfirm({
+      confirmLabel: t('common.delete'),
+      danger: true,
       title: t('sessions.spaceDeleteTitle'),
       message: t('sessions.spaceDeleteMsg', { n }),
-      run: () => deleteSpace(id)
+      action: () => deleteSpace(id)
     });
   }
   // Move a pane to another project tab — pure reassignment (deleteSpace's pattern), PTY untouched.
@@ -1451,10 +1454,11 @@
     const keys = spacePanes.map((p) => p.key);
     if (!keys.length) return;
     askConfirm({
+      danger: true,
       title: t('sessions.closeSpaceTitle'),
       message: t('sessions.closeSpaceMsg', { n: keys.length }),
       confirmLabel: t('sessions.closeSpace'),
-      run: () => {
+      action: () => {
         let wtSeq = 0; // F9: stagger, not burst
         for (const p of panes) if (keys.includes(p.key) && p.worktree) void cleanupWorktree(p.worktree, 400 * wtSeq++);
         panes = panes.filter((p) => !keys.includes(p.key));
@@ -1672,9 +1676,11 @@
   }
   function askDeleteServer(h: SshHost) {
     askConfirm({
+      confirmLabel: t('common.delete'),
+      danger: true,
       title: t('sessions.srvDeleteTitle', { name: h.name }),
       message: t('sessions.srvDeleteMsg'),
-      run: () => deleteServer(h.id)
+      action: () => deleteServer(h.id)
     });
   }
   async function testServer() {
@@ -2091,9 +2097,11 @@
   }
   function askRemoveFav(f: Fav) {
     askConfirm({
+      confirmLabel: t('common.delete'),
+      danger: true,
       title: t('sessions.favDeleteTitle'),
       message: t('sessions.favDeleteMsg', { label: f.label }),
-      run: () => removeFav(f.id)
+      action: () => removeFav(f.id)
     });
   }
   $effect(() => {
@@ -2591,9 +2599,11 @@
   }
   function askDeleteWorkspace(name: string) {
     askConfirm({
+      confirmLabel: t('common.delete'),
+      danger: true,
       title: t('sessions.wsDeleteTitle', { name }),
       message: t('sessions.wsDeleteMsg', { count: (workspaces[name] ?? []).length }),
-      run: () => deleteWorkspace(name)
+      action: () => deleteWorkspace(name)
     });
   }
 </script>
@@ -2629,17 +2639,15 @@
 <!-- F14: generic destructive confirm — ✕ actions (remove favorite / SSH host / workspace / project)
      and the close/forget flows, which pass their own confirmLabel instead of the delete wording. -->
 <ConfirmDialog
-  open={!!confirmAsk}
-  title={confirmAsk?.title ?? ''}
-  message={confirmAsk?.message ?? ''}
-  details={confirmAsk?.details ?? []}
-  confirmLabel={confirmAsk?.confirmLabel ?? t('common.delete')}
-  danger
-  onConfirm={() => {
-    confirmAsk?.run();
-    confirmAsk = null;
-  }}
-  onCancel={() => (confirmAsk = null)}
+  open={confirm.open}
+  title={confirm.title}
+  message={confirm.message}
+  details={confirm.details}
+  confirmLabel={confirm.confirmLabel}
+  requireText={confirm.requireText}
+  danger={confirm.danger}
+  onConfirm={() => gateDo(confirm)}
+  onCancel={() => gateClose(confirm)}
 />
 
 <!-- Launchpad chips (one-click ws/favorite/recent) — one definition, rendered in the launch form

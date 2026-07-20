@@ -2,6 +2,13 @@
   import { onMount, onDestroy } from 'svelte';
   import { Terminal, type ILink } from '@xterm/xterm';
   import { colAt } from '$lib/termColumns';
+  import {
+    askConfirm as gateAsk,
+    doConfirm as gateDo,
+    closeConfirm as gateClose,
+    emptyConfirmState,
+    type ConfirmState
+  } from '$lib/confirmGate';
   import { FitAddon } from '@xterm/addon-fit';
   import { SearchAddon } from '@xterm/addon-search';
   import { WebglAddon } from '@xterm/addon-webgl';
@@ -529,7 +536,15 @@
   // F14: relaunch resets the terminal — confirm first so a stray click doesn't wipe the finished
   // session's scrollback (the only record left once the PTY is gone). Honors the global
   // confirm-destructive toggle, like every other destructive action in the app.
-  let confirmRelaunch = $state(false);
+  let confirm = $state<ConfirmState>(emptyConfirmState());
+  const askRelaunch = () =>
+    gateAsk(confirm, confirmDestructive, {
+      title: t('sessions.relaunchConfirmTitle'),
+      message: t('sessions.relaunchConfirmMsg'),
+      confirmLabel: t('sessions.relaunch'),
+      danger: true,
+      action: relaunch
+    });
   async function relaunch() {
     unlisteners.forEach((u) => u());
     unlisteners = [];
@@ -844,7 +859,7 @@
     {#if autoResumeLabel}<span class="autoresume" title={t('sessions.autoResumeTip')}><RotateCw size={12} /> {autoResumeLabel}</span>{/if}
     <span class="spacer"></span>
     {#if exited || error}
-      <button class="x relaunch" onclick={() => (confirmDestructive ? (confirmRelaunch = true) : relaunch())} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
+      <button class="x relaunch" onclick={askRelaunch} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
     {/if}
     <!-- Council A (2026-07): the bar held ~10 unlabeled icon buttons in a tight row and «close»
          sat one slip away from «maximize». Frequent actions stay (search / maximize / close);
@@ -885,16 +900,15 @@
 </div>
 
 <ConfirmDialog
-  open={confirmRelaunch}
-  title={t('sessions.relaunchConfirmTitle')}
-  message={t('sessions.relaunchConfirmMsg')}
-  confirmLabel={t('sessions.relaunch')}
-  danger
-  onConfirm={() => {
-    confirmRelaunch = false;
-    relaunch();
-  }}
-  onCancel={() => (confirmRelaunch = false)}
+  open={confirm.open}
+  title={confirm.title}
+  message={confirm.message}
+  details={confirm.details}
+  confirmLabel={confirm.confirmLabel}
+  requireText={confirm.requireText}
+  danger={confirm.danger}
+  onConfirm={() => gateDo(confirm)}
+  onCancel={() => gateClose(confirm)}
 />
 
 <style>
