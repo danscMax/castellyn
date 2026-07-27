@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { PluginInfo, SkillInfo, PluginAction, PluginUpdate, PluginContents, PluginRelease, PluginSyncStatus, BumpLevel } from '$lib/ipc';
+  import type { PluginInfo, SkillInfo, PluginAction, PluginRelease, BumpLevel } from '$lib/ipc';
   import { listPluginReleases, openPath } from '$lib/ipc';
+  import { pluginsState } from '$lib/pluginsState.svelte';
   import { pushToast } from '$lib/toast.svelte';
   import { t, pSkill, pCommand, pAgent, pPlugin } from '$lib/i18n';
   import Toggle from './Toggle.svelte';
@@ -11,42 +12,31 @@
   import { Puzzle, SquareSlash, Bot, Lock } from '@lucide/svelte';
 
   let {
-    plugins,
-    skills,
-    updates = [],
-    contents = [],
-    running,
-    syncStatus = null,
-    onAction,
-    onBulkPlugin,
-    onBump,
-    onRefresh,
-    onOpenSkills,
-    onOpenSkill,
-    onDeleteSkill,
-    onSyncNow,
-    onSyncHookToggle,
-    onUnblock
+    running
   }: {
-    plugins: PluginInfo[] | null;
-    skills: SkillInfo[] | null;
-    updates?: PluginUpdate[];
-    contents?: PluginContents[];
     running: string | null;
-    syncStatus?: PluginSyncStatus | null;
-    onAction: (action: PluginAction, id: string) => void;
-    onBulkPlugin: (action: PluginAction, ids: string[]) => void;
-    /** Ф3: dual-manifest version bump of an own-marketplace plugin (+ cache refresh). */
-    onBump?: (id: string, level: BumpLevel) => void;
-    onRefresh: () => void;
-    onOpenSkills: () => void;
-    onOpenSkill: (dir: string) => void;
-    onDeleteSkill: (dir: string, name: string) => void;
-    onSyncNow: () => void;
-    onSyncHookToggle: (enabled: boolean) => void;
-    /** Unblock a managed-policy-blocked plugin: source edit + redeploy, wired in +page. */
-    onUnblock?: (id: string) => void;
   } = $props();
+
+  // This tab owns its data (pluginsState), like ProfilesTab owns MatrixState. The run lock and the
+  // confirm gate are page-level on purpose and are wired to pluginsState there.
+  if (!pluginsState.loaded) pluginsState.loadOnce();
+  const plugins = $derived(pluginsState.plugins);
+  const skills = $derived(pluginsState.skills);
+  const updates = $derived(pluginsState.updates);
+  const contents = $derived(pluginsState.contents);
+  const syncStatus = $derived(pluginsState.syncStatus);
+  const onAction = (action: PluginAction, id: string) => pluginsState.action(action, id);
+  const onBulkPlugin = (action: PluginAction, ids: string[]) => pluginsState.bulkAction(action, ids);
+  /** Ф3: dual-manifest version bump of an own-marketplace plugin (+ cache refresh). */
+  const onBump = (id: string, level: BumpLevel) => pluginsState.bump(id, level);
+  const onRefresh = () => pluginsState.load();
+  const onOpenSkills = () => pluginsState.openSkills();
+  const onOpenSkill = (dir: string) => pluginsState.openSkill(dir);
+  const onDeleteSkill = (dir: string, name: string) => pluginsState.removeSkill(dir, name);
+  const onSyncNow = () => pluginsState.syncNow();
+  const onSyncHookToggle = (enabled: boolean) => pluginsState.syncHookToggle(enabled);
+  /** Unblock a managed-policy-blocked plugin: source edit + redeploy. */
+  const onUnblock = (id: string) => pluginsState.unblock(id);
 
   // Auto-sync toggle reflects FULL coverage; a partial wiring (e.g. a profile added after
   // enabling) shows as off + the coverage counter, and re-enabling wires the missing ones.
@@ -399,7 +389,7 @@
             {#if p.managedPolicy === false}
               <!-- Managed policy blocks this plugin in EVERY profile — a toggle would just fail
                    nine times. Offer the real fix: unblock in the source + redeploy (UAC). -->
-              <button class="lockbtn" disabled={busy || !onUnblock} onclick={() => onUnblock?.(p.id)}
+              <button class="lockbtn" disabled={busy} onclick={() => onUnblock(p.id)}
                 title={`${t('plugins.blockedBadge')} — ${t('plugins.blockedTip')}`} aria-label={t('plugins.blockedBadge')}><Lock size={13} /></button>
             {:else}
               <Toggle checked={p.enabled} disabled={busy} onCheckedChange={() => act(p.enabled ? 'disable' : 'enable', p.id)}
@@ -408,7 +398,7 @@
           </span>
         {:else if col.key === 'actions'}
           <span class="act">
-            {#if p.mine && onBump}
+            {#if p.mine}
               <!-- Ф3: own-marketplace version bump (patch/minor/major) → dual-manifest write + refresh. -->
               <DropdownMenu glyph="⇪" title={t('plugins.bumpBtnTip')} disabled={busy}
                 items={['patch', 'minor', 'major'].map((lv) => ({

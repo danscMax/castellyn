@@ -7,8 +7,9 @@
     emptyConfirmState,
     type ConfirmState
   } from '$lib/confirmGate';
-  import type { BackupList, BackupAction, RestoreOpts } from '$lib/ipc';
+  import type { BackupAction, RestoreOpts } from '$lib/ipc';
   import { revealBackup, deleteBackup, verifyBackup, extractBackup, pickFolder, pickOpenFile, importBackupZip } from '$lib/ipc';
+  import { backupState } from '$lib/backupState.svelte';
   import RestoreDialog from './RestoreDialog.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import EmptyState from './EmptyState.svelte';
@@ -20,25 +21,26 @@
   import { formatAbsTime } from '$lib/relativeTime';
 
   let {
-    data,
     running,
     log = [],
     profiles = [],
     confirmDestructive = true,
-    onAction,
-    onRefresh,
     scriptsAvail = true
   }: {
-    data: BackupList | null;
     running: string | null;
     log?: string[];
     profiles?: string[];
     /** R8: mirror the global "confirm destructive actions" toggle (settings #120). */
     confirmDestructive?: boolean;
-    onAction: (action: BackupAction, opts?: RestoreOpts) => void;
-    onRefresh?: () => void;
     scriptsAvail?: boolean;
   } = $props();
+
+  // This tab owns its data (backupState), like ProfilesTab owns MatrixState. The run lock and the
+  // confirm gate are page-level on purpose and are wired to backupState there. Not lazy: +page
+  // loads it on mount because the sidebar attention badge reads it.
+  const data = $derived(backupState.data);
+  const onAction = (action: BackupAction, opts?: RestoreOpts) => backupState.action(action, opts);
+  const onRefresh = () => backupState.load();
 
   // F9: weekly-archive ops (zip files, not snapshot folders) — direct IPC, not BackupAction.
   let wkBusy = $state(false);

@@ -9,8 +9,6 @@
     runForkRepo,
     cancelForkRepo,
     readForkRepoStatus,
-    listBackups,
-    runBackup,
     readProfiles,
     runProfiles,
     resolveSyncConflict,
@@ -20,7 +18,6 @@
     setProfileProxy,
     setProfileFolders,
     setProfilePlugins,
-    unblockManagedPlugin,
     runManagedDeploy,
     runProfileRelink,
     readOrphanProfiles,
@@ -54,23 +51,10 @@
     runStack,
     readOpencode,
     runOpencodeProvider,
-    canonicalSkillsDir,
     globalSessionCount,
     quitApp,
     openPath,
     openUrl,
-    listPlugins,
-    listSkills,
-    deleteSkill,
-    listPluginUpdates,
-    listPluginContents,
-    runPlugin,
-    runPluginsBulk,
-    runMarketplaceBump,
-    type BumpLevel,
-    pluginSyncStatus,
-    pluginSyncSet,
-    runPluginSync,
     cancelRun,
     cancelAll,
     readConfig,
@@ -82,9 +66,6 @@
   type Unavailable,
     type StackService,
     type OpencodeStatus,
-    type BackupAction,
-    type BackupList,
-    type RestoreOpts,
     type ProfileAction,
     type ProfilesStatus,
     type ProfilesConfig,
@@ -97,12 +78,6 @@
     type MatrixApply,
     type MyProvider,
     type MyProviderInput,
-    type PluginInfo,
-    type SkillInfo,
-    type PluginAction,
-    type PluginUpdate,
-    type PluginContents,
-    type PluginSyncStatus,
     type LimitsAlertEvent,
     type LimitsStatusEvent,
     readStackDrift,
@@ -180,14 +155,17 @@
   } from '$lib/confirmGate';
   import { setLanguage } from '$lib/ipc';
   import type { SpawnRun } from '$lib/runSpawn';
-  // Environments, Subagents, MCP, Sync and Schedule own their data (and their own actions) in these
-  // $state classes, mirroring MatrixState/ProfilesTab. The page only reads their `loading` for the
-  // refresh overlay, and hands the page-level machinery (confirm gate, run lock) in below.
+  // Environments, Subagents, MCP, Sync, Schedule, Backup and Plugins own their data (and their own
+  // actions) in these $state classes, mirroring MatrixState/ProfilesTab. The page only reads their
+  // `loading` for the refresh overlay, and hands the page-level machinery (confirm gate, run lock,
+  // console buffer) in below.
   import { envState } from '$lib/envState.svelte';
   import { agentsState } from '$lib/agentsState.svelte';
   import { mcpState } from '$lib/mcpState.svelte';
   import { syncState } from '$lib/syncState.svelte';
   import { schedState } from '$lib/schedState.svelte';
+  import { backupState } from '$lib/backupState.svelte';
+  import { pluginsState } from '$lib/pluginsState.svelte';
 
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
@@ -246,9 +224,7 @@
     e.preventDefault();
     navGo(e.key === 'ArrowLeft' ? 'back' : 'fwd');
   }
-  let pendingUndo = $state<{ snapshot: string; profiles?: string[]; includeCredentials?: boolean } | null>(null);
   let theme = $state<Theme>('dark');
-  let backupData = $state<BackupList | null>(null);
   let profilesData = $state<ProfilesStatus | null>(null);
   let orphansData = $state<OrphanInfo[]>([]);
   let profilesConfig = $state<ProfilesConfig | null>(null);
@@ -263,12 +239,6 @@
   // fires each loader exactly once, instead of re-firing while the IPC is still in flight.
   let stackLoaded = $state(false);
   let opencodeLoaded = $state(false);
-  let pluginsData = $state<PluginInfo[] | null>(null);
-  let skillsData = $state<SkillInfo[] | null>(null);
-  let pluginUpdates = $state<PluginUpdate[]>([]);
-  let pluginContents = $state<PluginContents[]>([]);
-  let pluginSyncData = $state<PluginSyncStatus | null>(null);
-  let extensionsLoaded = $state(false);
   let loadError = $state<string | null>(null);
   // OSS first-run: are the maintenance scripts present under SCRIPTS_ROOT? Default true so an
   // owner setup never flashes the "no scripts" banner before the backend answers.
@@ -416,19 +386,15 @@
   // as "update available" — a fresh check is the authoritative signal).
   let lastRunMode: 'check' | 'apply' = 'check';
 
+  // F21: any cancellable work in flight (run / fork runs / bulk plugin) — gates the "Cancel all"
+  // button. PTY sessions aren't tracked here (they live in SessionsTab); cancel_all still kills them.
+  const anyActivity = $derived(
+    !!running || pluginsState.bulkActive || Object.values(forkRuns).some((r) => r?.running)
+  );
+
   // #15: live per-component step during an "Обновить всё" run. Update-All.ps1 prints a `>>> <label>`
   // header before each component; we surface the latest label as progress. Cleared when `all` finishes.
   let allProgress = $state<string | null>(null);
-
-  // True while a bulk plugin op is in flight. F17: the bulk run now lives in its OWN backend domain
-  // (run_plugins_bulk), so it does NOT take the global `running` lock — only plugin-tab buttons are
-  // gated (via the derived prop below), leaving backup/forks/etc. usable. The run-done listener still
-  // skips plugin-mgr while this is set (the await drives completion, not the event).
-  let bulkActive = $state(false);
-
-  // F21: any cancellable work in flight (run / fork runs / bulk plugin) — gates the "Cancel all"
-  // button. PTY sessions aren't tracked here (they live in SessionsTab); cancel_all still kills them.
-  const anyActivity = $derived(!!running || bulkActive || Object.values(forkRuns).some((r) => r?.running));
 
   function startRun(id: string, mode: 'check' | 'apply', append = false) {
     if (running) return;
@@ -477,6 +443,16 @@
   syncState.reloadProfiles = reloadProfiles;
   schedState.askConfirm = askConfirm;
   schedState.spawn = spawnRun;
+  backupState.askConfirm = askConfirm;
+  backupState.spawn = spawnRun;
+  pluginsState.askConfirm = askConfirm;
+  pluginsState.spawn = spawnRun;
+  pluginsState.toastErr = toastErr;
+  // The bulk sweep runs in its own backend domain (no run lock), so it writes the page-owned console
+  // buffer directly instead of going through spawnRun.
+  pluginsState.resetLog = (line) => (log = [line]);
+  pluginsState.appendLog = appendLog;
+  pluginsState.reloadStackDrift = reloadStackDrift;
 
   function onApply(comp: Component) {
     askConfirm({
@@ -555,65 +531,6 @@
       action: () => startForks('ff'),
       details: names
     });
-  }
-
-  // --- Backup tab ---
-  async function reloadBackup() {
-    try {
-      backupData = await listBackups();
-    } catch {
-      backupData = null;
-    }
-  }
-
-  /** Returns false when the global run lock rejected the spawn — nothing was started. */
-  function startBackup(action: BackupAction, opts?: RestoreOpts): boolean {
-    if (running) return false;
-    running = 'backup';
-    const verb =
-      action === 'backup'
-        ? t('page.backup_verb_snapshot')
-        : action === 'restore-preview'
-          ? t('page.backup_verb_restore_preview')
-          : action === 'delete-snapshot'
-            ? t('page.backup_verb_delete')
-            : t('page.backup_verb_restore');
-    log = [t('page.backup_log', { verb })];
-    runBackup(action, opts).catch(onSpawnErr);
-    return true;
-  }
-
-  function onBackupAction(action: BackupAction, opts?: RestoreOpts) {
-    if (action === 'restore') {
-      const snap = opts?.timestamp ?? t('page.backup_snap_last');
-      askConfirm({
-        title: t('page.confirm_restore_title'),
-        message: t('page.confirm_restore_msg', { snap }),
-        confirmLabel: t('page.confirm_restore_btn'),
-        action: () => {
-          // Arm the undo ONLY if the spawn was accepted: startBackup no-ops while the global run
-          // lock is held, and a stale pendingUndo would later attach an "undo the restore" toast —
-          // whose action launches a real destructive restore — to an unrelated backup run.
-          const started = startBackup('restore', opts);
-          pendingUndo =
-            started && opts
-              ? { snapshot: opts.timestamp ?? '', profiles: opts.profiles, includeCredentials: opts.includeCredentials }
-              : null;
-        },
-        danger: true,
-        requireText: opts?.timestamp ?? null
-      });
-    } else if (action === 'delete-snapshot') {
-      askConfirm({
-        title: t('page.confirm_delsnap_title'),
-        message: t('page.confirm_delsnap_msg', { snap: opts?.timestamp ?? '' }),
-        confirmLabel: t('page.confirm_delsnap_btn'),
-        action: () => startBackup('delete-snapshot', opts),
-        danger: true
-      });
-    } else {
-      startBackup(action, opts);
-    }
   }
 
   // --- Profiles tab ---
@@ -1364,83 +1281,24 @@
     });
   }
 
-  // --- Plugins & Skills tab ---
-  async function reloadPluginUpdates() {
-    try {
-      pluginUpdates = await listPluginUpdates();
-    } catch {
-      pluginUpdates = [];
-    }
-  }
-  // list_plugin_updates spawns the claude CLI — throttle the on-focus refresh so alt-tabbing
-  // doesn't fire a spawn every time the window regains focus (explicit calls stay unthrottled).
-  let lastFocusPluginCheck = 0;
-
-  async function reloadExtensions() {
-    // Load plugins + skills INDEPENDENTLY: list_plugins spawns the (slow, sometimes-hanging) claude
-    // CLI and must not gate the local skill scan. On failure set [] (not null) and surface the real
-    // error — a null rendered as an eternal skeleton, indistinguishable from loading, was the
-    // "infinite loading" bug (the empty-state already hints "or claude CLI unavailable").
-    const pP = listPlugins()
-      .then((v) => {
-        pluginsData = v;
-      })
-      .catch((e) => {
-        pluginsData = [];
-        // U8/U3: a localized title + the raw error in `detail` (was: the raw serde string dumped
-        // straight into a Russian-UI toast title). The empty-state already explains "no plugins".
-        toastErr(e, t('page.plugins_load_error'));
-      });
-    const pS = listSkills()
-      .then((v) => {
-        skillsData = v;
-      })
-      .catch(() => {
-        skillsData = [];
-      });
-    await Promise.allSettled([pP, pS]);
-    try {
-      pluginContents = await listPluginContents();
-    } catch {
-      pluginContents = [];
-    }
-    try {
-      pluginSyncData = await pluginSyncStatus();
-    } catch {
-      pluginSyncData = null;
-    }
-    await reloadPluginUpdates();
-  }
-
   // Sidebar "needs attention" indicators, from already-loaded data.
   const attention = $derived({
     updates: updatesAttention(components, statuses),
     forks: forksAttention(statuses.forks),
-    backup: backupAttention(backupData),
+    backup: backupAttention(backupState.data),
     profiles: profilesAttention(profilesData),
     sync: syncAttention(syncState.data),
-    extensions: pluginsAttention(pluginUpdates.length),
+    extensions: pluginsAttention(pluginsState.updates.length),
     sessions: sessionsAttention(agentSummary),
     // U3: a pending Castellyn update surfaces as an info badge on Settings (never auto-installs).
     settings: updateAvailable ? ({ level: 'info' } as const) : null,
     // Home is the cockpit — roll every subsystem it surfaces into one badge (highest severity wins).
     home: maxAttention([
       stackDriftAttention(stackDrift),
-      backupAttention(backupData),
+      backupAttention(backupState.data),
       syncAttention(syncState.data),
       profilesAttention(profilesData)
     ])
-  });
-
-  // Lazy-load on first open (list_plugins spawns the claude CLI).
-  $effect(() => {
-    if (active === 'extensions' && !extensionsLoaded) {
-      // L54: synchronous flag — the load spawns the claude CLI, and a tab toggle mid-flight used to
-      // fire this loader a second time.
-      extensionsLoaded = true;
-      setLoading('extensions', true);
-      reloadExtensions().finally(() => setLoading('extensions', false));
-    }
   });
 
   // A tab shows the "refreshing" overlay + sidebar spinner while it fetches fresh data.
@@ -1453,6 +1311,7 @@
     m.agents = agentsState.loading;
     m.sync = syncState.loading;
     m.schedule = schedState.loading;
+    m.extensions = pluginsState.loading;
     return m;
   });
   const tabRefreshing = $derived(!!tabLoading[active]);
@@ -1515,155 +1374,6 @@
     } finally {
       cloningRepo = null;
     }
-  }
-
-  function startPlugin(action: PluginAction, id: string) {
-    if (running) return;
-    running = 'plugin-mgr';
-    const verb =
-      action === 'update'
-        ? t('page.plugin_verb_update')
-        : action === 'enable'
-          ? t('page.plugin_verb_enable')
-          : action === 'remove'
-            ? t('page.plugin_verb_remove')
-            : t('page.plugin_verb_disable');
-    log = [t('page.plugin_log', { id, verb })];
-    runPlugin(action, id).catch(onSpawnErr);
-  }
-
-  // Ф3: own-marketplace version bump — same single-run contract as startPlugin (component
-  // "plugin-mgr"), run-done releases the lock and toasts via the generic operational path.
-  function onMarketplaceBump(id: string, level: BumpLevel) {
-    if (running) return;
-    running = 'plugin-mgr';
-    log = [t('page.plugin_bump_log', { id, level })];
-    runMarketplaceBump(id, level).catch(onSpawnErr);
-  }
-
-  // A managed-policy-blocked plugin can't be enabled per-profile — the real fix is removing its
-  // explicit `false` from the SOURCE managed-settings.json and redeploying (one UAC prompt).
-  function onPluginUnblock(id: string) {
-    askConfirm({
-      title: t('page.confirm_unblock_title'),
-      message: t('page.confirm_unblock_msg', { id }),
-      confirmLabel: t('page.confirm_unblock_btn'),
-      action: async () => {
-        try {
-          await unblockManagedPlugin(id);
-          const res = await runManagedDeploy();
-          if (res.state === 'ok') {
-            // Unblocking is only half the intent — the plugin is still disabled per-profile.
-            // Offer the enable right on the toast instead of demanding another hunt+click.
-            pushToast({
-              kind: 'success',
-              title: t('page.unblock_done', { id }),
-              action: { label: t('page.unblock_enable_now'), onClick: () => startPlugin('enable', id) }
-            });
-          } else {
-            pushToast({ kind: 'error', title: t('page.toast_generic_error'), detail: res.detail });
-          }
-          await Promise.all([reloadExtensions(), reloadStackDrift()]);
-        } catch (e) {
-          toastErr(e);
-        }
-      }
-    });
-  }
-
-  function onPluginAction(action: PluginAction, id: string) {
-    // 'disable' is reversible (re-enable any time) → no confirm, matching bulk-disable. Only the
-    // irreversible 'remove' gates behind a danger confirm.
-    if (action === 'remove') {
-      askConfirm({
-        title: t('page.confirm_plugin_remove_title'),
-        message: t('page.confirm_plugin_remove_msg', { id }),
-        confirmLabel: t('page.confirm_plugin_remove_btn'),
-        action: () => startPlugin('remove', id),
-        danger: true
-      });
-    } else {
-      startPlugin(action, id);
-    }
-  }
-
-  // F17: one backend call runs the whole bulk in its own domain (sequential there — no config race),
-  // streaming id-tagged lines to the run log. We don't set the global `running` lock, so unrelated
-  // work stays available; only the plugin tab is gated via `bulkActive`.
-  async function runBulkPlugins(action: PluginAction, ids: string[]) {
-    if (!ids.length || bulkActive) return;
-    const verb =
-      action === 'update'
-        ? t('page.plugin_verb_update')
-        : action === 'enable'
-          ? t('page.plugin_verb_enable')
-          : action === 'remove'
-            ? t('page.plugin_verb_remove')
-            : t('page.plugin_verb_disable');
-    bulkActive = true;
-    log = [t('page.plugin_bulk_log', { n: ids.length, verb })];
-    try {
-      await runPluginsBulk(action, ids);
-    } catch (e) {
-      appendLog(t('page.log_error', { e: String(e) }));
-    } finally {
-      bulkActive = false;
-      reloadExtensions();
-    }
-  }
-  // Cross-profile plugin sync: one-off reconcile (streams into the console, run-done
-  // releases the lock + toasts via the generic operational path).
-  function onPluginSyncNow() {
-    if (running) return;
-    running = 'pluginsync';
-    log = [t('page.log_component', { name: opName('pluginsync'), verb: t('page.verb_apply') })];
-    runPluginSync().catch(onSpawnErr);
-  }
-  // Wire/unwire the SessionStart auto-sync hook in every profile (quick file edits, no run lock).
-  async function onPluginSyncHookToggle(enabled: boolean) {
-    try {
-      pluginSyncData = await pluginSyncSet(enabled);
-      pushToast({ kind: 'success', title: t(enabled ? 'page.pluginsync_hook_on' : 'page.pluginsync_hook_off') });
-    } catch (e) {
-      toastErr(e);
-    }
-  }
-
-  function onBulkPlugin(action: PluginAction, ids: string[]) {
-    if (!ids.length) return;
-    if (action === 'remove') {
-      askConfirm({
-        title: t('page.confirm_plugin_remove_title'),
-        message: t('page.confirm_plugin_bulk_remove_msg', { count: ids.length }),
-        confirmLabel: t('page.confirm_plugin_remove_btn'),
-        action: () => runBulkPlugins('remove', ids),
-        danger: true,
-        details: ids
-      });
-    } else {
-      runBulkPlugins(action, ids);
-    }
-  }
-
-  function onOpenSkills() {
-    canonicalSkillsDir().then(d => openPath(d)).catch(toastErr);
-  }
-
-  function onOpenSkill(dir: string) {
-    openPath(dir).catch(toastErr);
-  }
-  function onDeleteSkill(dir: string, name: string) {
-    askConfirm({
-      title: t('page.confirm_skill_delete_title'),
-      message: t('page.confirm_skill_delete_msg', { name }),
-      confirmLabel: t('page.confirm_skill_delete_btn'),
-      action: () => {
-        deleteSkill(dir)
-          .then(() => reloadExtensions())
-          .catch(toastErr);
-      },
-      danger: true
-    });
   }
 
   async function cancel() {
@@ -1812,7 +1522,7 @@
     // the run lock, so a no-op while busy is harmless).
     { id: 'act:checkall', label: t('page.cmd_check_all'), run: () => runOrToast(() => startRun('all', 'check')) },
     { id: 'act:forks', label: t('page.cmd_refresh_forks'), run: () => runOrToast(() => startForks('check')) },
-    { id: 'act:backup', label: t('page.cmd_backup_now'), run: () => runOrToast(() => startBackup('backup')) },
+    { id: 'act:backup', label: t('page.cmd_backup_now'), run: () => runOrToast(() => backupState.start('backup')) },
     // L31: onStack lives in its OWN lock domain (stackRunning), not the maintenance `running` lock
     // that runOrToast gates on — routing through runOrToast would block Stop whenever a maintenance
     // op is running and silently no-op start/stop against the wrong lock. Call onStack directly.
@@ -1847,7 +1557,7 @@
       label: `${t('nav.mcp')} · ${s.name}`,
       run: () => { active = 'mcp'; highlightTarget = { tab: 'mcp', id: `mcp:${s.name}` }; }
     })),
-    ...(pluginsData ?? []).map((pl) => ({
+    ...(pluginsState.plugins ?? []).map((pl) => ({
       id: `pl:${pl.id}`,
       label: `${t('nav.extensions')} · ${pl.id}`,
       run: () => { active = 'extensions'; highlightTarget = { tab: 'extensions', id: `plugin:${pl.id}` }; }
@@ -1951,11 +1661,11 @@
     } catch (e) {
       loadError = String(e);
     }
-    reloadBackup();
+    backupState.load();
     // Await profiles so the first-run check sees real data (no profiles → empty-setup signal).
     await reloadProfiles();
     mcpState.load();
-    reloadPluginUpdates();
+    pluginsState.loadUpdates();
     // Seed schedules from the on-disk envelope (file-only, no pwsh) so Home's task rollup shows from
     // launch. The Schedule tab's lazy full read (which queries pwsh) still refreshes it on first open.
     schedState.seedCached();
@@ -2025,7 +1735,7 @@
         const concurrentDomain =
           e.payload.component === STREAM_IDS.ENGINE ||
           e.payload.component === STREAM_IDS.FORKS ||
-          (e.payload.component === STREAM_IDS.PLUGIN_MGR && bulkActive);
+          (e.payload.component === STREAM_IDS.PLUGIN_MGR && pluginsState.bulkActive);
         // CAST-028: run_stack shares the ENGINE stream id with the router install, but owns its own
         // slot and clears its own busy state in runStack().finally. Letting it fall through the
         // GLOBAL lifecycle below would release `running` — and consume lastRunMode / lastForkAction /
@@ -2050,7 +1760,7 @@
         appendLog(t('page.log_done', { code: e.payload.code }));
         // During a bulk plugin op, runBulkPlugins awaits the single backend call and does the reload
         // itself afterward — skip this handler's per-item lifecycle for the bulk's run-done.
-        if (e.payload.component === STREAM_IDS.PLUGIN_MGR && bulkActive) return;
+        if (e.payload.component === STREAM_IDS.PLUGIN_MGR && pluginsState.bulkActive) return;
         // Only release the lock if THIS event owns it. F17: a bulk run (own domain, never sets
         // `running`) can emit run-done while an unrelated op holds the lock — don't unlock that op.
         const id = e.payload.component;
@@ -2070,7 +1780,7 @@
           }
         }
         // Component-specific data reloads (keep fresh before surfacing the outcome).
-        if (id === STREAM_IDS.BACKUP) await reloadBackup();
+        if (id === STREAM_IDS.BACKUP) await backupState.load();
         if (id === STREAM_IDS.PROFILES) await reloadProfiles();
         if (id === STREAM_IDS.MCP) await mcpState.load();
         if (id === STREAM_IDS.SYNC) {
@@ -2082,7 +1792,7 @@
         if (id === STREAM_IDS.ENGINE) await reloadStack();
         if (id === STREAM_IDS.PROVIDER) await reloadOpencode();
         if (id === STREAM_IDS.SCHEDULE) await schedState.load();
-        if (id === STREAM_IDS.PLUGIN_MGR) await reloadExtensions();
+        if (id === STREAM_IDS.PLUGIN_MGR) await pluginsState.load();
 
         // Auto-recheck after a successful single-component apply (apply scripts write the applied
         // count, not availability) — toast appears after the follow-up check, not the apply.
@@ -2134,9 +1844,9 @@
           } else {
             // Operational actions (provider/mcp/sync/backup/profiles/schedule/plugins): simple result.
             const name = opName(id);
-            if (id === 'backup' && pendingUndo) {
-              const undo = pendingUndo;
-              pendingUndo = null;
+            if (id === 'backup' && backupState.pendingUndo) {
+              const undo = backupState.pendingUndo;
+              backupState.pendingUndo = null;
               if (code === 0) {
                 pushToast({ kind: 'success', title: t('page.toast_op_done', { name }) });
                 pushToast({
@@ -2145,7 +1855,7 @@
                   detail: t('page.backup_restore_undo_detail', { snap: undo.snapshot }),
                   action: {
                     label: t('page.backup_restore_undo_btn'),
-                    onClick: () => startBackup('restore', { timestamp: undo.snapshot, profiles: undo.profiles, includeCredentials: undo.includeCredentials })
+                    onClick: () => backupState.start('restore', { timestamp: undo.snapshot, profiles: undo.profiles, includeCredentials: undo.includeCredentials })
                   }
                 }, 15000);
               } else {
@@ -2189,7 +1899,7 @@
       await listen('cancel-all-done', () => {
         running = null;
         forkRuns = {};
-        bulkActive = false;
+        pluginsState.bulkActive = false;
         appendLog(t('page.cancel_all_done'));
         pushToast({ kind: 'info', title: t('page.cancel_all_done') });
       })
@@ -2291,16 +2001,12 @@
       components.forEach(loadStatus);
       // Heavy (each spawns pwsh / the claude CLI): only refresh the dataset whose tab is visible —
       // off-screen tabs re-fetch lazily on next open, so don't burst N pwsh spawns on every alt-tab.
-      if (active === 'backup') reloadBackup();
+      if (active === 'backup') backupState.load();
       if (active === 'profiles' || active === 'home' || active === 'sync') reloadProfiles();
       if (active === 'mcp') mcpState.load();
-      // pluginUpdates also feeds the sidebar "extensions" badge, so keep it fresh app-wide — but
-      // at most once every 5 min on focus (the CLI spawn isn't worth firing on every alt-tab).
-      const now = Date.now();
-      if (now - lastFocusPluginCheck > 5 * 60_000) {
-        lastFocusPluginCheck = now;
-        reloadPluginUpdates();
-      }
+      // The plugin updates also feed the sidebar "extensions" badge, so keep them fresh app-wide —
+      // but at most once every 5 min on focus (the CLI spawn isn't worth firing on every alt-tab).
+      pluginsState.loadUpdatesOnFocus();
     };
     window.addEventListener('focus', onFocus);
     unlisten.push(() => window.removeEventListener('focus', onFocus));
@@ -2362,7 +2068,7 @@
       {:else if active === 'forks'}
         <ForksTab status={statuses.forks} {githubRepos} {githubUnavailable} myItems={myGithubItems} {myItemsUnavailable} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
       {:else if active === 'backup'}
-        <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} {scriptsAvail} />
+        <BackupTab {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
       {:else if active === 'mcp'}
         <McpTab {running} />
       {:else if active === 'envs'}
@@ -2461,24 +2167,9 @@
         {/if}
         {#if everOpened.extensions}
           <div class:hidden={active !== 'extensions'}>
-            <PluginsTab
-              plugins={pluginsData}
-              skills={skillsData}
-              updates={pluginUpdates}
-              contents={pluginContents}
-              running={bulkActive ? 'plugin-mgr' : running}
-              syncStatus={pluginSyncData}
-              onAction={onPluginAction}
-              {onBulkPlugin}
-              onBump={onMarketplaceBump}
-              onRefresh={reloadExtensions}
-              {onOpenSkills}
-              {onOpenSkill}
-              {onDeleteSkill}
-              onSyncNow={onPluginSyncNow}
-              onSyncHookToggle={onPluginSyncHookToggle}
-              onUnblock={onPluginUnblock}
-            />
+            <!-- The bulk sweep gates only this tab: it never takes the global run lock, so it is
+                 folded into the tab's `running` prop rather than into the page's. -->
+            <PluginsTab running={pluginsState.bulkActive ? 'plugin-mgr' : running} />
           </div>
         {/if}
       </div>
