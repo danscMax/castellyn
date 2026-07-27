@@ -11,31 +11,29 @@
   import ModalShell from './ModalShell.svelte';
   import Select from './Select.svelte';
   import { Bot, Pencil, Trash2, Plus, FlaskConical } from '@lucide/svelte';
+  import { agentsState } from '$lib/agentsState.svelte';
+  import type { ConfirmRequest } from '$lib/confirmGate';
 
   let {
-    data,
     running,
-    onSave,
-    onDelete,
-    onRefresh,
+    askConfirm,
     onOpenExtensions
   }: {
-    data: AgentInfo[] | null;
     running: string | null;
-    // Resolves once the write completed (so the dialog only closes on success).
-    onSave: (a: {
-      name: string;
-      description: string;
-      model: string;
-      tools: string;
-      prompt: string;
-      path?: string;
-    }) => Promise<void>;
-    onDelete: (a: AgentInfo) => void;
-    onRefresh: () => void;
+    askConfirm: (req: ConfirmRequest) => void;
     onOpenExtensions: () => void;
   } = $props();
 
+  // This tab owns its data (agentsState), like ProfilesTab owns MatrixState. The confirm gate is
+  // page-level on purpose and is handed in.
+  $effect(() => {
+    agentsState.askConfirm = askConfirm;
+  });
+  $effect(() => {
+    if (!agentsState.loaded) agentsState.loadOnce();
+  });
+
+  const data = $derived(agentsState.data);
   const busy = $derived(!!running);
   const agents = $derived(data ?? []);
 
@@ -168,7 +166,7 @@ Rules:
     if (!canSave) return;
     saving = true;
     try {
-      await onSave({
+      await agentsState.save({
         name: name.trim(),
         description: description.trim(),
         model,
@@ -178,7 +176,7 @@ Rules:
       });
       open = false;
     } catch {
-      /* onSave surfaces its own error toast; keep the dialog open so nothing is lost */
+      /* agentsState.save surfaces its own error toast; keep the dialog open so nothing is lost */
     } finally {
       saving = false;
     }
@@ -192,7 +190,7 @@ Rules:
       <p class="text-sw-sm text-sw-text-secondary">{t('agents.subtitle')}</p>
     </div>
     <div class="flex shrink-0 items-center gap-sw-2">
-      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onRefresh} title={t('agents.refreshTitle')}>
+      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => agentsState.load()} title={t('agents.refreshTitle')}>
         {running === 'agents' ? t('common.busy') : t('common.refresh')}
       </button>
       <button class="sw-btn sw-btn-primary" onclick={openCreate} title={t('agents.createTip')}>
@@ -229,7 +227,7 @@ Rules:
                 title={t('agents.testTip')} aria-label={t('agents.testTip')}><FlaskConical size={14} aria-hidden="true" /></button>
               <button class="sw-btn sw-btn-ghost text-sw-sm" onclick={() => openEdit(a)}
                 title={t('agents.edit')} aria-label={t('agents.edit')}><Pencil size={14} aria-hidden="true" /></button>
-              <button class="sw-btn sw-btn-ghost text-sw-sm" onclick={() => onDelete(a)}
+              <button class="sw-btn sw-btn-ghost text-sw-sm" onclick={() => agentsState.remove(a)}
                 title={t('agents.delete')} aria-label={t('agents.delete')}><Trash2 size={14} aria-hidden="true" /></button>
             </div>
           </div>

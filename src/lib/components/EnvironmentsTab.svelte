@@ -6,43 +6,37 @@
   import DataTable, { type DTColumn } from './DataTable.svelte';
   import Segmented from './Segmented.svelte';
   import { Compass, Check, X } from '@lucide/svelte';
+  import { envState } from '$lib/envState.svelte';
+  import type { ConfirmRequest } from '$lib/confirmGate';
 
   let {
-    data,
     running,
-    matrix,
-    onRefresh,
-    onShare,
-    onShareCommands,
-    onRtk,
+    askConfirm,
     onOpenConfig,
     onOpenProviders,
     onOpenMcp,
-    onDeployMcp,
-    onDeployProviders,
-    onDeployInstructions,
-    onConnectOmniroute,
-    onOpenUrl,
-    onLoadMatrix
+    onOpenUrl
   }: {
-    data: EnvInfo[] | null;
     running: string | null;
-    matrix: SkillRow[] | null;
-    onRefresh: () => void;
-    onShare: () => void;
-    onShareCommands: () => void;
-    onRtk: (id: string, enable: boolean) => void;
+    askConfirm: (req: ConfirmRequest) => void;
     onOpenConfig: (path: string) => void;
     onOpenProviders: () => void;
     onOpenMcp: () => void;
-    onDeployMcp: (id: string) => void;
-    onDeployProviders: (id: string) => void;
-    onDeployInstructions: (id: string) => void;
-    onConnectOmniroute: () => void;
     onOpenUrl: (url: string) => void;
-    onLoadMatrix: () => void;
   } = $props();
 
+  // This tab owns its data (envState), like ProfilesTab owns MatrixState. Only the page-level
+  // machinery it cannot own — the confirm gate, tab navigation, the console-logging openers —
+  // still arrives as props.
+  $effect(() => {
+    envState.askConfirm = askConfirm;
+  });
+  $effect(() => {
+    if (!envState.loaded) envState.loadOnce();
+  });
+
+  const data = $derived(envState.data);
+  const matrix = $derived(envState.matrix);
   const busy = $derived(!!running);
   const envs = $derived(data ?? []);
   // Show the share action only when a harness has a gap sharing can actually close (#1) — not the
@@ -60,7 +54,7 @@
   let view = $state<'cards' | 'table'>('cards');
   function showTable() {
     view = 'table';
-    if (matrix === null) onLoadMatrix();
+    if (matrix === null) void envState.loadMatrix();
   }
 
   // Skills badge colour keys off the *closable* gap, so a harness with only the unshareable residual
@@ -95,12 +89,12 @@
         onChange={(v) => (v === 'table' ? showTable() : (view = 'cards'))}
         ariaLabel={t('environments.viewCards')}
       />
-      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onRefresh}
+      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => envState.load()}
         title={t('environments.refreshTitle')}>
         {running === 'envs' ? t('common.busy') : t('common.refresh')}
       </button>
       {#if data !== null && hasGap}
-        <button class="sw-btn sw-btn-primary" disabled={busy} onclick={onShare}
+        <button class="sw-btn sw-btn-primary" disabled={busy} onclick={() => envState.onShareSkills()}
           title={t('environments.shareTitle')}>
           {t('environments.shareBtn')}
         </button>
@@ -110,7 +104,7 @@
       {#if data !== null}
         <!-- Commands aren't a cross-harness concept: wrap your own /commands as SKILL.md so Codex/
              OpenCode can invoke them (`$max-rootcause`). Always available — it (re)generates wrappers. -->
-        <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onShareCommands}
+        <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => envState.onShareCommands()}
           title={t('environments.shareCmdTitle')}>
           {t('environments.shareCmdBtn')}
         </button>
@@ -213,7 +207,7 @@
                       : e.id === 'claude'
                         ? t('environments.rtkClaudeTip')
                         : t('environments.rtkNaTip')}
-                    onCheckedChange={(v) => onRtk(e.id, v)} />
+                    onCheckedChange={(v) => envState.onRtk(e.id, v)} />
                   <span class="text-sw-xs text-sw-text-muted">
                     {!e.rtkAvailable ? t('environments.rtkNa') : e.rtk ? t('environments.rtkOn') : t('environments.rtkOff')}
                   </span>
@@ -226,20 +220,20 @@
             {#if e.id === 'opencode'}
               <div class="flex flex-wrap gap-sw-2">
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                  onclick={() => onDeployMcp(e.id)} title={t('environments.deployMcpTitle')}>{t('environments.deployMcp')}</button>
+                  onclick={() => envState.onDeployMcp(e.id)} title={t('environments.deployMcpTitle')}>{t('environments.deployMcp')}</button>
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                  onclick={() => onDeployProviders(e.id)} title={t('environments.deployProvidersTitle')}>{t('environments.deployProviders')}</button>
+                  onclick={() => envState.onDeployProviders(e.id)} title={t('environments.deployProvidersTitle')}>{t('environments.deployProviders')}</button>
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                  onclick={() => onDeployInstructions(e.id)} title={t('environments.deployInstrTitle')}>{t('environments.deployInstr')}</button>
+                  onclick={() => envState.onDeployInstructions(e.id)} title={t('environments.deployInstrTitle')}>{t('environments.deployInstr')}</button>
               </div>
             {:else if e.id === 'codex'}
               <div class="flex flex-wrap gap-sw-2">
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                  onclick={() => onDeployMcp(e.id)} title={t('environments.deployMcpTitleCodex')}>{t('environments.deployMcp')}</button>
+                  onclick={() => envState.onDeployMcp(e.id)} title={t('environments.deployMcpTitleCodex')}>{t('environments.deployMcp')}</button>
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                  onclick={() => onDeployProviders(e.id)} title={t('environments.connectGatewayTitle')}>{t('environments.connectGateway')}</button>
+                  onclick={() => envState.onDeployProviders(e.id)} title={t('environments.connectGatewayTitle')}>{t('environments.connectGateway')}</button>
                 <button class="sw-btn sw-btn-ghost text-sw-xs" disabled={busy}
-                  onclick={onConnectOmniroute} title={t('environments.connectOmnirouteTitle')}>{t('environments.connectOmniroute')}</button>
+                  onclick={() => envState.onConnectOmniroute()} title={t('environments.connectOmnirouteTitle')}>{t('environments.connectOmniroute')}</button>
               </div>
             {:else if e.id === 'claude'}
               <!-- C2: the home harness has no deploy actions of its own — say so instead of leaving the

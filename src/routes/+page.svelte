@@ -70,10 +70,6 @@
     listPlugins,
     listSkills,
     deleteSkill,
-    listAgents,
-    saveAgent,
-    deleteAgent,
-    type AgentInfo,
     listPluginUpdates,
     listPluginContents,
     runPlugin,
@@ -199,7 +195,11 @@
     type ConfirmState,
     type ConfirmRequest
   } from '$lib/confirmGate';
-  import { setLanguage, readEnvironments, readSkillMatrix, shareSkills, shareCommands, runOpencodeRtk, runOpencodeMcp, runOpencodeProviders, runOpencodeInstructions, runCodexMcp, runCodexProviders, runCodexOmniroute, type EnvInfo, type SkillRow } from '$lib/ipc';
+  import { setLanguage } from '$lib/ipc';
+  // Environments + Subagents own their data (and their own actions) in these $state classes,
+  // mirroring MatrixState/ProfilesTab. The page only reads their `loading` for the refresh overlay.
+  import { envState } from '$lib/envState.svelte';
+  import { agentsState } from '$lib/agentsState.svelte';
 
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
@@ -268,9 +268,6 @@
   let mcpData = $state<McpStatus | null>(null);
   // Bumped on every MCP reload → tells the profile matrix to re-read its mcp facts (deploy/remove).
   let mcpTick = $state(0);
-  let envsData = $state<EnvInfo[] | null>(null);
-  let envsMatrix = $state<SkillRow[] | null>(null);
-  let envsLoaded = $state(false);
   let syncData = $state<SyncStatus | null>(null);
   let driftData = $state<ConfigDriftStatus | null>(null);
   let syncLoaded = $state(false);
@@ -288,8 +285,6 @@
   let schedulesLoaded = $state(false);
   let pluginsData = $state<PluginInfo[] | null>(null);
   let skillsData = $state<SkillInfo[] | null>(null);
-  let agentsData = $state<AgentInfo[] | null>(null);
-  let agentsLoaded = $state(false);
   let pluginUpdates = $state<PluginUpdate[]>([]);
   let pluginContents = $state<PluginContents[]>([]);
   let pluginSyncData = $state<PluginSyncStatus | null>(null);
@@ -1081,188 +1076,6 @@
     });
   }
 
-  // --- Environments tab (read-only cross-harness overview) ---
-  async function reloadEnvs() {
-    try {
-      envsData = await readEnvironments();
-    } catch {
-      envsData = null;
-    }
-  }
-  // Lazy-load on first open — cheap native reads, no script spawn.
-  $effect(() => {
-    if (active === 'envs' && !envsLoaded) {
-      envsLoaded = true;
-      setLoading('envs', true);
-      reloadEnvs().finally(() => setLoading('envs', false));
-    }
-  });
-  // Enable/disable RTK command-rewriting for OpenCode (writes/removes a Windows-safe plugin).
-  async function doEnvRtk(enable: boolean) {
-    try {
-      await runOpencodeRtk(enable ? 'enable' : 'disable');
-      pushToast({
-        kind: 'success',
-        title: enable ? t('environments.rtkEnabledToast') : t('environments.rtkDisabledToast')
-      });
-      await reloadEnvs();
-    } catch (e) {
-      pushToast({ kind: 'error', title: t('environments.rtkError'), detail: String(e) });
-    }
-  }
-  function onEnvRtk(id: string, enable: boolean) {
-    if (id !== 'opencode') return; // only OpenCode is wired today
-    if (enable) {
-      doEnvRtk(true);
-    } else {
-      // Disabling deletes the plugin file — gate it behind a confirm (#7).
-      askConfirm({
-        title: t('environments.rtkDisableTitle'),
-        message: t('environments.rtkDisableConfirm'),
-        confirmLabel: t('environments.rtkDisable'),
-        action: () => doEnvRtk(false),
-        danger: true
-      });
-    }
-  }
-
-  async function reloadSkillMatrix() {
-    try {
-      envsMatrix = await readSkillMatrix();
-    } catch (e) {
-      // null means "still loading" to the tab (it renders the skeleton), so a FAILED read must not
-      // reuse it — that showed a permanent spinner. Land on an empty matrix and say what went wrong.
-      envsMatrix = [];
-      pushToast({ kind: 'error', title: t('environments.matrixLoadError'), detail: String(e) });
-    }
-  }
-
-  // One shape for every harness fan-out button: run, toast the count, refresh the cards.
-  async function deployToHarness(run: () => Promise<number>, doneKey: string, errKey: string) {
-    try {
-      const n = await run();
-      pushToast({ kind: 'success', title: t(doneKey, { n }) });
-      await reloadEnvs();
-    } catch (e) {
-      pushToast({ kind: 'error', title: t(errKey), detail: String(e) });
-    }
-  }
-  // Fan-outs write into another harness's config file — confirm the exact target first.
-  const confirmFanout = (target: string, run: () => void) =>
-    askConfirm({
-      title: t('page.confirm_fanout_title', { target }),
-      message: t('page.confirm_fanout_body', { target }),
-      confirmLabel: t('page.confirm_mcp_btn'),
-      action: run
-    });
-  // Codex MCP is honest about partial failure: {added, failed}. Warn (not error) when some
-  // servers failed but others landed; the ledger only advances when failed is empty.
-  async function deployCodexMcp() {
-    try {
-      const res = await runCodexMcp();
-      if (res.failed.length)
-        pushToast({
-          kind: 'warn',
-          title: t('page.codex_mcp_partial', { added: res.added, failed: res.failed.length }),
-          detail: res.failed[0]
-        });
-      else pushToast({ kind: 'success', title: t('environments.deployMcpDoneCodex', { n: res.added }) });
-      await reloadEnvs();
-    } catch (e) {
-      pushToast({ kind: 'error', title: t('environments.deployMcpErrorCodex'), detail: String(e) });
-    }
-  }
-  const onDeployMcp = (id: string) => {
-    if (id === 'opencode')
-      confirmFanout('opencode.json', () =>
-        void deployToHarness(runOpencodeMcp, 'environments.deployMcpDone', 'environments.deployMcpError'));
-    else if (id === 'codex') confirmFanout('~/.codex/config.toml', () => void deployCodexMcp());
-  };
-  const onDeployProviders = (id: string) => {
-    if (id === 'opencode')
-      confirmFanout('opencode.json', () =>
-        void deployToHarness(runOpencodeProviders, 'environments.deployProvidersDone', 'environments.deployProvidersError'));
-    else if (id === 'codex')
-      // Not deployToHarness: the result is "was the key mirrored", which picks the toast text.
-      confirmFanout('~/.codex/config.toml', () =>
-        void (async () => {
-          try {
-            const keySet = await runCodexProviders();
-            pushToast({
-              kind: keySet ? 'success' : 'warn',
-              title: t(keySet ? 'environments.connectGatewayDone' : 'environments.connectGatewayDoneNoKey')
-            });
-            await reloadEnvs();
-          } catch (e) {
-            pushToast({ kind: 'error', title: t('environments.connectGatewayError'), detail: String(e) });
-          }
-        })());
-  };
-  // OmniRoute -> Codex: writes [model_providers.omniroute] + the profile file; no key mirror
-  // (OmniRoute owns its keys), so run_codex_omniroute always resolves to a plain success toast.
-  const onConnectOmniroute = () =>
-    confirmFanout('~/.codex/config.toml', () =>
-      void (async () => {
-        try {
-          await runCodexOmniroute();
-          pushToast({ kind: 'success', title: t('environments.connectOmnirouteDone') });
-          await reloadEnvs();
-        } catch (e) {
-          pushToast({ kind: 'error', title: t('environments.connectOmnirouteError'), detail: String(e) });
-        }
-      })());
-  const onDeployInstructions = (id: string) => {
-    if (id === 'opencode')
-      confirmFanout('opencode.json', () =>
-        void deployToHarness(runOpencodeInstructions, 'environments.deployInstrDone', 'environments.deployInstrError'));
-  };
-
-  // Share skills into ~/.agents/skills (additive junctions) so OpenCode + Codex see them all.
-  function onShareSkills() {
-    askConfirm({
-      title: t('environments.shareConfirmTitle'),
-      message: t('environments.shareConfirmMsg'),
-      confirmLabel: t('environments.shareConfirmBtn'),
-      action: async () => {
-        try {
-          const r = await shareSkills();
-          pushToast({
-            kind: r.failed ? 'error' : 'success',
-            title: t('environments.shareDone', { created: r.created, skipped: r.skipped, failed: r.failed }),
-            detail: r.failed && r.details.length ? r.details.join('\n') : undefined
-          });
-          await reloadEnvs();
-          if (envsMatrix !== null) await reloadSkillMatrix();
-        } catch (e) {
-          pushToast({ kind: 'error', title: t('environments.shareError'), detail: String(e) });
-        }
-      }
-    });
-  }
-
-  // Wrap your own slash-commands as SKILL.md into ~/.agents/skills so Codex/OpenCode can run them.
-  function onShareCommands() {
-    askConfirm({
-      title: t('environments.shareCmdConfirmTitle'),
-      message: t('environments.shareCmdConfirmMsg'),
-      confirmLabel: t('environments.shareCmdConfirmBtn'),
-      action: async () => {
-        try {
-          const r = await shareCommands();
-          pushToast({
-            kind: r.failed ? 'error' : 'success',
-            title: t('environments.shareCmdDone', { created: r.created, skipped: r.skipped, failed: r.failed }),
-            detail: r.failed && r.details.length ? r.details.join('\n') : undefined
-          });
-          await reloadEnvs();
-          if (envsMatrix !== null) await reloadSkillMatrix();
-        } catch (e) {
-          pushToast({ kind: 'error', title: t('environments.shareError'), detail: String(e) });
-        }
-      }
-    });
-  }
-
   // --- Sync tab ---
   async function reloadSync() {
     try {
@@ -1867,66 +1680,14 @@
     }
   });
 
-  // --- Subagents tab (~/.claude/agents) ---
-  async function reloadAgents() {
-    try {
-      agentsData = await listAgents();
-    } catch {
-      agentsData = null;
-    }
-  }
-  // Lazy-load on first open (cheap native dir read, no script spawn).
-  $effect(() => {
-    if (active === 'agents' && !agentsLoaded) {
-      agentsLoaded = true;
-      setLoading('agents', true);
-      reloadAgents().finally(() => setLoading('agents', false));
-    }
-  });
-  // Throws on failure so SubagentsTab keeps the editor open (nothing typed is lost).
-  async function onAgentSave(a: {
-    name: string;
-    description: string;
-    model: string;
-    tools: string;
-    prompt: string;
-    path?: string;
-  }) {
-    try {
-      await saveAgent(a);
-    } catch (e) {
-      pushToast({ kind: 'error', title: t('agents.saveError'), detail: String(e) });
-      throw e;
-    }
-    pushToast({
-      kind: 'success',
-      title: a.path ? t('agents.savedEdit', { name: a.name }) : t('agents.savedNew', { name: a.name })
-    });
-    await reloadAgents();
-  }
-  function onAgentDelete(a: AgentInfo) {
-    askConfirm({
-      title: t('agents.deleteTitle'),
-      message: t('agents.deleteConfirm', { name: a.name }),
-      confirmLabel: t('agents.delete'),
-      action: async () => {
-        try {
-          await deleteAgent(a.path);
-          pushToast({ kind: 'success', title: t('agents.deleted', { name: a.name }) });
-          await reloadAgents();
-        } catch (e) {
-          pushToast({ kind: 'error', title: t('agents.deleteError'), detail: String(e) });
-        }
-      },
-      danger: true
-    });
-  }
-
   // A tab shows the "refreshing" overlay + sidebar spinner while it fetches fresh data.
   // Forks piggybacks on the global run lock (its check is a script run, not a native read).
   const tabLoading = $derived.by(() => {
     const m: Record<string, boolean> = { ...loading };
     if (running === 'forks') m.forks = true;
+    // Envs/Agents own their first-open load, but the overlay + sidebar spinner are page-level.
+    m.envs = envState.loading;
+    m.agents = agentsState.loading;
     return m;
   });
   const tabRefreshing = $derived(!!tabLoading[active]);
@@ -2845,12 +2606,9 @@
         <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy}
           onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra} />
       {:else if active === 'envs'}
-        <EnvironmentsTab data={envsData} {running} matrix={envsMatrix} onRefresh={reloadEnvs}
-          onShare={onShareSkills} onShareCommands={onShareCommands} onRtk={onEnvRtk} onLoadMatrix={reloadSkillMatrix}
+        <EnvironmentsTab {running} {askConfirm}
           onOpenConfig={(p) => openPath(p).catch(toastErr)} onOpenProviders={() => (active = 'providers')}
-          onOpenMcp={() => (active = 'mcp')} onDeployMcp={onDeployMcp}
-          onDeployProviders={onDeployProviders} onDeployInstructions={onDeployInstructions}
-          onConnectOmniroute={onConnectOmniroute}
+          onOpenMcp={() => (active = 'mcp')}
           onOpenUrl={(u) => openUrl(u).catch(toastErr)} />
       {:else if active === 'sync'}
         <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}
@@ -2862,8 +2620,7 @@
       {:else if active === 'schedule'}
         <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} {scriptsAvail} />
       {:else if active === 'agents'}
-        <SubagentsTab data={agentsData} {running} onSave={onAgentSave} onDelete={onAgentDelete}
-          onRefresh={reloadAgents} onOpenExtensions={() => (active = 'extensions')} />
+        <SubagentsTab {running} {askConfirm} onOpenExtensions={() => (active = 'extensions')} />
       {:else if active === 'settings'}
         <SettingsTab {theme} onSetTheme={setTheme} {density} {fullWidth} onSetDensity={setDensity} onSetFullWidth={setFullWidth} {confirmDestructive} onSetConfirmDestructive={setConfirmDestructive} onOpenOnboarding={openOnboarding} />
       {:else if active !== 'sessions' && !PERSIST_TABS.includes(active)}
