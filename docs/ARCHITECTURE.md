@@ -75,8 +75,8 @@ maintain a copy or a count here — it rots. They group roughly as:
 - **components / updates** — `list_components`, `read_status`, `run_component`, `cancel_run`
 - **forks** — `run_forks`, `run_fork_repo`, `cancel_fork_repo`, `read_fork_repo_status`, `list_github_repos`
 - **backup / restore** — `list_backups`, `run_backup`
-- **profiles** — `read_profiles`, `run_profiles`, `run_profile_mgmt`, `repair_profile_elevated`,
-  `relaunch_as_admin` (UAC for folder symlinks), `open_profile_dir`, `launch_profile`, `read_profile_usage`
+- **profiles** — `read_profiles`, `run_profiles` (`repair` links natively via `links.rs`),
+  `run_profile_mgmt`, `open_profile_dir`, `launch_profile`, `read_profile_usage`
 - **sync + config-drift** — `read_sync`, `run_sync`, `read_config_drift`, `run_config_drift`
 - **providers / engines / router / opencode** — `read_providers`, `run_provider`, `read_engines`,
   `run_engine`, `run_router`, `run_connect_router`, `read_stack`, `run_stack`, my-provider CRUD, key rotation
@@ -148,10 +148,23 @@ Claude Code "profiles" are isolated config dirs `~/.claude-<name>` with junction
 to shared content (`skills`, `commands`, `agents`, `plugins`, `projects`, `history.jsonl`)
 under `~/.claude`. Castellyn reads health via a read-only `Get-ProfilesStatus.ps1`
 (`profiles.last.json`, incl. a backup-freshness canary) and mutates via data-driven scripts that
-read `config/profiles.json` (install/repair/add/remove/rename/recolor/set-links). Symlinking
-*folders* needs admin (UAC); junctions/file-links don't — so a half-built profile can be finished
-with a one-off elevated repair (`repair_profile_elevated`, or `relaunch_as_admin` to elevate the
-whole app). Separately, **shared-config file links** (settings/keybindings/etc.) have their own
+read `config/profiles.json` (install/add/remove/rename/recolor/set-links). **Link repair is native
+and needs no rights**: `src-tauri/src/links.rs` links shared folders with junctions, and the one
+shared file (`history.jsonl`) degrades to a per-profile copy rather than demanding elevation — see
+`docs/adr/0003-share-profile-files-without-symlinks.md`. All three entry points (`run_profiles`
+action `repair`, `repair_all_profiles`, and profile `create`) go through the same engine.
+The full `Install -Force` reinstall is still PowerShell and still self-elevates for its own
+symlink step.
+
+**The status snapshot is native too**: `src-tauri/src/profiles_status.rs` writes
+`profiles.last.json` (the port of `Get-ProfilesStatus.ps1`), so the `check` action and the
+post-repair refresh are instant instead of a ~3.5s pwsh round-trip — and, more importantly, the
+Profiles surface now populates on a machine that has no maintenance scripts at all. A missing or
+corrupt `profiles.json` degrades to `DEFAULT_SHARED_ITEMS` plus the on-disk `~\.claude-*` scan
+rather than blanking the dashboard. `clean-conflicts` is still PowerShell: deleting files is a
+separate, destructive concern from reporting them.
+
+Separately, **shared-config file links** (settings/keybindings/etc.) have their own
 drift check: `Check-Integrity.ps1` → `links.last.json`, surfaced via `read_config_drift` and fixed
 with `run_config_drift` (`relink` / `sync-now`).
 

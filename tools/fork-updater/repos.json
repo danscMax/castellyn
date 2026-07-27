@@ -1,8 +1,0 @@
-{
-  "_comment": "fork-sync config. 'roots' scanned for git repos (each subdir); 'paths' explicit fork dirs; 'ownPaths' your OWN repos (not forks) — reported for PR/CI status + merged-branch cleanup, no ff-from-upstream/normalize. Delete this file to use built-in defaults.",
-  "roots": ["E:\\Scripts\\External"],
-  "paths": ["C:\\Users\\User\\rtk-windows-hook-pr\\rtk"],
-  "ownPaths": ["E:\\Scripts\\DeskRift", "E:\\Scripts\\Slidio"],
-  "fetchTimeoutSec": 120,
-  "ghTimeoutSec": 60
-}

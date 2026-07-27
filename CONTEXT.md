@@ -52,6 +52,27 @@ key. Its only job is to get the harness past the "Not logged in" screen; a keyle
 local gateway ignores its value. Must never be left empty for a custom base URL.
 _Avoid_: fake key, API key (the gateway path uses AUTH_TOKEN, not API_KEY).
 
+## Storage
+
+**Config home**:
+`%APPDATA%\castellyn` — where Castellyn keeps what it owns outright. **Today that is
+`config.json` and `forks.json` only.** The rest of the configuration (profiles, MCP, providers,
+engines, sync rules) still lives under the **scripts root** as `{{PROFILES}}\config\*.json`
+(`PROFILES_CONFIG_REL`, `ENGINES_CONFIG_REL`, `MYPROVIDERS_CONFIG_REL`, `SYNC_CONFIG_REL`),
+because the PowerShell scripts are co-owners of those files.
+
+Consolidating everything here is a DECIDED but NOT IMPLEMENTED direction — ADR 0002, which is
+deliberately `ON HOLD` until the profile scripts are ported to Rust and PowerShell stops reading
+`profiles.json`. Do not write code or docs that assume the move has happened.
+_Avoid_: "the config folder" when you mean the maintenance scripts' own directory —
+that is the **scripts root**, a different thing with a different owner.
+
+**Scripts root**:
+`SCRIPTS_ROOT` (default `E:\Scripts`) — where the PowerShell maintenance scripts live, and
+today also the home of the configuration they co-own. A machine without it is a normal
+machine, not a broken one: the features that need it simply do not apply there.
+_Avoid_: calling its absence an error.
+
 ## Cross-harness coverage (the «Среды» tab)
 
 **Harness coverage**:

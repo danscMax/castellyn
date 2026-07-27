@@ -176,6 +176,8 @@ export default {
   prof_verb_clean: 'removing sync conflicts',
   prof_verb_repair: 'repairing links {name}',
   prof_verb_create: 'creating profile {name}',
+  prof_verb_share_files: 'adding shared files to “{name}”',
+  prof_verb_sync_files: 'updating the shared files of “{name}”',
   prof_verb_reinstall: 'reinstalling profiles',
   // Ф2.5 matrix apply
   matrix_busy: 'Another operation is running — wait for it to finish',
@@ -193,6 +195,9 @@ export default {
   confirm_orphan_del_msg:
     'The ~/.claude-{name} directory will be moved to the Recycle Bin (reversible). It is not a canon profile — nothing links to shared content. If it belongs to another tool, cancel.',
   confirm_orphan_del_btn: 'To Recycle Bin',
+  confirm_syncfiles_title: 'Update the profile’s shared files',
+  confirm_syncfiles_msg: 'The “{name}” profile’s diverged copies will be overwritten with the shared original. Any edits made to those files inside the profile will be lost. Continue?',
+  confirm_syncfiles_btn: 'Overwrite',
   confirm_reinstall_title: 'Reinstall profiles?',
   confirm_reinstall_msg:
     'Recreates the links (junctions) of all profiles — administrator rights are required. Continue?',

@@ -447,7 +447,8 @@ const handlers: Record<string, (args: any) => any> = {
   ]),
 
   // --- Forks ---
-  list_github_repos: () => githubRepos,
+  // Probe shape: screenshots show the populated, healthy case — `unavailable` stays absent.
+  list_github_repos: () => ({ items: githubRepos }),
   run_forks: () => 0,
 
   // --- Backup ---

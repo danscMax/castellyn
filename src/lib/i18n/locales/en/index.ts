@@ -1,6 +1,7 @@
 // English dictionary — typed against TranslationDict so any missing/extra key
 // vs. the Russian source of truth is a compile-time error.
 import type { TranslationDict } from '../../types';
+import avail from './avail';
 import common from './common';
 import nav from './nav';
 import onboarding from './onboarding';
@@ -27,6 +28,7 @@ import components from './components';
 import agents from './agents';
 
 const en: TranslationDict = {
+  avail,
   common,
   nav,
   onboarding,

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { confFiles, pickFolder, readForkConfig, writeForkConfig, type ForkConfig, type ForkStatus, type ForkAction, type GithubRepo, type MyGithubItem } from '$lib/ipc';
+  import { confFiles, pickFolder, readForkConfig, writeForkConfig, type ForkConfig, type ForkStatus, type ForkAction, type GithubRepo, type MyGithubItem, type Unavailable } from '$lib/ipc';
+  import UnavailableNote from './UnavailableNote.svelte';
   import { forkMode, t, plural, pRepo, pConflict } from '$lib/i18n';
   import { relTime, relOrAbs, formatAbsTime } from '$lib/relativeTime';
   import { statusTextClass } from '$lib/statusColor';
@@ -14,7 +15,9 @@
   let {
     status,
     githubRepos = [],
+    githubUnavailable = null,
     myItems = [],
+    myItemsUnavailable = null,
     running,
     forkRuns = {},
     onAction,
@@ -30,7 +33,9 @@
   }: {
     status: ForkStatus | null | undefined;
     githubRepos?: GithubRepo[];
+    githubUnavailable?: Unavailable | null;
     myItems?: MyGithubItem[];
+    myItemsUnavailable?: Unavailable | null;
     running: string | null;
     forkRuns?: Record<string, { line: string; running: boolean; code: number | null }>;
     onAction: (action: ForkAction, path?: string, label?: string) => void;
@@ -462,6 +467,15 @@
     </section>
   {/if}
 
+  <!-- The PR/issue search fails independently of the repo list, and can half-fail (PRs returned,
+       issues did not). Rendered outside the list section below, which only appears when there ARE
+       rows — otherwise a failed search was indistinguishable from "you have no open PRs". -->
+  {#if myItemsUnavailable}
+    <section class="mt-sw-6">
+      <UnavailableNote info={myItemsUnavailable} {onOpenUrl} />
+    </section>
+  {/if}
+
   {#if myItemsSorted.length}
     <section class="mt-sw-6">
       <button
@@ -506,6 +520,15 @@
           {/snippet}
         </DataTable>
       {/if}
+    </section>
+  {/if}
+
+  <!-- Why the GitHub list is empty, when it is. Sits ABOVE the list section, which renders only
+       when there are rows — without this the whole section silently vanished and a missing `gh`
+       was indistinguishable from an account with no repositories. -->
+  {#if githubUnavailable}
+    <section class="mt-sw-6">
+      <UnavailableNote info={githubUnavailable} {onOpenUrl} />
     </section>
   {/if}
 

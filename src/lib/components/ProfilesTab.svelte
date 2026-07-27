@@ -53,8 +53,6 @@
     onProviderSet,
     onProviderClear,
     myProviders = null,
-    onRepairElevated,
-    onRelaunchAdmin,
     onApplyMatrix,
     onMcpDeployProfile,
     onMcpRemoveExtra,
@@ -77,8 +75,6 @@
     onProviderSet: (args: ProviderArgs) => void;
     onProviderClear: (name: string) => void;
     myProviders?: MyProvider[] | null;
-    onRepairElevated: (name: string) => void;
-    onRelaunchAdmin: () => void;
     onApplyMatrix: (changes: MatrixApply) => Promise<{ skipped: string[] }>;
     onMcpDeployProfile: (profile: string) => void;
     onMcpRemoveExtra: (server: string, profile: string) => void;
@@ -88,7 +84,6 @@
   const busy = $derived(!!running);
   const profiles = $derived(data?.profiles ?? []);
   const conflicts = $derived(data?.syncConflicts);
-  const isAdmin = $derived(data?.isAdmin ?? false);
 
   // B3: per-profile config (provider/proxy/folders/plugins/mcp) is edited inside each row's expand
   // (MatrixRowEditor) with one shared controls bar (MatrixControls). A single MatrixState owns the
@@ -121,16 +116,10 @@
   });
 
   // Folder symlinks need admin. When elevated, repair inline (streamed); otherwise offer the
-  // elevate dialog (one-off UAC repair or relaunch the whole app as admin).
-  let elevOpen = $state(false);
-  let elevProfile = $state('');
+  // Repair needs no rights any more: folders are junctions (see docs/adr/0003), so the old
+  // "elevate or relaunch as admin" dialog that stood here is gone.
   function finishProfile(name: string) {
-    if (isAdmin) {
-      onAction('repair', name);
-    } else {
-      elevProfile = name;
-      elevOpen = true;
-    }
+    onAction('repair', name);
   }
 
 
@@ -260,7 +249,26 @@
   // so the card and the badge can never disagree.
   const brokenLinks = $derived(profiles.filter((p) => p.exists && profileHasMissingLink(p)));
   const missing = $derived(profiles.filter((p) => !p.exists));
+  // Profiles running WITHOUT the shared instruction files. Deliberately separate from brokenLinks:
+  // this is not damage to repair, it is a difference to notice — a profile can legitimately run
+  // without the global CLAUDE.md, so nothing is filled in unless the user asks for it.
+  const noSharedFiles = $derived(
+    profiles.filter(
+      (p) => p.exists && p.sharedFiles && Object.values(p.sharedFiles).some((v) => v === null)
+    )
+  );
+  // Copies that have fallen behind the shared original. Informational for the same reason as the
+  // gap above: the difference can be a deliberate per-profile customisation, so it is stated and
+  // left alone until the user asks for it.
+  const driftedFiles = $derived(
+    profiles.filter(
+      (p) => p.exists && p.sharedFiles && Object.values(p.sharedFiles).some((v) => v === 'drift')
+    )
+  );
   const conflictCount = $derived(conflicts?.count ?? 0);
+  // noSharedFiles is deliberately NOT part of hasIssues: a profile running without the global
+  // instructions can be a choice, and putting it in the amber "problems" card would nag forever
+  // about something the user meant. It gets its own neutral, informational row instead.
   const hasIssues = $derived(brokenLinks.length > 0 || missing.length > 0 || conflictCount > 0);
 
   // Profile colour-name -> dot hex (shared source; falls back to neutral slate for unknown names).
@@ -425,19 +433,43 @@
     onCancel={() => (pvOpen = false)}
   />
 
-  <ModalShell open={elevOpen} onClose={() => (elevOpen = false)} size="sm" role="alertdialog">
-    <div class="flex flex-col gap-sw-3 p-sw-1">
-      <h2 class="text-base font-semibold">{t('profiles.elevateTitle', { name: elevProfile })}</h2>
-      <p class="text-sw-sm text-sw-text-secondary">{t('profiles.elevateMsg')}</p>
-      <div class="mt-sw-2 flex flex-col gap-sw-2">
-        <button class="sw-btn sw-btn-primary" onclick={() => { elevOpen = false; onRepairElevated(elevProfile); }}
-          title={t('profiles.elevateRepairOnceTip')}>{t('profiles.elevateRepairOnce')}</button>
-        <button class="sw-btn" onclick={() => { elevOpen = false; onRelaunchAdmin(); }}
-          title={t('profiles.elevateRelaunchTip')}>{t('profiles.elevateRelaunch')}</button>
-        <button class="sw-btn sw-btn-ghost" onclick={() => (elevOpen = false)}>{t('common.cancel')}</button>
+  <!-- Shared-file gaps: informational, not a problem. A profile can legitimately run without the
+       global instructions, so this is stated once, neutrally, with the action next to it. -->
+  {#if data && noSharedFiles.length > 0}
+    <div class="sw-card mb-sw-4 border border-sw-border">
+      <div class="flex flex-wrap items-center justify-between gap-sw-2 text-sw-sm">
+        <span class="text-sw-text-secondary">
+          {t('profiles.noSharedFiles', { names: noSharedFiles.map((p) => p.name).join(', ') })}
+        </span>
+        <div class="flex flex-wrap gap-sw-2">
+          {#each noSharedFiles as p (p.name)}
+            <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy}
+              onclick={() => onAction('share-files', p.name)}
+              title={t('profiles.addSharedFilesTip', { name: p.name })}>
+              {t('profiles.addSharedFiles', { name: p.name })}</button>
+          {/each}
+        </div>
       </div>
     </div>
-  </ModalShell>
+  {/if}
+
+  {#if data && driftedFiles.length > 0}
+    <div class="sw-card mb-sw-4 border border-sw-border">
+      <div class="flex flex-wrap items-center justify-between gap-sw-2 text-sw-sm">
+        <span class="text-sw-text-secondary">
+          {t('profiles.driftedFiles', { names: driftedFiles.map((p) => p.name).join(', ') })}
+        </span>
+        <div class="flex flex-wrap gap-sw-2">
+          {#each driftedFiles as p (p.name)}
+            <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy}
+              onclick={() => onAction('sync-files', p.name)}
+              title={t('profiles.syncSharedFilesTip', { name: p.name })}>
+              {t('profiles.syncSharedFiles', { name: p.name })}</button>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Recommendations -->
   {#if data}
@@ -451,8 +483,8 @@
               <div class="flex flex-wrap gap-sw-2">
                 {#each brokenLinks as p (p.name)}
                   <button class="sw-btn sw-btn-ghost text-sw-xs shrink-0" disabled={busy} onclick={() => finishProfile(p.name)}
-                    title={isAdmin ? t('profiles.repairNameTip', { name: p.name }) : t('profiles.finishAdminTip', { name: p.name })}>
-                    {isAdmin ? t('profiles.repairName', { name: p.name }) : t('profiles.finishAdmin', { name: p.name })}</button>
+                    title={t('profiles.repairNameTip', { name: p.name })}>
+                    {t('profiles.repairName', { name: p.name })}</button>
                 {/each}
               </div>
             </li>

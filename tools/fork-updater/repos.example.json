@@ -1,0 +1,16 @@
+{
+  "_comment": "TEMPLATE — copy to repos.json and edit. fork-sync discovery config. Castellyn seeds its durable copy (%APPDATA%\\castellyn\\forks.json) from repos.json on first run, and the Forks tab edits it from there afterwards. A missing repos.json is normal: nothing is scanned until you register something, either here or in the Forks tab.",
+
+  "_roots": "Folders whose immediate subdirectories are each treated as a git repo. Use for a directory where you keep several clones.",
+  "roots": [],
+
+  "_paths": "Explicit paths to individual FORK clones (a repo with an upstream you want to track).",
+  "paths": [],
+
+  "_ownPaths": "Explicit paths to your OWN repos (no upstream). Reported for PR/CI status and merged-branch cleanup only — never fast-forwarded from an upstream, never remote-normalized.",
+  "ownPaths": [],
+
+  "_timeouts": "Seconds. Omit both to use the built-in 120 / 60.",
+  "fetchTimeoutSec": 120,
+  "ghTimeoutSec": 60
+}

@@ -176,6 +176,8 @@ export default {
   prof_verb_clean: 'удаление sync-конфликтов',
   prof_verb_repair: 'починка связей {name}',
   prof_verb_create: 'создание профиля {name}',
+  prof_verb_share_files: 'добавление общих файлов в «{name}»',
+  prof_verb_sync_files: 'обновление общих файлов «{name}»',
   prof_verb_reinstall: 'переустановка профилей',
   // Ф2.5 matrix apply
   matrix_busy: 'Идёт другая операция — дождитесь её завершения',
@@ -193,6 +195,9 @@ export default {
   confirm_orphan_del_msg:
     'Каталог ~/.claude-{name} будет перемещён в Корзину (обратимо). Это не канонический профиль — он не связан с общим контентом. Если это чужой инструмент — отмените.',
   confirm_orphan_del_btn: 'В Корзину',
+  confirm_syncfiles_title: 'Обновить общие файлы профиля',
+  confirm_syncfiles_msg: 'Разошедшиеся копии профиля «{name}» будут перезаписаны общим оригиналом. Правки, сделанные в этих файлах внутри профиля, будут потеряны. Продолжить?',
+  confirm_syncfiles_btn: 'Перезаписать',
   confirm_reinstall_title: 'Переустановить профили?',
   confirm_reinstall_msg:
     'Пересоздаст ссылки (junction’ы) всех профилей — потребуются права администратора. Продолжить?',

@@ -89,6 +89,14 @@ describe('attention', () => {
     expect(stackDriftAttention(null)).toBeNull();
   });
 
+  it('stack drift: an EMPTY list is silence, not a problem', () => {
+    // A machine with no profiles / no maintenance-script tree / no installed plugins now gets an
+    // empty list from read_stack_drift instead of four items (two of them `error` carrying a raw
+    // OS string). Nothing must badge the sidebar in that state — this is the frontend half of
+    // that fix, pinned so the two halves cannot drift apart.
+    expect(stackDriftAttention([])).toBeNull();
+  });
+
   it('sessions: blocked=danger, done=teal, none otherwise (#10 herdr palette)', () => {
     expect(sessionsAttention({ blocked: 2, done: 1, limited: 0 })).toEqual({ level: 'danger', count: 2 });
     expect(sessionsAttention({ blocked: 0, done: 3, limited: 0 })).toEqual({ level: 'done', count: 3 });

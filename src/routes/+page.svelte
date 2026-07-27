@@ -25,8 +25,6 @@
     runProfileRelink,
     readOrphanProfiles,
     deleteOrphanProfile,
-    repairProfileElevated,
-    relaunchAsAdmin,
     openProfileDir,
     launchProfile,
     readLaunchConfig,
@@ -96,6 +94,7 @@
     type ForkAction,
     type GithubRepo,
   type MyGithubItem,
+  type Unavailable,
     type StackService,
     type OpencodeStatus,
     type BackupAction,
@@ -315,6 +314,12 @@
   let githubRepos = $state<GithubRepo[]>([]);
   let myGithubItems = $state<MyGithubItem[]>([]);
   let githubLoaded = $state(false);
+  // Why the GitHub list is empty, when it is. Null means "the read succeeded" — including the
+  // legitimate case of an account with no repositories, which must NOT look like a failure.
+  let githubUnavailable = $state<Unavailable | null>(null);
+  // Separate from githubUnavailable: the PR/issue search is its own read and fails independently
+  // (and can half-fail — PRs came back, issues did not).
+  let myItemsUnavailable = $state<Unavailable | null>(null);
   // The gate's logic lives in $lib/confirmGate (unit-tested); this holds only its reactive state.
   let confirm = $state<ConfirmState>(emptyConfirmState());
 
@@ -709,7 +714,14 @@
             ? t('page.prof_verb_repair', { name: name ?? '' })
             : action === 'create'
               ? t('page.prof_verb_create', { name: name ?? '' })
-              : t('page.prof_verb_reinstall');
+              : action === 'share-files'
+                ? t('page.prof_verb_share_files', { name: name ?? '' })
+                : action === 'sync-files'
+                  ? t('page.prof_verb_sync_files', { name: name ?? '' })
+                  // Anything left is the full reinstall. A new action MUST be added above, or the
+                  // log will announce a reinstall — which, right after the sync-files confirm, flatly
+                  // contradicts the dialog the user just agreed to.
+                  : t('page.prof_verb_reinstall');
     log = [t('page.prof_log', { verb })];
     runProfiles(action, name).catch(onSpawnErr);
   }
@@ -729,6 +741,20 @@
     } else if (action === 'create') {
       // Additive (creates one missing profile) — no destructive-reinstall confirmation.
       startProfiles('create', name);
+    } else if (action === 'share-files') {
+      // Needs the profile name, so it cannot fall through to the catch-all below (which drops it
+      // and would make every click fail the backend's name validation).
+      startProfiles('share-files', name);
+    } else if (action === 'sync-files') {
+      // Destructive: overwrites the profile's own copies with the shared original, so whatever was
+      // edited there is lost. Gated like every other destructive action.
+      askConfirm({
+        title: t('page.confirm_syncfiles_title'),
+        message: t('page.confirm_syncfiles_msg', { name: name ?? '' }),
+        confirmLabel: t('page.confirm_syncfiles_btn'),
+        action: () => startProfiles('sync-files', name),
+        danger: true
+      });
     } else if (action === 'reinstall') {
       askConfirm({
         title: t('page.confirm_reinstall_title'),
@@ -775,21 +801,6 @@
         action: run,
         danger: true
       });
-  }
-
-  // Finish a half-built profile's folder symlinks with a one-off elevated repair (UAC).
-  // Routes through the 'profiles' run slot, so run-done reloads the tab like any repair.
-  function onRepairElevated(name: string) {
-    if (running) return;
-    running = 'profiles';
-    log = [t('page.prof_log', { verb: t('page.prof_verb_repair', { name }) })];
-    repairProfileElevated(name).catch(onSpawnErr);
-  }
-
-  // Relaunch the whole app elevated. On UAC-decline the Rust command returns an error
-  // (the app stays open) → surface it as a toast.
-  function onRelaunchAdmin() {
-    relaunchAsAdmin().catch(toastErr);
   }
 
   function onProfileOpen(name: string) {
@@ -1934,13 +1945,29 @@
     if (active === 'forks' && !githubLoaded) {
       githubLoaded = true;
       listGithubRepos()
-        .then((r) => (githubRepos = r))
-        .catch(() => (githubRepos = []));
+        .then((r) => {
+          githubRepos = r.items;
+          // Keep the reason from the repo list only: it is the read that populates the tab, and
+          // two banners for one missing `gh` would be noise.
+          githubUnavailable = r.unavailable ?? null;
+        })
+        .catch(() => {
+          githubRepos = [];
+          githubUnavailable = null; // an invoke-level failure is already surfaced as a toast
+        });
       // Same trip: your open PRs/issues anywhere on GitHub (the fork scan only sees PRs whose
       // topic branch still exists locally, and never sees issues at all).
       listMyGithubItems()
-        .then((r) => (myGithubItems = r))
-        .catch(() => (myGithubItems = []));
+        .then((r) => {
+          myGithubItems = r.items;
+          // Carried through to the UI: this read can fail on its own (or half-fail — one of the two
+          // searches), and computing a reason that never reaches a screen is just dead code.
+          myItemsUnavailable = r.unavailable ?? null;
+        })
+        .catch(() => {
+          myGithubItems = [];
+          myItemsUnavailable = null;
+        });
     }
   });
 
@@ -2811,7 +2838,7 @@
       {:else if active === 'updates'}
         <UpdatesTab {components} {statuses} {running} {allProgress} {onCheck} {onApply} onOpenTab={(id) => (active = id)} {scriptsAvail} />
       {:else if active === 'forks'}
-        <ForksTab status={statuses.forks} {githubRepos} myItems={myGithubItems} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
+        <ForksTab status={statuses.forks} {githubRepos} {githubUnavailable} myItems={myGithubItems} {myItemsUnavailable} {running} {forkRuns} onAction={onForkAction} {onCancelFork} onCancelCheck={cancel} {onBatchFf} {onOpenUrl} onOpenSession={openSessionFor} onClone={onCloneRepo} {cloningRepo} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} {scriptsAvail} />
       {:else if active === 'backup'}
         <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} {scriptsAvail} />
       {:else if active === 'mcp'}
@@ -2831,7 +2858,7 @@
           conflictFiles={profilesData?.syncConflicts?.files ?? []} onResolveConflict={onResolveConflict}
           onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} {scriptsAvail} />
       {:else if active === 'analytics'}
-        <AnalyticsTab onOpenProviders={() => (active = 'providers')} />
+        <AnalyticsTab onOpenProviders={() => (active = 'providers')} {onOpenUrl} />
       {:else if active === 'schedule'}
         <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} {scriptsAvail} />
       {:else if active === 'agents'}
@@ -2909,8 +2936,6 @@
               {onProviderSet}
               {onProviderClear}
               myProviders={myProvidersData}
-              {onRepairElevated}
-              {onRelaunchAdmin}
               {onApplyMatrix}
               onMcpDeployProfile={onMcpDeploy}
               {onMcpRemoveExtra}

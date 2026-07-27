@@ -65,6 +65,18 @@ windows = { version = "0.62", features = [
   # GetLocalTime for schedule ticks (agent_schedules.rs). Explicit since windows 0.62 — 0.61 pulled
   # SystemInformation in transitively, 0.62 configures it out unless the feature is named.
   "Win32_System_SystemInformation",
+  # SHFileOperationW: send a path to the Recycle Bin. Replaces shelling out to pwsh for
+  # Microsoft.VisualBasic.FileIO — that path silently no-ops on a machine without PowerShell 7.
+  "Win32_UI_Shell",
+  # GetUserDefaultLocaleName: pick the tray language before the frontend reports its locale, so
+  # the first tray paint is not Russian on an English machine.
+  "Win32_Globalization",
+  # Junctions for profile folder links (links.rs): CreateFileW + DeviceIoControl with
+  # FSCTL_SET_REPARSE_POINT. A junction needs no admin rights, unlike a directory symlink —
+  # this is what removes the elevated repair path. See docs/adr/0003.
+  "Win32_Storage_FileSystem",
+  "Win32_System_Ioctl",
+  "Win32_System_IO",
 ] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

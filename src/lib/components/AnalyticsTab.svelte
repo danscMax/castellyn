@@ -2,6 +2,7 @@
   import { readFreellmapiAnalytics, type FreellmapiAnalytics, type AnalyticsModel } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
+  import UnavailableNote from './UnavailableNote.svelte';
   import { pushToast } from '$lib/toast.svelte';
   import { chartSeriesColor } from '$lib/statusColor';
   import Sparkline from './Sparkline.svelte';
@@ -15,7 +16,12 @@
   import { BarChart3 } from '@lucide/svelte';
   import SectionHeader from './SectionHeader.svelte';
 
-  let { onOpenProviders }: { onOpenProviders?: () => void } = $props();
+  // onOpenUrl: the install links in an "couldn't check" note must open in the real browser, not
+  // inside the WebView — the app has one such opener and every tab routes through it.
+  let {
+    onOpenProviders,
+    onOpenUrl
+  }: { onOpenProviders?: () => void; onOpenUrl?: (url: string) => void } = $props();
 
   // Multi-source dashboard: the gateway view is the original; Claude/Maintenance/Sessions aggregate
   // data the app already tracks (limits poll, runHistory, agent_status) — each an independent panel
@@ -583,6 +589,10 @@
           </div>
         {/each}
       </div>
+    {:else if data?.unavailable}
+      <!-- We could not read, and we know why. The generic "add a provider" CTA below is wrong for
+           every one of these causes — a missing gateway or a missing Node.js is not fixed there. -->
+      <UnavailableNote info={data.unavailable} {onOpenUrl} />
     {:else}
       <EmptyState
         icon={BarChart3}

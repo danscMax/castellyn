@@ -2,3 +2,8 @@
 # fork tool from the Forks tab; not source.
 *.last.json
 logs/
+
+# The live discovery config is per-machine: it holds absolute paths to THIS user's clones.
+# Shipping it meant a fresh install seeded its fork registry from the author's folders and
+# listed repositories the new user has never heard of. Template: repos.example.json.
+repos.json

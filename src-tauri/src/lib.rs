@@ -30,6 +30,8 @@ mod agent_schedules;
 mod session_bus;
 mod worktree;
 mod i18n;
+mod links;
+mod profiles_status;
 use i18n::{tr, trv, Lang};
 
 /// Windows CREATE_NO_WINDOW — keep spawned console apps (pwsh/reg/taskkill) from flashing
@@ -97,8 +99,24 @@ mod spawn_window_guard {
         }
         // Non-vacuous: if the scan collapses to far fewer sites than exist, the pattern broke — or a
         // module dropped out of SOURCES, taking its spawns out of coverage silently.
+        // Anti-vacuity floor, not a target: it catches a scan that COLLAPSED (pattern broke, module
+        // dropped out of SOURCES), which shows up as a count far below reality. Adding a spawn never
+        // trips it — only removing one does, which is the deliberate-update case.
+        //
+        // 57 → 53 across six edits, net −4. (To recount, grep the SOURCES files for the process
+        // constructor — spelled out rather than written literally here, because this scan reads its
+        // own source text and a literal in a comment registers as another spawn site.)
+        //   −1  is_elevated      → native Win32 token read
+        //   −1  recycle_path     → SHFileOperationW
+        //   −1  list_github_repos + gh_search_mine consolidated into one gh_json
+        //   +1  elevation_query_live_smoke's cross-check spawn (tests live in this file, so the
+        //       scan counts them too)
+        //   −1  spawn_pwsh_phase deleted — profile link repair went native (links.rs, ADR 0003),
+        //       which was its last caller
+        //   −1  relaunch_as_admin deleted — with repair needing no rights, the "relaunch elevated"
+        //       offer had no caller left (the installer self-elevates its own step)
         assert!(
-            spawns >= 56,
+            spawns >= 53,
             "scanned only {spawns} spawn sites — the source pattern changed or a module fell out of SOURCES"
         );
         assert!(
@@ -165,6 +183,37 @@ fn cur_lang() -> Lang {
 }
 fn set_cur_lang(l: Lang) {
     *CUR_LANG.write().unwrap_or_else(|e| e.into_inner()) = l;
+}
+
+/// The OS UI language, mapped the SAME way the frontend maps `navigator.language`
+/// (`resolveInitialLocale`: ru* → ru, zh* → zh, anything else → en).
+///
+/// Deliberately not `Lang::parse`: that falls back to Ru because Ru is the source language of the
+/// translation table — the right default for a missing STRING, the wrong default for a missing
+/// user. Seeds the tray only; `set_language` overrides it as soon as the UI mounts.
+/// The mapping half, kept pure so it can be unit-tested against the frontend's rule without
+/// touching the OS. Any divergence here means the tray and the window disagree about the language.
+fn lang_from_locale_name(name: &str) -> Lang {
+    let n = name.to_ascii_lowercase();
+    match () {
+        _ if n.starts_with("ru") => Lang::Ru,
+        _ if n.starts_with("zh") => Lang::Zh,
+        _ => Lang::En,
+    }
+}
+
+// No #[cfg(windows)] guard: this file is already Windows-only unconditionally (`use
+// std::os::windows::process::CommandExt` at the top, 49 `creation_flags` call sites). A guard here
+// would imply a portability contract the crate does not actually honour.
+fn os_ui_lang() -> Lang {
+    use windows::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut buf = [0u16; 85]; // LOCALE_NAME_MAX_LENGTH
+    let n = unsafe { GetUserDefaultLocaleName(&mut buf) };
+    // The return counts the trailing NUL; 0 = failure, 1 = an empty name.
+    if n <= 1 {
+        return Lang::En;
+    }
+    lang_from_locale_name(&String::from_utf16_lossy(&buf[..n as usize - 1]))
 }
 
 // Canonical manifest, embedded as a fallback. The live source of truth is the
@@ -797,7 +846,7 @@ static BULK_PLUGINS_ACTIVE: std::sync::atomic::AtomicBool =
 static BULK_PLUGINS_CANCEL: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-// M1: "Repair All" profiles runs each profile as a sequential spawn_pwsh_phase under one RunSlot.
+// M1: "Repair All" profiles repairs each profile natively (links.rs) under one RunSlot.
 // cancel_run/cancel_all only kill the CURRENT child's pid, so without this between-items flag the
 // loop marches through every remaining profile after a Cancel. Mirrors BULK_PLUGINS_CANCEL.
 static PROFILES_BULK_CANCEL: std::sync::atomic::AtomicBool =
@@ -1038,49 +1087,6 @@ async fn spawn_streamed_prog(
         );
     }
     Ok(code)
-}
-
-/// Run one pwsh script under an ALREADY-reserved run slot, streaming to "run-log" and emitting
-/// `done_event` at the end. Pass an event the UI ignores (e.g. "run-restart-stop") to suppress a
-/// premature run-done — the two-phase stack restart uses this so only the final phase signals
-/// completion. Sets the live PID so cancel_run can kill whichever phase is running.
-async fn spawn_pwsh_phase(
-    app: &AppHandle,
-    state: &State<'_, RunState>,
-    id: &str,
-    script: String,
-    args: Vec<String>,
-    done_event: &'static str,
-) -> i32 {
-    let full = pwsh_file_args(script, args);
-    let mut cmd = Command::new("pwsh");
-    for a in &full {
-        cmd.arg(a);
-    }
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    cmd.env("SCRIPTS_ROOT", scripts_root());
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    let child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            // L1: surface the spawn failure like spawn_streamed_prog's sibling path (err.spawn_failed).
-            // A bulk Repair-All spawn failure was previously silent (`Err(_) => return -1`).
-            let _ = app.emit(
-                "run-log",
-                LogLine {
-                    component: id.to_string(),
-                    stream: "err".into(),
-                    line: spawn_err_text("pwsh", &e.to_string()),
-                },
-            );
-            return -1;
-        }
-    };
-    if let Some(pid) = child.id() {
-        *state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
-    }
-    pump_and_wait(app.clone(), id.to_string(), child, "run-log", done_event).await
 }
 
 /// Stack-domain equivalent of spawn_pwsh_phase: run one pwsh script under an ALREADY-reserved
@@ -1488,14 +1494,17 @@ struct ForkConfig {
 }
 
 /// Durable fork config location — kept in `%APPDATA%\castellyn` (like config.json), NOT in the
-/// vendored `tools/fork-updater/repos.json`, so a tool update can't clobber the user's fork setup.
+/// local `tools/fork-updater/repos.json`, so a tool update can't clobber the user's fork setup.
 fn fork_config_path() -> Option<String> {
     std::env::var("APPDATA")
         .ok()
         .map(|a| format!("{a}\\castellyn\\forks.json"))
 }
 
-/// The vendored `repos.json` next to the forks script — read once to seed the durable copy on migration.
+/// The LOCAL `repos.json` next to the forks script — read once to seed the durable copy on migration.
+/// Deliberately NOT shipped (gitignored; `repos.example.json` is the template): it holds absolute
+/// paths to one machine's clones, so shipping it seeded a fresh install with the author's folders.
+/// Absent on any machine that never had one — `read_fork_config` then falls through to defaults.
 fn fork_vendored_config_path() -> Option<String> {
     let comp = raw_components().into_iter().find(|c| c.id == "forks")?;
     let script = abs_with_fallback(&comp.script_rel, FORKS_SCRIPT_FALLBACK);
@@ -2030,7 +2039,6 @@ async fn run_backup(
 
 const PROFILES_SCRIPT_REL: &str = "{{PROFILES}}\\Get-ProfilesStatus.ps1";
 const INSTALL_SCRIPT_REL: &str = "{{PROFILES}}\\Install-ClaudeProfiles.ps1";
-const REPAIR_SCRIPT_REL: &str = "{{PROFILES}}\\Repair-ProfileLinks.ps1";
 const ONBOARDING_SCRIPT_REL: &str = "{{PROFILES}}\\Repair-Onboarding.ps1";
 const PROFILES_JSON_REL: &str = "{{PROFILES}}\\profiles.last.json";
 // Config-drift (FUN-7): shared-config FILE link health. links.last.json is written by
@@ -2040,24 +2048,43 @@ const INTEGRITY_SCRIPT_REL: &str = "{{PROFILES}}\\Check-Integrity.ps1";
 const CONFIG_DRIFT_JSON_REL: &str = "{{PROFILES}}\\links.last.json";
 
 /// Whether THIS process is running elevated (admin). Cached — elevation can't change at runtime.
-/// Uses the canonical .NET WindowsPrincipal check via pwsh (no extra crate); CREATE_NO_WINDOW.
+///
+/// Reads the process token directly. The previous implementation shelled out to `pwsh` for the
+/// .NET WindowsPrincipal check, which meant that on a machine WITHOUT PowerShell 7 the spawn
+/// failed, `.ok()` swallowed it, and `false` was cached in the OnceLock forever — the Profiles tab
+/// then claimed "not an administrator" permanently, for an actual administrator. A read like this
+/// must never depend on a process spawn.
 fn is_elevated() -> bool {
     static ELEVATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ELEVATED.get_or_init(|| {
-        let script = "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)";
-        std::process::Command::new("pwsh")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
+    *ELEVATED.get_or_init(|| unsafe {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(std::ptr::addr_of_mut!(elevation).cast()),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
     })
 }
 
 /// Read the cached profiles health snapshot (profiles.last.json). Null until first check.
-/// `(async)`: the first call warms `is_elevated()`, a cold `pwsh` start (~0.5-1.5s) — off the
-/// main/event-loop thread, where a sync command would otherwise run.
+/// `(async)`: kept off the main/event-loop thread for the file read. (It used to also absorb a
+/// cold `pwsh` start from `is_elevated()`; that check is a native token read now.)
 #[tauri::command(async)]
 fn read_profiles() -> Result<Option<serde_json::Value>, String> {
     let mut out = read_json_opt(abs(PROFILES_JSON_REL), "profiles.last.json")?;
@@ -2082,21 +2109,77 @@ async fn run_profiles(
     name: Option<String>,
 ) -> Result<i32, String> {
     let (script_rel, args): (&str, Vec<String>) = match action.as_str() {
-        "check" => (PROFILES_SCRIPT_REL, Vec::new()),
-        "clean-conflicts" => (PROFILES_SCRIPT_REL, vec!["-CleanConflicts".to_string()]),
-        "reinstall" => (INSTALL_SCRIPT_REL, vec!["-Force".to_string()]),
-        "repair" => {
+        // Native (profiles_status.rs): instant instead of a ~3.5s pwsh round-trip, and it works on
+        // a machine that has no maintenance scripts at all — where the script could never write
+        // this file and the whole Profiles surface stayed permanently empty.
+        "check" => {
+            return run_native_streamed(app, state, stream_id::PROFILES.to_string(), |out, _| {
+                match write_profiles_snapshot() {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        out(&trv("log.relink_snapshot_failed", cur_lang(), &[("e", &e)]));
+                        1
+                    }
+                }
+            })
+            .await;
+        }
+        // Explicit, per-profile: give an EXISTING profile the shared files it lacks. Separate from
+        // `repair` on purpose — a profile deliberately running without the global instructions must
+        // not acquire them as a side effect of fixing its folder links.
+        "share-files" => {
             let n = name.unwrap_or_default();
-            // Charset gate (R1-04): mirror the elevated sibling repair_profile_elevated — validate
-            // the name's charset before the membership check, since profile_names() reads names
-            // verbatim from profiles.json (no charset guarantee) and `n` becomes a -Name argv.
             if !valid_profile_name(&n) {
                 return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &n)]));
             }
             if !profile_names().iter().any(|x| x == &n) {
                 return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
             }
-            (REPAIR_SCRIPT_REL, vec!["-Name".to_string(), n])
+            return run_native_streamed(app, state, stream_id::PROFILES.to_string(), move |out, _| {
+                let code = shared_files_streaming(&n, false, out);
+                refresh_profiles_snapshot(out);
+                code
+            })
+            .await;
+        }
+        // Overwrite a profile's drifted copies with the shared original. DESTRUCTIVE — the caller
+        // confirms it — and separate from `share-files`, which only ever fills gaps.
+        "sync-files" => {
+            let n = name.unwrap_or_default();
+            if !valid_profile_name(&n) {
+                return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &n)]));
+            }
+            if !profile_names().iter().any(|x| x == &n) {
+                return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
+            }
+            return run_native_streamed(app, state, stream_id::PROFILES.to_string(), move |out, _| {
+                let code = shared_files_streaming(&n, true, out);
+                refresh_profiles_snapshot(out);
+                code
+            })
+            .await;
+        }
+        // Still PowerShell: deleting conflict files is a separate, destructive concern from
+        // reporting them, and it only applies on a machine running Syncthing.
+        "clean-conflicts" => (PROFILES_SCRIPT_REL, vec!["-CleanConflicts".to_string()]),
+        "reinstall" => (INSTALL_SCRIPT_REL, vec!["-Force".to_string()]),
+        "repair" => {
+            let n = name.unwrap_or_default();
+            // Charset gate (R1-04): validate the name's charset before the membership check, since
+            // profile_names() reads names verbatim from profiles.json (no charset guarantee) and
+            // `n` reaches a path join below.
+            if !valid_profile_name(&n) {
+                return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &n)]));
+            }
+            if !profile_names().iter().any(|x| x == &n) {
+                return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
+            }
+            return run_native_streamed(app, state, stream_id::PROFILES.to_string(), move |out, _| {
+                let code = repair_profile_streaming(&n, false, out);
+                refresh_profiles_snapshot(out);
+                code
+            })
+            .await;
         }
         // Restore `hasCompletedOnboarding` after a /logout stranded the profile in the onboarding
         // wizard (see Repair-Onboarding.ps1). Same charset + membership gate as `repair`: the name
@@ -2119,14 +2202,19 @@ async fn run_profiles(
             if !profile_names().iter().any(|x| x == &n) {
                 return Err(trv("err.unknown_profile", cur_lang(), &[("name", &n)]));
             }
-            // Rust-native dir creation (no admin) so a single missing profile can be created without a
-            // full -Force reinstall that re-touches every profile and re-runs the global CLI/RTK steps.
-            // Repair-ProfileLinks then makes just this profile's shared-folder links (folder symlinks
-            // need admin → surfaced as broken-links + the existing one-UAC elevated repair afterwards).
+            // Fully native (no admin, no script): create the directory, then link it through the
+            // same engine the repair commands use. Creating one missing profile therefore costs
+            // nothing like a full -Force reinstall, which re-touches every profile and re-runs the
+            // global CLI/RTK steps.
             let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
             let dir = format!("{home}\\.claude-{n}");
             std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir}: {e}"))?;
-            (REPAIR_SCRIPT_REL, vec!["-Name".to_string(), n])
+            return run_native_streamed(app, state, stream_id::PROFILES.to_string(), move |out, _| {
+                let code = repair_profile_streaming(&n, true, out);
+                refresh_profiles_snapshot(out);
+                code
+            })
+            .await;
         }
         _ => {
             return Err(trv(
@@ -2162,46 +2250,37 @@ async fn repair_all_profiles(
         return Err(trv("err.unknown_profile", cur_lang(), &[("name", unknown)]));
     }
     let targets = names;
-    let _slot = RunSlot::reserve(state.inner())?;
-    PROFILES_BULK_CANCEL.store(false, Ordering::SeqCst);
-    let script = abs(REPAIR_SCRIPT_REL);
-    let mut worst = 0;
-    for name in &targets {
-        let _ = app.emit(
-            "run-log",
-            LogLine {
-                component: "profiles".into(),
-                stream: "out".into(),
-                line: format!("── repair {name} ──"),
-            },
-        );
-        // Intermediate phases emit an event the UI ignores; the real run-done is sent below with `worst`.
-        let code = spawn_pwsh_phase(
-            &app,
-            &state,
-            "profiles",
-            script.clone(),
-            vec!["-Name".into(), name.clone()],
-            "run-profiles-phase",
-        )
-        .await;
-        if code != 0 {
-            worst = code;
+    // Native now (no per-profile pwsh child): one blocking job repairs every profile through the
+    // same engine the single-profile command uses. run_native_streamed emits the final run-done,
+    // so the worst code is returned from the job rather than emitted here.
+    let worst = run_native_streamed(app, state, stream_id::PROFILES.to_string(), move |out, _| {
+        // Reset INSIDE the job: the run slot is reserved by run_native_streamed, so a call that
+        // loses the race for it returns before reaching here. Resetting before the reservation
+        // would let a rejected call clear a Cancel that a different in-flight run was acting on.
+        PROFILES_BULK_CANCEL.store(false, Ordering::SeqCst);
+        let mut worst = 0;
+        for name in &targets {
+            out(&format!("── repair {name} ──"));
+            let code = repair_profile_streaming(name, false, out);
+            if code != 0 {
+                worst = code;
+            }
+            // M1: honor a mid-run Cancel — stop instead of marching through the remaining
+            // profiles (worst already reflects what happened so far).
+            if PROFILES_BULK_CANCEL.load(Ordering::SeqCst) {
+                break;
+            }
         }
-        // M1: honor a mid-run Cancel — cancel_run/cancel_all killed the current child and set the
-        // flag; stop instead of marching through the remaining profiles (worst already reflects it).
-        if PROFILES_BULK_CANCEL.load(Ordering::SeqCst) {
-            break;
+        // Once for the whole batch, not per profile — the snapshot is global. Skipped after a
+        // Cancel: the refresh is a ~3.5s pwsh child that run_native_streamed cannot kill, and
+        // making the user wait it out is the opposite of cancelling. The badges stay stale until
+        // the next "Check", which is the honest state after a half-finished batch anyway.
+        if !PROFILES_BULK_CANCEL.load(Ordering::SeqCst) {
+            refresh_profiles_snapshot(out);
         }
-    }
-    drop(_slot);
-    let _ = app.emit(
-        "run-done",
-        RunDone {
-            component: "profiles".into(),
-            code: worst,
-        },
-    );
+        worst
+    })
+    .await?;
     Ok(worst)
 }
 
@@ -2505,90 +2584,316 @@ async fn run_profile_mgmt(
     spawn_streamed(app, state, stream_id::PROFILES.to_string(), script, args).await
 }
 
-/// Repair ONE profile's shared-folder links with admin rights (folder symlinks need UAC).
-/// Launches Repair-ProfileLinks.ps1 elevated via `Start-Process -Verb RunAs` and waits.
-/// The elevated child's output isn't piped back (UAC severs inherited pipes); the repair
-/// script refreshes profiles.last.json itself, so the UI reloads on `run-done`.
-#[tauri::command]
-async fn repair_profile_elevated(
-    app: AppHandle,
-    state: State<'_, RunState>,
-    name: String,
-) -> Result<i32, String> {
-    // Charset-validate FIRST: `name` gets interpolated into an *elevated* PowerShell string
-    // below, and profile_names() reads names verbatim from profiles.json (no charset check),
-    // so a single quote there would be admin-level command injection. valid_profile_name()
-    // (mirrors run_profile_mgmt) makes the "name is validated" guarantee real, not assumed.
-    if !valid_profile_name(&name) {
-        return Err(trv(
-            "err.invalid_profile_name",
-            cur_lang(),
-            &[("name", &name)],
-        ));
-    }
-    if !profile_names().iter().any(|x| x == &name) {
-        return Err(trv("err.unknown_profile", cur_lang(), &[("name", &name)]));
-    }
-    let repair = abs(REPAIR_SCRIPT_REL);
-    // name is validated ([A-Za-z0-9_-]); repair path carries no single quotes — safe in 'literals'.
-    // NB: Start-Process does NOT quote -ArgumentList elements, so a `-File <path with spaces/!>`
-    // silently breaks (elevated pwsh can't find the script) while `-Wait` swallows the child's
-    // exit code → false success. Pass the script via `-Command "& '<path>' -Name '<n>'"` (single-
-    // quoted path survives) and check the real ExitCode via -PassThru.
-    // Write-Host args are localized; escape single quotes (PowerShell '' ) so a future translation
-    // containing an apostrophe can't break out of the single-quoted literal in this ELEVATED command.
-    // Defense in depth: current translations are apostrophe-free, but that invariant shouldn't rest on
-    // a comment alone. (name is charset-validated above; repair is escaped here for completeness.)
-    let lang = cur_lang();
-    let esc = |s: &str| s.replace('\'', "''");
-    let s_start = esc(tr("log.relink_start", lang));
-    let s_done = esc(tr("log.done", lang));
-    let s_err = esc(tr("log.relink_error_code", lang));
-    let s_cancel = esc(tr("log.relink_cancelled", lang));
-    // The `"& '<path>' -Name '<n>'"` element below is a DOUBLE-quoted PS string, so `$(...)`/`$var`
-    // still expand there — even inside the nested single quotes, which are plain characters in that
-    // context. Neutralize `$` for this value only; the Write-Host literals sit in single quotes,
-    // where a backtick would be taken literally and would corrupt the displayed text.
-    let repair = esc(&repair).replace('$', "`$");
-    let inner = format!(
-        "Write-Host '{s_start}'; \
-         try {{ $p = Start-Process -FilePath pwsh -Verb RunAs -PassThru -Wait -ArgumentList \
-         @('-NoProfile','-ExecutionPolicy','Bypass','-Command',\"& '{repair}' -Name '{name}'\") \
-         -ErrorAction Stop; \
-         if ($p.ExitCode -eq 0) {{ Write-Host '{s_done}' }} else {{ Write-Host ('{s_err}' + $p.ExitCode); exit 1 }} }} \
-         catch {{ Write-Host '{s_cancel}'; exit 1 }}"
-    );
-    let args = vec!["-NoProfile".to_string(), "-Command".to_string(), inner];
-    spawn_streamed_prog(
-        app,
-        state,
-        "profiles".to_string(),
-        "pwsh".to_string(),
-        args,
-        None,
-    )
-    .await
+/// The schema default set of shared items, used whenever profiles.json is absent, corrupt, or
+/// silent about them. Mirrors ProfileLib.ps1's own hardcoded fallback — a machine without the
+/// maintenance scripts must still get a populated dashboard rather than a blank one.
+const DEFAULT_SHARED_ITEMS: &[&str] = &[
+    "agents",
+    "commands",
+    "hooks",
+    "plugins",
+    "skills",
+    "projects",
+    "history.jsonl",
+];
+
+const SHARED_ITEMS_JSON_REL: &str = "{{PROFILES}}\\config\\shared-items.json";
+
+/// The shared FILES a profile should carry, from `config/shared-items.json` — the same single
+/// source `ProfileLib.ps1` reads, so the two cannot drift. Falls back to the schema default when
+/// the file is absent or unreadable, for the same reason the folder list does.
+fn shared_file_items() -> Vec<String> {
+    const FALLBACK: &[&str] = &[
+        "settings.local.json",
+        "CLAUDE.md",
+        "statusline.py",
+        "infra-probe.ps1",
+        "cleanup_nul.ps1",
+        "subagent-monitor.ps1",
+        "RTK.md",
+    ];
+    read_json_opt(abs(SHARED_ITEMS_JSON_REL), "shared-items.json")
+        .ok()
+        .flatten()
+        .and_then(|c| {
+            c.get("sharedFiles").and_then(|f| f.as_array()).map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| FALLBACK.iter().map(|s| s.to_string()).collect())
 }
 
-/// Relaunch the whole app elevated (so inline symlink creation works). Launches a new
-/// elevated instance via `Start-Process -Verb RunAs`; on success quits this instance, on
-/// UAC-decline leaves it running (so the user isn't left with nothing).
-#[tauri::command]
-fn relaunch_as_admin(app: AppHandle) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let exe_q = exe.display().to_string().replace('\'', "''");
-    let inner = format!("try {{ Start-Process -FilePath '{exe_q}' -Verb RunAs -ErrorAction Stop }} catch {{ exit 1 }}");
-    let status = std::process::Command::new("pwsh")
-        .args(["-NoProfile", "-Command", &inner])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map_err(|e| trv("err.pwsh_failed", cur_lang(), &[("e", &e)]))?;
-    if status.success() {
-        app.exit(0);
-        Ok(())
-    } else {
-        Err(tr("err.elevation_cancelled", cur_lang()).into())
+/// Which shared items ONE profile should link: its `linkedFolders` filtered out of the canonical
+/// default order, falling back to the schema default when profiles.json is absent or silent.
+/// Composes the two existing pure helpers rather than re-deriving the rule.
+fn profile_linked_items(name: &str) -> Vec<String> {
+    let fallback = || {
+        DEFAULT_SHARED_ITEMS
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+    };
+    let Ok(Some(cfg)) = read_profiles_config() else {
+        return fallback();
+    };
+    let mut defaults = shared_folders_default(&cfg);
+    if defaults.is_empty() {
+        defaults = fallback();
     }
+    let linked = cfg
+        .get("profiles")
+        .and_then(|p| p.as_array())
+        .and_then(|a| {
+            a.iter()
+                .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+        })
+        .and_then(|p| p.get("linkedFolders"))
+        .and_then(|l| l.as_array())
+        .cloned();
+    defaults
+        .into_iter()
+        .filter(|f| folder_desired(linked.as_ref(), f))
+        .collect()
+}
+
+/// Regenerate `profiles.last.json` after a native repair.
+///
+/// The link engine changes the filesystem, but the dashboard reads a cached snapshot that only
+/// `Get-ProfilesStatus.ps1` writes. Without this the UI keeps showing a profile as broken
+/// immediately after a successful repair — the exact false-failure this port exists to remove.
+/// The replaced script did the same refresh at its end. Called ONCE per operation, not per profile,
+/// and a failure here is reported but does not fail the repair that already succeeded.
+fn refresh_profiles_snapshot(out: &dyn Fn(&str)) {
+    if let Err(e) = write_profiles_snapshot() {
+        out(&trv("log.relink_snapshot_failed", cur_lang(), &[("e", &e)]));
+    }
+}
+
+/// Build `profiles.last.json` natively and write it.
+///
+/// The port of `Get-ProfilesStatus.ps1`. Beyond dropping a ~3.5s PowerShell spawn, this is what
+/// lets the Profiles surface exist at all on a machine with no maintenance scripts — previously
+/// the file could only be produced by a script such a user does not have.
+fn write_profiles_snapshot() -> Result<(), String> {
+    let snap = build_profiles_snapshot()?;
+    let json = serde_json::to_string_pretty(&snap).map_err(|e| format!("serialize: {e}"))?;
+    write_json_atomic(&abs(PROFILES_JSON_REL), &json).map_err(|e| format!("write: {e}"))
+}
+
+/// The snapshot itself, separated from writing it so a live smoke can compare the native result
+/// against the PowerShell-produced file on this machine without overwriting the real one.
+fn build_profiles_snapshot() -> Result<profiles_status::Snapshot, String> {
+    let home = std::path::PathBuf::from(
+        std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE: {e}"))?,
+    );
+    // Missing OR corrupt profiles.json must DEGRADE, never blank the dashboard: profiles.json lives
+    // in the same tree as the maintenance scripts, so the script-less machine this port exists for
+    // is exactly the one without it. ProfileLib.ps1 falls back to defaults for the same reason.
+    let cfg = read_profiles_config().ok().flatten();
+    let mut profiles: Vec<profiles_status::ProfileMeta> = cfg
+        .as_ref()
+        .and_then(|c| c.get("profiles"))
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    let s = |k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = s("name");
+                    (!name.is_empty()).then(|| profiles_status::ProfileMeta {
+                        name,
+                        description: s("description"),
+                        color: s("color"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if profiles.is_empty() {
+        // profile_names() already carries the on-disk `~\.claude-*` scan for this case — reuse it
+        // rather than inventing a second answer to "which profiles exist".
+        profiles = profile_names()
+            .into_iter()
+            .map(|name| profiles_status::ProfileMeta {
+                name,
+                description: String::new(),
+                color: String::new(),
+            })
+            .collect();
+    }
+    let mut shared_items = cfg.as_ref().map(shared_folders_default).unwrap_or_default();
+    if shared_items.is_empty() {
+        shared_items = DEFAULT_SHARED_ITEMS.iter().map(|s| s.to_string()).collect();
+    }
+
+    // The profiles dir's PARENT, matching the script's `Split-Path -Parent $scriptDir`: conflicts
+    // are counted across the whole settings tree, not just the profiles folder.
+    let profiles_dir = std::path::PathBuf::from(abs("{{PROFILES}}"));
+    let mut conflict_roots = vec![home.join(".claude"), home.join(".memory")];
+    if let Some(parent) = profiles_dir.parent() {
+        conflict_roots.push(parent.to_path_buf());
+    }
+
+    Ok(profiles_status::build(&profiles_status::Inputs {
+        home,
+        profiles,
+        shared_items,
+        shared_files: shared_file_items(),
+        conflict_roots,
+        backups_dir: profiles_dir.join("Backups"),
+        is_admin: is_elevated(),
+        machine_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
+        generated_at: profiles_status::now_iso(),
+    }))
+}
+
+/// Shared-file maintenance for ONE existing profile, narrating each change.
+///
+/// `resync = false` fills gaps only and never touches an existing file. `resync = true` also
+/// overwrites copies that have DRIFTED from the shared original — destructive, so the caller is
+/// responsible for having confirmed it. Assumes `name` is charset-validated by the caller.
+fn shared_files_streaming(name: &str, resync: bool, out: &dyn Fn(&str)) -> i32 {
+    let lang = cur_lang();
+    let Ok(home) = std::env::var("USERPROFILE").map(std::path::PathBuf::from) else {
+        return 1;
+    };
+    // Same advisory lock its sibling takes: this writes into the same profile directory, and the
+    // in-process run slot is blind to an externally-invoked Repair-ProfileLinks.ps1.
+    let Some(_lock) = links::RepairLock::acquire(name) else {
+        out(&trv("log.relink_locked", lang, &[("name", &name)]));
+        return 0;
+    };
+    let profile_dir = home.join(format!(".claude-{name}"));
+    if !profile_dir.is_dir() {
+        out(&trv(
+            "err.profile_dir_missing",
+            lang,
+            &[("path", &profile_dir.display())],
+        ));
+        return 1;
+    }
+    let main = home.join(".claude");
+    let items = shared_file_items();
+    let outcomes = if resync {
+        links::resync_shared_files(&profile_dir, &main, &items)
+    } else {
+        links::provision_shared_files(&profile_dir, &main, &items)
+    };
+    let mut failed = 0;
+    for o in outcomes {
+        let item: &dyn std::fmt::Display = &o.item;
+        match &o.outcome {
+            links::Outcome::Copied => out(&trv("log.share_copied", lang, &[("item", item)])),
+            links::Outcome::Failed(e) => {
+                failed += 1;
+                out(&trv("log.relink_failed", lang, &[("item", item), ("e", e)]));
+            }
+            // Already there, or reached by absolute path — nothing to say.
+            _ => {}
+        }
+    }
+    i32::from(failed > 0)
+}
+
+/// Repair ONE profile's links and narrate it through `out`, returning an exit code.
+///
+/// The single link engine behind all three entry points — `run_profiles("repair")`, the bulk
+/// "Repair All" run, and profile creation — so the three cannot drift apart the way the five
+/// confirm gates did before v0.7.2. Needs NO elevation: folders are linked with junctions and the
+/// one shared file degrades to a per-profile copy rather than demanding rights. See
+/// `docs/adr/0003-share-profile-files-without-symlinks.md`.
+/// `provision` = also give the profile any shared FILES it lacks; true only when creating.
+/// Assumes `name` is already charset-validated by the caller.
+fn repair_profile_streaming(name: &str, provision: bool, out: &dyn Fn(&str)) -> i32 {
+    let lang = cur_lang();
+    let home = match std::env::var("USERPROFILE") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(e) => {
+            out(&format!("USERPROFILE: {e}"));
+            return 1;
+        }
+    };
+    // Same lock file Repair-ProfileLinks.ps1 takes — that script is still reachable via
+    // Manage-Profiles.ps1, so the two must interlock rather than race over the same junctions.
+    let Some(_lock) = links::RepairLock::acquire(name) else {
+        out(&trv("log.relink_locked", lang, &[("name", &name)]));
+        return 0;
+    };
+    let profile_dir = home.join(format!(".claude-{name}"));
+    if !profile_dir.is_dir() {
+        out(&trv(
+            "err.profile_dir_missing",
+            lang,
+            &[("path", &profile_dir.display())],
+        ));
+        return 1;
+    }
+    out(&trv("log.relink_start", lang, &[("name", &name)]));
+    let main = home.join(".claude");
+    let mut outcomes = links::repair_profile_links(&profile_dir, &main, &profile_linked_items(name));
+    // Shared FILES are wired through Claude Code's own configuration (docs/adr/0003), never linked.
+    // Only a profile Castellyn is creating gets them automatically. An EXISTING profile is left
+    // exactly as it is even when a file is absent: three of the owner's profiles deliberately run
+    // without the global instructions, and silently giving them rules they never had would change
+    // how those profiles behave. The gap is reported in the status snapshot instead, with an
+    // explicit per-profile action to fill it.
+    if provision {
+        outcomes.extend(links::provision_shared_files(
+            &profile_dir,
+            &main,
+            &shared_file_items(),
+        ));
+    }
+    let (mut made, mut ok, mut skipped, mut failed) = (0, 0, 0, 0);
+    for o in &outcomes {
+        let item: &dyn std::fmt::Display = &o.item;
+        let line = match &o.outcome {
+            links::Outcome::Ok => {
+                ok += 1;
+                trv("log.relink_ok", lang, &[("item", item)])
+            }
+            links::Outcome::Copied => {
+                made += 1;
+                trv("log.share_copied", lang, &[("item", item)])
+            }
+            // Nothing to report: the file is reached by absolute path, or has no shared source.
+            links::Outcome::Skipped => continue,
+            links::Outcome::Made => {
+                made += 1;
+                trv("log.relink_made", lang, &[("item", item)])
+            }
+            links::Outcome::Rebuilt => {
+                made += 1;
+                trv("log.relink_rebuilt", lang, &[("item", item)])
+            }
+            links::Outcome::HasData => {
+                skipped += 1;
+                trv("log.relink_has_data", lang, &[("item", item)])
+            }
+            links::Outcome::HistoryLocal => {
+                skipped += 1;
+                trv("log.relink_history_local", lang, &[("item", item)])
+            }
+            links::Outcome::Failed(e) => {
+                failed += 1;
+                trv("log.relink_failed", lang, &[("item", item), ("e", e)])
+            }
+        };
+        out(&line);
+    }
+    out(&trv(
+        "log.relink_summary",
+        lang,
+        &[
+            ("made", &made),
+            ("ok", &ok),
+            ("skipped", &skipped),
+            ("failed", &failed),
+        ],
+    ));
+    i32::from(failed > 0)
 }
 
 // --- Sync tab (native; was Manage-Sync.ps1) ---
@@ -4360,8 +4665,15 @@ struct AnalyticsHelperOut {
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct FreellmapiAnalytics {
-    /// False when the gateway DB / node / data is missing — UI shows an empty state.
+    /// Is there data to render? Answers a different question from `unavailable`, which answers
+    /// WHY there is none. `available: true` with all-zero totals is legitimate (gateway running,
+    /// no requests yet); `available: false` should always carry an `unavailable`.
     available: bool,
+    /// Why the read produced nothing. Four very different worlds — no gateway installed, Node.js
+    /// missing, the query helper failing, unreadable output — used to collapse into one blank
+    /// panel with a "configure a provider" button that fixes none of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unavailable: Option<Unavailable>,
     totals: AnalyticsTotals,
     per_model: Vec<AnalyticsModel>,
     /// Per-model usage over time (sparkline source); bucket width is `step_sec`.
@@ -4385,10 +4697,16 @@ fn gateway_db_path() -> Option<String> {
 /// (available=false) result when node, the helper, or the DB is missing.
 #[tauri::command]
 async fn read_freellmapi_analytics(range_hours: u32) -> FreellmapiAnalytics {
+    // Every early return names its own cause. They all used to be the same blank panel.
+    fn blank(why: Unavailable) -> FreellmapiAnalytics {
+        FreellmapiAnalytics { unavailable: Some(why), ..Default::default() }
+    }
     let hours = if range_hours == 0 { 168 } else { range_hours };
     let db = match gateway_db_path() {
         Some(p) if std::path::Path::new(&p).exists() => p,
-        _ => return FreellmapiAnalytics::default(),
+        // No local gateway on this machine — the ordinary state for anyone who has not installed
+        // the LLM stack, and not a fault.
+        _ => return blank(Unavailable::new("avail.gatewayMissing")),
     };
     let helper = abs("Castellyn\\tools\\analytics\\query.cjs");
     let out = tokio::process::Command::new("node")
@@ -4396,11 +4714,23 @@ async fn read_freellmapi_analytics(range_hours: u32) -> FreellmapiAnalytics {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .await;
-    let Ok(out) = out else {
-        return FreellmapiAnalytics::default();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return blank(
+                Unavailable::new("avail.nodeMissing")
+                    .cmd("winget install --id OpenJS.NodeJS.LTS")
+                    .url("https://nodejs.org/")
+                    .detail(e.to_string()),
+            )
+        }
+        Err(e) => return blank(Unavailable::new("avail.nodeSpawn").detail(e.to_string())),
     };
     if !out.status.success() {
-        return FreellmapiAnalytics::default();
+        return blank(
+            Unavailable::new("avail.analyticsQueryFailed")
+                .detail(String::from_utf8_lossy(&out.stderr).into_owned()),
+        );
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: Option<AnalyticsHelperOut> = parse_json_bom(stdout.trim())
@@ -4409,12 +4739,21 @@ async fn read_freellmapi_analytics(range_hours: u32) -> FreellmapiAnalytics {
     match parsed {
         Some(p) if p.error.is_none() && p.totals.is_some() => FreellmapiAnalytics {
             available: true,
+            unavailable: None,
             totals: p.totals.unwrap_or_default(),
             per_model: p.per_model.unwrap_or_default(),
             series: p.series.unwrap_or_default(),
             step_sec: p.step_sec.unwrap_or(0),
         },
-        _ => FreellmapiAnalytics::default(),
+        // The helper ran but reported its own error, or returned something unreadable. Its message
+        // is the most specific thing available, so prefer it over our generic wording.
+        Some(p) => blank(
+            Unavailable::new("avail.analyticsQueryFailed").detail(p.error.unwrap_or_default()),
+        ),
+        None => blank(
+            Unavailable::new("avail.analyticsBadOutput")
+                .detail(stdout.chars().take(200).collect::<String>()),
+        ),
     }
 }
 
@@ -5147,6 +5486,76 @@ async fn read_engine_models(base_url: String) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Why a read could not produce data — one shape for every "we could not even look" case.
+///
+/// Replaces the silent empty result. `list_github_repos` used to collapse FOUR different worlds
+/// into the same `[]`: gh is not installed, gh is not authenticated, gh timed out, and the account
+/// genuinely has no repositories. The UI could then only ever say "nothing here", which is a lie
+/// in three of the four.
+///
+/// `reason` is an i18n KEY resolved by the frontend (never a pre-rendered sentence — the backend
+/// does not know the window's locale at read time). `detail` is raw machine output: never
+/// localized, never the primary message, shown only behind a "details" affordance.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct Unavailable {
+    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fix_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fix_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+impl Unavailable {
+    fn new(reason: &str) -> Self {
+        Self { reason: reason.to_string(), ..Default::default() }
+    }
+    /// A command the user can copy and run verbatim.
+    fn cmd(mut self, c: &str) -> Self {
+        self.fix_command = Some(c.to_string());
+        self
+    }
+    fn url(mut self, u: &str) -> Self {
+        self.fix_url = Some(u.to_string());
+        self
+    }
+    /// Raw machine output. Trimmed, capped, and dropped entirely when blank so the UI never
+    /// renders an empty "details" section.
+    fn detail(mut self, d: impl Into<String>) -> Self {
+        let d: String = d.into();
+        let t = d.trim();
+        if !t.is_empty() {
+            self.detail = Some(t.chars().take(400).collect());
+        }
+        self
+    }
+}
+
+/// A read that may not have happened at all: the payload, plus why it is empty when it is.
+/// `items` is always present and always the right shape, so a caller that ignores `unavailable`
+/// still behaves exactly as it did before this type existed.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Probe<T> {
+    items: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unavailable: Option<Unavailable>,
+}
+
+impl<T> Probe<T> {
+    fn ok(items: T) -> Self {
+        Self { items, unavailable: None }
+    }
+}
+
+impl<T: Default> Probe<T> {
+    fn fail(why: Unavailable) -> Self {
+        Self { items: T::default(), unavailable: Some(why) }
+    }
+}
+
 #[derive(Serialize)]
 struct GithubRepo {
     owner: String,
@@ -5167,31 +5576,59 @@ struct GithubRepo {
     stars: u64,
 }
 
-/// All of the authenticated user's GitHub repos (incl. private), via `gh repo list`.
-/// Lets the UI surface repos that aren't locally cloned. Empty if gh is missing or
-/// unauthenticated; read-only (no network writes).
-#[tauri::command]
-async fn list_github_repos() -> Vec<GithubRepo> {
+/// Run a `gh` subcommand under a bounded timeout and turn EVERY way it can fail to produce JSON
+/// into one classified reason. Single path on purpose: every gh-backed read explains itself
+/// identically, and a new one cannot invent a fifth way to say "nothing here".
+///
+/// The four worlds that used to collapse into an empty list: gh not installed, gh present but the
+/// spawn failed, gh ran and refused (usually "not logged in"), gh hung.
+async fn gh_json(args: &[&str]) -> Result<Vec<serde_json::Value>, Unavailable> {
     let fut = tokio::process::Command::new("gh")
-        .args([
-            "repo", "list", "--limit", "1000", "--json",
-            "name,owner,nameWithOwner,isPrivate,isFork,isArchived,url,updatedAt,description,primaryLanguage,stargazerCount",
-        ])
+        .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .kill_on_drop(true) // on timeout the future is dropped — reap the child instead of orphaning gh
         .output();
-    // Bound a hung `gh` (flaky network / auth prompt) — Err = timed out, Ok(Err) = spawn failed.
-    let Ok(Ok(out)) = tokio::time::timeout(std::time::Duration::from_secs(30), fut).await else {
-        return Vec::new();
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
+        Err(_) => return Err(Unavailable::new("avail.ghTimeout")),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Unavailable::new("avail.ghMissing")
+                .cmd("winget install --id GitHub.cli")
+                .url("https://cli.github.com/")
+                .detail(e.to_string()))
+        }
+        Ok(Err(e)) => return Err(Unavailable::new("avail.ghSpawn").detail(e.to_string())),
+        Ok(Ok(o)) => o,
     };
     if !out.status.success() {
-        return Vec::new();
+        // Overwhelmingly "not logged in"; the stderr tail distinguishes rate limits and network
+        // failures for anyone who opens the details.
+        return Err(Unavailable::new("avail.ghFailed")
+            .cmd("gh auth login")
+            .detail(String::from_utf8_lossy(&out.stderr).into_owned()));
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(stdout.trim()) else {
-        return Vec::new();
+    serde_json::from_str::<Vec<serde_json::Value>>(stdout.trim()).map_err(|e| {
+        Unavailable::new("avail.ghBadOutput")
+            .detail(format!("{e}: {}", stdout.chars().take(200).collect::<String>()))
+    })
+}
+
+/// All of the authenticated user's GitHub repos (incl. private), via `gh repo list`.
+/// Lets the UI surface repos that aren't locally cloned. Read-only (no network writes).
+/// An empty list now carries WHY it is empty — see `Unavailable`.
+#[tauri::command]
+async fn list_github_repos() -> Probe<Vec<GithubRepo>> {
+    let arr = match gh_json(&[
+        "repo", "list", "--limit", "1000", "--json",
+        "name,owner,nameWithOwner,isPrivate,isFork,isArchived,url,updatedAt,description,primaryLanguage,stargazerCount",
+    ])
+    .await
+    {
+        Ok(a) => a,
+        Err(why) => return Probe::fail(why),
     };
-    arr.iter()
+    Probe::ok(
+        arr.iter()
         .map(|r| {
             let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
             let b = |k: &str| r.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
@@ -5223,7 +5660,8 @@ async fn list_github_repos() -> Vec<GithubRepo> {
                     .unwrap_or(0),
             }
         })
-        .collect()
+        .collect(),
+    )
 }
 
 #[derive(Serialize)]
@@ -5239,38 +5677,25 @@ struct MyGithubItem {
     comments: u64,
 }
 
-/// One `gh search <kind>` page (`kind` = "prs" or "issues") as parsed items. Empty on any
-/// failure — gh missing, unauthenticated, timed out, or unparsable output.
+/// One `gh search <kind>` page (`kind` = "prs" or "issues") as parsed items, or the classified
+/// reason it could not be read.
 /// NB: `gh search issues` returns ONLY issues and `gh search prs` ONLY pull requests — despite
 /// the shared `isPullRequest` field. Both are needed to see the whole picture.
-async fn gh_search_mine(kind: &str) -> Vec<MyGithubItem> {
-    let fut = tokio::process::Command::new("gh")
-        .args([
-            "search",
-            kind,
-            "--author",
-            "@me",
-            "--state",
-            "open",
-            "--limit",
-            "100",
-            "--json",
-            "repository,number,title,url,updatedAt,isPullRequest,commentsCount",
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .kill_on_drop(true) // on timeout the future is dropped — reap the child instead of orphaning gh
-        .output();
-    let Ok(Ok(out)) = tokio::time::timeout(std::time::Duration::from_secs(30), fut).await else {
-        return Vec::new();
-    };
-    if !out.status.success() {
-        return Vec::new();
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(stdout.trim()) else {
-        return Vec::new();
-    };
-    arr.iter()
+async fn gh_search_mine(kind: &str) -> Result<Vec<MyGithubItem>, Unavailable> {
+    let arr = gh_json(&[
+        "search",
+        kind,
+        "--author",
+        "@me",
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        "repository,number,title,url,updatedAt,isPullRequest,commentsCount",
+    ])
+    .await?;
+    Ok(arr.iter()
         .map(|r| {
             let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
             let n = |k: &str| r.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
@@ -5292,16 +5717,26 @@ async fn gh_search_mine(kind: &str) -> Vec<MyGithubItem> {
                 comments: n("commentsCount"),
             }
         })
-        .collect()
+        .collect())
 }
 
 /// The user's own OPEN PRs and issues across ALL of GitHub. The fork scan only sees PRs whose
 /// topic branch still exists locally (merged branches get deleted → the PR vanishes), and never
 /// sees issues at all — this fills both gaps. Read-only (no network writes).
 #[tauri::command]
-async fn list_my_github_items() -> Vec<MyGithubItem> {
+async fn list_my_github_items() -> Probe<Vec<MyGithubItem>> {
     let (prs, issues) = tokio::join!(gh_search_mine("prs"), gh_search_mine("issues"));
-    prs.into_iter().chain(issues).collect()
+    // Two independent searches. If BOTH failed the read produced nothing and must say why; if only
+    // one failed the user still gets real data, and reporting a blocking reason over a populated
+    // list would be the same lie in reverse.
+    // A PARTIAL failure keeps the rows it did get AND still says what was lost. Reporting only the
+    // rows would be the same lie as reporting only the reason: the user would see a list that looks
+    // complete while half its source silently failed.
+    match (prs, issues) {
+        (Ok(p), Ok(i)) => Probe::ok(p.into_iter().chain(i).collect()),
+        (Ok(items), Err(why)) | (Err(why), Ok(items)) => Probe { items, unavailable: Some(why) },
+        (Err(why), Err(_)) => Probe::fail(why),
+    }
 }
 
 #[derive(Serialize)]
@@ -12014,6 +12449,19 @@ fn plugin_sync_profiles(home: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Does this machine have ANY Claude profile directory at all?
+///
+/// Deliberately NOT `plugin_sync_profiles(home).is_empty()`: that filters on `symlink_metadata` of
+/// each `settings.json` and swallows every error kind, so a file that exists but cannot be stat'd
+/// (locked by antivirus or Syncthing, permissions) comes back indistinguishable from "no profiles".
+/// The drift checks gate on THIS instead, so they go silent only for genuine absence — an
+/// unreadable profile still produces a reported item rather than silence.
+fn any_claude_profile_dir(home: &str) -> bool {
+    std::iter::once(".claude".to_string())
+        .chain(profile_names().into_iter().map(|n| format!(".claude-{n}")))
+        .any(|n| std::path::Path::new(&format!("{home}\\{n}")).is_dir())
+}
+
 /// A plausible Castellyn profile dir name (`~/.claude` or `~/.claude-<name>`). Deliberately
 /// permissive: a foreign sibling like `~/.claude-mem` also matches here, but the marker-gated
 /// unwire below never modifies it (no Castellyn marker → no-op, no write). Pure (unit-tested).
@@ -12169,11 +12617,11 @@ fn delete_orphan_profile(name: String) -> Result<(), String> {
     if has_reparse_child(&dir) {
         return Err(trv("err.orphan_has_links", cur_lang(), &[("n", &name)]));
     }
-    recycle_dir(&dir.to_string_lossy())
+    recycle_path(&dir.to_string_lossy())
 }
 
 /// True if any descendant of `dir` (at ANY depth, not just immediate children) is a reparse point
-/// (junction/symlink) — OR the dir can't be enumerated. `recycle_dir` recycles the WHOLE subtree, so
+/// (junction/symlink) — OR the dir can't be enumerated. `recycle_path` recycles the WHOLE subtree, so
 /// a junction nested several levels down would otherwise be followed and its target swept; the check
 /// must therefore recurse. Checks the raw FILE_ATTRIBUTE_REPARSE_POINT bit (via symlink_metadata, so
 /// the link itself is stat'd, not its target) — this catches junctions AND symlinks, which
@@ -12206,39 +12654,42 @@ fn has_reparse_child(dir: &std::path::Path) -> bool {
 /// `method` is a hardcoded FileSystem method name ("DeleteDirectory" | "DeleteFile"), never user
 /// input. The path is passed through an env var (not string-interpolated) so trailing spaces /
 /// special chars survive verbatim and there is no quoting to escape.
-fn recycle_path(method: &str, path: &str) -> Result<(), String> {
-    let script = format!(
-        "Add-Type -AssemblyName Microsoft.VisualBasic; \
-         [Microsoft.VisualBasic.FileIO.FileSystem]::{method}($env:CASTELLYN_DEL_PATH, \
-         'OnlyErrorDialogs', 'SendToRecycleBin')"
-    );
-    let out = std::process::Command::new("pwsh")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .env("CASTELLYN_DEL_PATH", path)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
+fn recycle_path(path: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{
+        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
+        SHFILEOPSTRUCTW,
+    };
+    // The shell API resolves relative paths against a process CWD we do not control, so a relative
+    // input could recycle something else entirely. Refuse rather than guess.
+    if !std::path::Path::new(path).is_absolute() {
+        return Err(format!("recycle needs an absolute path: {path}"));
+    }
+    // pFrom is a DOUBLE-null-terminated LIST, not a string: the first NUL ends this entry, the
+    // second ends the list. With a single NUL the API reads past the buffer.
+    let mut from: Vec<u16> = path.encode_utf16().collect();
+    from.push(0);
+    from.push(0);
+    let mut op = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: PCWSTR(from.as_ptr()),
+        // fFlags is a bare u16 while FILEOPERATION_FLAGS wraps a u32. These four constants are
+        // 0x4 | 0x10 | 0x40 | 0x400 = 0x454, so the narrowing is lossless; only the FOF_* set
+        // above 0xFFFF (none of which apply to a delete) would truncate.
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI).0 as u16,
+        ..Default::default()
+    };
+    let rc = unsafe { SHFileOperationW(&mut op) };
+    if op.fAnyOperationsAborted.as_bool() {
+        return Err("recycle aborted".to_string());
+    }
+    if rc == 0 {
         Ok(())
     } else {
-        let msg = String::from_utf8_lossy(&out.stderr);
-        let msg = msg.trim();
-        Err(if msg.is_empty() {
-            "recycle failed".to_string()
-        } else {
-            msg.to_string()
-        })
+        // SHFileOperation's codes are its own (DE_*), not GetLastError — report the raw value
+        // rather than a misleading OS-error string.
+        Err(format!("recycle failed (SHFileOperation 0x{rc:X})"))
     }
-}
-
-/// Recycle a directory (whole subtree) to the bin.
-fn recycle_dir(path: &str) -> Result<(), String> {
-    recycle_path("DeleteDirectory", path)
-}
-
-/// Recycle a single file to the bin.
-fn recycle_file(path: &str) -> Result<(), String> {
-    recycle_path("DeleteFile", path)
 }
 
 /// True when some `hooks.<event>[].hooks[].command` contains `marker`.
@@ -12567,18 +13018,25 @@ fn classify_wiring(unwired: &[String], managed_double: bool) -> (String, String,
     ("drift".into(), parts.join("; "), fix)
 }
 
-fn plugin_sync_file_drift_item(home: &str) -> StackDriftItem {
-    let dirs = plugin_sync_profiles(home)
-        .into_iter()
-        .map(|(d, _)| d)
-        .collect::<Vec<_>>();
+fn plugin_sync_file_drift_item(home: &str) -> Option<StackDriftItem> {
+    // No Claude profile DIRECTORY on this machine → nothing to keep in sync, so there is no such
+    // thing as drift here. Reporting one invented an alarm on a clean install; see read_stack_drift.
+    // Gating on the directory rather than on plugin_sync_profiles() is deliberate — see
+    // any_claude_profile_dir: an unreadable settings.json must not read as "no profiles".
+    if !any_claude_profile_dir(home) {
+        return None;
+    }
+    let dirs = plugin_sync_profiles(home).into_iter().map(|(d, _)| d).collect::<Vec<_>>();
     let rendered = render_plugin_sync_script(&dirs);
     let disk = std::fs::read_to_string(plugin_sync_script_path(home)).ok();
     let (state, detail, fix) = classify_plugin_sync_file(disk.as_deref(), &rendered);
-    StackDriftItem { id: "plugin_sync_file".into(), state, detail, fix }
+    Some(StackDriftItem { id: "plugin_sync_file".into(), state, detail, fix })
 }
 
-fn plugin_sync_wiring_drift_item(home: &str) -> StackDriftItem {
+fn plugin_sync_wiring_drift_item(home: &str) -> Option<StackDriftItem> {
+    if !any_claude_profile_dir(home) {
+        return None; // same reasoning as plugin_sync_file_drift_item
+    }
     let mut unwired = Vec::new();
     for (name, sp) in plugin_sync_profiles(home) {
         let wired = std::fs::read_to_string(&sp)
@@ -12597,54 +13055,59 @@ fn plugin_sync_wiring_drift_item(home: &str) -> StackDriftItem {
         .map(|c| c.contains("plugin_sync"))
         .unwrap_or(false);
     let (state, detail, fix) = classify_wiring(&unwired, managed_double);
-    StackDriftItem { id: "plugin_sync_wiring".into(), state, detail, fix }
+    Some(StackDriftItem { id: "plugin_sync_wiring".into(), state, detail, fix })
 }
 
 /// Compare the version-controlled SOURCE managed-settings.json against the deployed copy. Any IO
 /// failure on the source degrades to state=error; a missing/invalid/differing deployed copy is drift
 /// with fix=managed_deploy. Also the re-verification step of run_managed_deploy. Never panics.
-fn managed_settings_drift_item() -> StackDriftItem {
+fn managed_settings_drift_item() -> Option<StackDriftItem> {
     let id = "managed_settings".to_string();
     let src = match std::fs::read_to_string(source_managed_path()) {
         Ok(s) => s,
+        // A source that simply ISN'T THERE means this machine has no maintenance-script tree to
+        // deploy from — the normal state for anyone but the author, and not a fault to report.
+        // Kept narrow on purpose: only NotFound is silent, so a permissions or unreadable-media
+        // failure still surfaces instead of being mistaken for "nothing to manage".
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
             // "source" managed-settings under scripts_root — distinct from the DEPLOYED copy the
             // wiring item mentions; spell it out so the two items don't look self-contradictory.
-            return StackDriftItem { id, state: "error".into(), detail: format!("read source managed-settings: {e}"), fix: None }
+            return Some(StackDriftItem { id, state: "error".into(), detail: format!("read source managed-settings: {e}"), fix: None })
         }
     };
     if parse_json_bom(&src).is_err() {
-        return StackDriftItem {
+        return Some(StackDriftItem {
             id,
             state: "error".into(),
             detail: "source managed-settings.json is not valid JSON".into(),
             fix: None,
-        };
+        });
     }
     let Some(dep_path) = deployed_managed_path() else {
-        return StackDriftItem {
+        return Some(StackDriftItem {
             id,
             state: "error".into(),
             detail: "ProgramFiles environment variable is unset".into(),
             fix: None,
-        };
+        });
     };
     let dep = match std::fs::read_to_string(&dep_path) {
         Ok(s) => s,
         Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return StackDriftItem {
+            return Some(StackDriftItem {
                 id,
                 state: "drift".into(),
                 detail: "deployed managed-settings.json is missing".into(),
                 fix: Some("managed_deploy".into()),
-            }
+            })
         }
         Err(e) => {
-            return StackDriftItem { id, state: "error".into(), detail: format!("read deployed: {e}"), fix: None }
+            return Some(StackDriftItem { id, state: "error".into(), detail: format!("read deployed: {e}"), fix: None })
         }
     };
     if json_normalized_eq(&src, &dep) {
-        StackDriftItem { id, state: "ok".into(), detail: "deployed matches source".into(), fix: None }
+        Some(StackDriftItem { id, state: "ok".into(), detail: "deployed matches source".into(), fix: None })
     } else {
         // src is already valid JSON, so !eq means the deployed copy differs or is itself invalid.
         let detail = if parse_json_bom(&dep).is_err() {
@@ -12652,7 +13115,7 @@ fn managed_settings_drift_item() -> StackDriftItem {
         } else {
             "source is newer than deployed — needs redeploy".to_string()
         };
-        StackDriftItem { id, state: "drift".into(), detail, fix: Some("managed_deploy".into()) }
+        Some(StackDriftItem { id, state: "drift".into(), detail, fix: Some("managed_deploy".into()) })
     }
 }
 
@@ -12700,15 +13163,21 @@ fn classify_marketplace_versions(rows: &[MarketVer]) -> (String, String) {
 
 /// Ф3: version alignment of OWN (directory-source) marketplaces — marketplace.json vs each
 /// plugin.json vs installed versions. fix=None: the bump/update actions live on the Plugins tab.
-fn marketplace_versions_drift_item() -> StackDriftItem {
+fn marketplace_versions_drift_item() -> Option<StackDriftItem> {
     let id = "marketplace_versions".to_string();
     let Some((_, installed, markets)) = load_installed_plugins() else {
-        return StackDriftItem {
+        // load_installed_plugins collapses "file absent" and "file unparseable" into one None, so
+        // re-check the file itself. Absent = no plugins on this machine = nothing to align, stay
+        // silent. Present-but-unreadable is a real fault and must still surface.
+        let present = std::env::var("USERPROFILE").ok().is_some_and(|h| {
+            std::path::Path::new(&format!("{h}\\.claude\\plugins\\installed_plugins.json")).exists()
+        });
+        return present.then(|| StackDriftItem {
             id,
             state: "error".into(),
             detail: "installed_plugins.json unreadable".into(),
             fix: None,
-        };
+        });
     };
     let mut rows: Vec<MarketVer> = Vec::new();
     for name in own_marketplaces() {
@@ -12722,21 +13191,21 @@ fn marketplace_versions_drift_item() -> StackDriftItem {
         let mtxt = match std::fs::read_to_string(format!("{loc}\\.claude-plugin\\marketplace.json")) {
             Ok(s) => s,
             Err(e) => {
-                return StackDriftItem {
+                return Some(StackDriftItem {
                     id,
                     state: "error".into(),
                     detail: format!("{name}: read marketplace.json: {e}"),
                     fix: None,
-                }
+                })
             }
         };
         let Ok(m) = parse_json_bom(&mtxt) else {
-            return StackDriftItem {
+            return Some(StackDriftItem {
                 id,
                 state: "error".into(),
                 detail: format!("{name}: marketplace.json is not valid JSON"),
                 fix: None,
-            };
+            });
         };
         for p in m.get("plugins").and_then(|v| v.as_array()).map(|a| a.as_slice()).unwrap_or(&[]) {
             let (Some(pn), Some(mv)) = (
@@ -12772,21 +13241,27 @@ fn marketplace_versions_drift_item() -> StackDriftItem {
         }
     }
     let (state, detail) = classify_marketplace_versions(&rows);
-    StackDriftItem { id, state, detail, fix: None }
+    Some(StackDriftItem { id, state, detail, fix: None })
 }
 
-/// Report the four stack-drift checks (plugin_sync file, plugin_sync wiring, managed settings,
-/// own-marketplace versions).
-/// Never panics: every per-item IO failure degrades to that item's state=error with the error text.
+/// Report the stack-drift checks that APPLY to this machine (plugin_sync file, plugin_sync wiring,
+/// managed settings, own-marketplace versions). Each returns None when the thing it watches does not
+/// exist here — no profiles, no maintenance-script tree, no installed plugins — so a clean machine
+/// gets an EMPTY list instead of four items, two of which used to be `error` carrying a raw OS
+/// string. Drift is only meaningful against something that exists; absence is not a fault.
+/// Never panics: every per-item IO failure still degrades to that item's state=error.
 #[tauri::command]
 fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
-    Ok(vec![
+    Ok([
         plugin_sync_file_drift_item(&home),
         plugin_sync_wiring_drift_item(&home),
         managed_settings_drift_item(),
         marketplace_versions_drift_item(),
-    ])
+    ]
+    .into_iter()
+    .flatten()
+    .collect())
 }
 
 /// Redeploy managed-settings.json with a single elevation prompt, then re-verify by comparison.
@@ -12810,7 +13285,15 @@ async fn run_managed_deploy() -> Result<StackDriftItem, String> {
             .args(["-ExecutionPolicy", "Bypass", "-Command", &inner])
             .creation_flags(CREATE_NO_WINDOW)
             .status();
-        managed_settings_drift_item()
+        // The re-verification can now be "not applicable" (no source file). Reaching that here means
+        // the deploy button fired with nothing to deploy from — report it rather than inventing an
+        // "ok", which would be the exact false-success this function was written to prevent.
+        managed_settings_drift_item().unwrap_or_else(|| StackDriftItem {
+            id: "managed_settings".into(),
+            state: "error".into(),
+            detail: "source managed-settings.json not found — nothing to deploy".into(),
+            fix: None,
+        })
     })
     .await
     .map_err(|e| e.to_string())
@@ -12995,10 +13478,12 @@ fn onboarding_scan() -> Vec<OnbStep> {
     out.push(if !tree_ok {
         onb("managed", "blocked", String::new(), None)
     } else {
-        let m = managed_settings_drift_item();
-        match m.state.as_str() {
-            "ok" => onb("managed", "ok", m.detail, None),
-            _ => onb("managed", "todo", m.detail, Some("managed_deploy")),
+        match managed_settings_drift_item() {
+            // No source file even though the tree is present → this step does not apply to this
+            // machine. "unknown" rather than "ok": we are not claiming a successful deploy.
+            None => onb("managed", "unknown", "no source managed-settings.json".into(), None),
+            Some(m) if m.state == "ok" => onb("managed", "ok", m.detail, None),
+            Some(m) => onb("managed", "todo", m.detail, Some("managed_deploy")),
         }
     });
     // Syncthing hardening IS natively detectable: the script's effect is versioning on the managed
@@ -13478,12 +13963,9 @@ async fn run_gc_delete(ids: Vec<String>) -> Result<GcDeleteReport, String> {
                 report.skipped.push((id, "contains reparse children".into()));
                 continue;
             }
-            let recycled = if is_dir {
-                recycle_dir(&item.path)
-            } else {
-                recycle_file(&item.path)
-            };
-            if let Err(e) = recycled {
+            // One call for both: the shell operation recycles a file and a whole subtree
+            // identically, so `is_dir` no longer selects between two code paths.
+            if let Err(e) = recycle_path(&item.path) {
                 report.skipped.push((id, e));
                 continue;
             }
@@ -14145,6 +14627,45 @@ mod plugin_sync_tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn plugin_sync_drift_is_silent_on_a_machine_with_no_profiles() {
+        // The bug this pins: both items were emitted unconditionally, so a clean install showed a
+        // red "problems" badge in the sidebar for things that cannot exist there yet. Drift is only
+        // meaningful against something that exists.
+        // Hermetic despite profile_names() reading the real profiles.json: every candidate is
+        // resolved UNDER `home`, and this scratch home holds no .claude* dir at all.
+        let home = scratch("nodrift");
+        let h = home.to_string_lossy().to_string();
+        assert!(
+            super::plugin_sync_file_drift_item(&h).is_none(),
+            "no profiles under this home → nothing to keep in sync"
+        );
+        assert!(
+            super::plugin_sync_wiring_drift_item(&h).is_none(),
+            "no profiles under this home → no hook wiring to check"
+        );
+
+        // Control 1 — the case the guard must NOT swallow: the profile DIRECTORY exists but its
+        // settings.json does not (or cannot be read). `plugin_sync_profiles` filters on a
+        // `symlink_metadata` that drops every error kind, so gating on ITS emptiness would treat
+        // "locked by antivirus / no permission" as "no profiles" and go silent about a real state.
+        let p = home.join(".claude");
+        std::fs::create_dir_all(&p).unwrap();
+        assert!(
+            super::plugin_sync_file_drift_item(&h).is_some(),
+            "a profile dir with an unreadable settings.json must still be reported, not silenced"
+        );
+        assert!(super::plugin_sync_wiring_drift_item(&h).is_some());
+
+        // Control 2 — the ordinary healthy case still reports.
+        std::fs::write(p.join("settings.json"), "{}").unwrap();
+        assert!(
+            super::plugin_sync_file_drift_item(&h).is_some(),
+            "a real profile dir must restore the check"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -15153,7 +15674,11 @@ fn cancel_run(state: State<'_, RunState>) -> Result<(), String> {
     let pid = { *state.0.lock().unwrap_or_else(|e| e.into_inner()) };
     match pid {
         Some(p) if p != 0 => kill_tree(p),
-        _ => Err(tr("err.no_active_run", cur_lang()).into()),
+        // Slot reserved with no child pid = a NATIVE job (run_native_streamed). There is nothing to
+        // kill, but the cancel flag above is the signal such jobs poll, so the cancel did land —
+        // reporting "no active run" here would show an error toast for a cancel that worked.
+        Some(_) => Ok(()),
+        None => Err(tr("err.no_active_run", cur_lang()).into()),
     }
 }
 
@@ -15602,6 +16127,34 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// The `-Command` payload for the PTY shell.
+///
+/// Windows PowerShell 5.1 streams in the console code page rather than UTF-8, so it needs the
+/// encoding set before anything else runs. Note `None` becomes `Some`: a BARE interactive shell has
+/// no command of its own but still needs the preamble, and `-NoExit` keeps it interactive after the
+/// preamble has run. pwsh already speaks UTF-8 and is passed through untouched — the owner's path
+/// does not change at all.
+/// Pure so both branches are testable on a machine where pwsh IS installed.
+fn pty_command(ps51: bool, command: Option<String>) -> Option<String> {
+    const UTF8_PREAMBLE: &str =
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8";
+    if !ps51 {
+        return command;
+    }
+    Some(match command {
+        Some(c) => format!("{UTF8_PREAMBLE}; {c}"),
+        None => UTF8_PREAMBLE.to_string(),
+    })
+}
+
+/// Is this `profile` argument acceptable for `tool`? Empty means "no named profile" (claude falls
+/// back to its own ~/.claude) — legal, and the only thing a machine with no `~/.claude-*` dirs can
+/// send. A NON-empty name must still pass the charset gate, so traversal input is refused.
+/// Pure (no IO) so the rule is unit-testable without a Tauri State.
+fn profile_arg_ok(tool: &str, profile: &str) -> bool {
+    tool != "claude" || profile.trim().is_empty() || valid_profile_name(profile)
+}
+
 /// Spawn a tool (claude / opencode / shell / ssh) inside a real PTY and stream its output. Returns the
 /// session id. Output → the caller's `on_data` Channel (raw bytes); termination → `pty:exit:<id>` (exit i32).
 #[tauri::command]
@@ -15638,7 +16191,10 @@ fn session_spawn(
         ));
     }
     // The profile only matters for claude (it picks CLAUDE_CONFIG_DIR = ~/.claude-<name>).
-    if tool == "claude" && !valid_profile_name(&profile) {
+    // Rule in `profile_arg_ok`: empty = "no named profile" (legal), non-empty must pass the charset
+    // gate. Without the empty case a machine with no ~/.claude-* dirs failed EVERY launch with
+    // err.invalid_profile — the app's core action was dead out of the box.
+    if !profile_arg_ok(&tool, &profile) {
         return Err(trv(
             "err.invalid_profile",
             cur_lang(),
@@ -15693,7 +16249,16 @@ fn session_spawn(
     // on it (agent_status module). Sessions outside Castellyn have no id → hook no-ops.
     let id = gen_session_id();
 
-    let mut cmd = CommandBuilder::new("pwsh");
+    // PowerShell 7 is the intended host, but Windows ships only 5.1 — so a machine that has never
+    // installed pwsh got a raw "spawn: ..." on every pane, i.e. the app's flagship surface was dead
+    // out of the box. Fall back to the always-present `powershell.exe`.
+    //
+    // Byte fidelity through 5.1 is not assumed, it is pinned by `pty_powershell51_cyrillic`: over a
+    // REAL ConPTY, Cyrillic, box-drawing glyphs and ANSI SGR survive intact both from the shell and
+    // from a Node child (which is what the agent CLIs are). xterm.js cannot tell which shell
+    // produced correct bytes, so nothing downstream needs to know about this fallback.
+    let ps51 = exe_on_path("pwsh").is_none();
+    let mut cmd = CommandBuilder::new(if ps51 { "powershell.exe" } else { "pwsh" });
     cmd.arg("-NoLogo");
     cmd.env("CASTELLYN_SESSION_ID", &id);
     // Over SSH the local pwsh is only a launcher for ssh.exe — skip the user's profile banner.
@@ -15777,13 +16342,16 @@ fn session_spawn(
             format!("{base} {extra}")
         })
     };
+    let command = pty_command(ps51, command);
     if let Some(c) = command {
         cmd.arg("-NoExit");
         cmd.arg("-Command");
         cmd.arg(c);
     }
     // CLAUDE_CONFIG_DIR picks the profile for a LOCAL claude (the remote uses its own config).
-    if tool == "claude" && ssh.is_none() {
+    // Skipped for an empty profile: setting it would point claude at "~/.claude-" (a literal
+    // trailing dash), creating a junk config dir instead of letting claude use its own ~/.claude.
+    if tool == "claude" && ssh.is_none() && !profile.trim().is_empty() {
         cmd.env("CLAUDE_CONFIG_DIR", format!("{home}\\.claude-{profile}"));
     }
     // A LOCAL opencode pane reports its turns through a plugin merged in via the environment. Remote
@@ -16797,8 +17365,8 @@ pub fn run() {
             run_profile_mgmt,
             read_orphan_profiles,
             delete_orphan_profile,
-            repair_profile_elevated,
-            relaunch_as_admin,
+
+
             open_profile_dir,
             launch_profile,
             read_launch_config,
@@ -16953,19 +17521,19 @@ read_opencode_models,
             cancel_all
         ])
         .setup(|app| {
-            // Warm the elevation check off the main/UI thread: is_elevated() shells out to pwsh
-            // (~100-300ms cold) and the first read_profiles would otherwise pay it on a user-facing
-            // sync command. Its OnceLock makes this a one-time cost that the background thread absorbs.
-            std::thread::spawn(|| {
-                let _ = is_elevated();
-            });
+            // No elevation warm-up thread: is_elevated() now reads the process token directly
+            // (microseconds), so there is nothing to hide from the UI thread anymore.
             // Read config once (was read twice in setup): the locale seed, start-hidden and the
             // shortcut registration below all read from it.
             let cfg = read_config_file();
-            // Seed the backend locale from config so the tray builds in the right language. The
-            // frontend also re-syncs on mount (covers a fresh config with no language yet).
-            if let Some(lang) = cfg.language.as_deref() {
-                set_cur_lang(Lang::parse(lang));
+            // Seed the backend locale so the tray builds in the right language.
+            match cfg.language.as_deref() {
+                Some(lang) => set_cur_lang(Lang::parse(lang)),
+                // No stored choice yet: fall back to the OS language rather than to the static
+                // default (Ru). Without this the tray's FIRST paint was Russian on an English
+                // machine, until the frontend mounted and called set_language a few hundred
+                // milliseconds later.
+                None => set_cur_lang(os_ui_lang()),
             }
             build_tray(app.handle())?;
             // Agent-status engine for Sessions panes (hook files + PTY activity → events).
@@ -17042,6 +17610,295 @@ read_opencode_models,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Live smoke of the native elevation check. A plain assertion is worthless here: an
+    /// unelevated run and a BROKEN query both yield `false`. This asserts the QUERY succeeded,
+    /// separately from its value, and prints the value for a human to compare against a run
+    /// started with "Run as administrator".
+    /// `cargo test elevation_query_live_smoke -- --ignored --nocapture`
+    /// Fidelity of the Get-ProfilesStatus.ps1 port: build the snapshot natively on THIS machine and
+    /// compare it, profile by profile, against the file the PowerShell script actually wrote. Unit
+    /// tests use synthetic directories and so cannot catch a divergence in how the two read the
+    /// real profile tree — this can. Read-only: nothing is written.
+    /// `cargo test profiles_snapshot_matches_powershell_live -- --ignored --nocapture`
+    /// SAFETY smoke, read-only: compute what a repair WOULD do to every real profile on this
+    /// machine without doing any of it. Repair is only safe to offer while sessions are live
+    /// because a healthy link is left untouched — this asserts that claim against the actual
+    /// filesystem instead of trusting the idempotence unit test.
+    /// `cargo test repair_plan_on_this_machine_live -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn repair_plan_on_this_machine_live() {
+        let home = std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap());
+        let main = home.join(".claude");
+        // Two DIFFERENT claims, deliberately not merged: changing something that already exists is
+        // the dangerous one and must be zero; filling a gap is the feature working as chosen and is
+        // only reported.
+        let mut would_write: Vec<String> = Vec::new();
+        let mut would_fill: Vec<String> = Vec::new();
+        for name in profile_names() {
+            let dir = home.join(format!(".claude-{name}"));
+            if !dir.is_dir() {
+                continue;
+            }
+            for item in profile_linked_items(&name) {
+                let plan = links::plan_link(links::inspect(&dir.join(&item), &main.join(&item)));
+                if plan != links::Plan::Keep {
+                    would_write.push(format!("{name}/{item}: {plan:?}"));
+                }
+            }
+            // Shared FILES too: a file already present must report as fine, so provisioning writes
+            // nothing on a machine that is already set up.
+            for item in shared_file_items() {
+                if std::fs::symlink_metadata(dir.join(&item)).is_err()
+                    && links::provision_of(&item) != links::Provision::Skip
+                    && main.join(&item).is_file()
+                {
+                    would_fill.push(format!("{name}/{item}"));
+                }
+            }
+        }
+        println!(
+            "profiles inspected: {}  (folders + {} shared files each)",
+            profile_names().len(),
+            shared_file_items().len()
+        );
+        // NOT filled by `repair` — only by the explicit per-profile "share-files" action, or when
+        // Castellyn creates a profile. Listed so the gap is visible rather than surprising.
+        println!(
+            "shared-file gaps, reported only ('share-files' fills them on request): {}\n  {}",
+            would_fill.len(),
+            would_fill.join("\n  ")
+        );
+        assert!(
+            would_write.is_empty(),
+            "a repair would MODIFY these while sessions may be live:\n{}",
+            would_write.join("\n")
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profiles_snapshot_matches_powershell_live() {
+        let native = serde_json::to_value(build_profiles_snapshot().expect("native snapshot"))
+            .expect("serialize");
+        let ps: serde_json::Value = serde_json::from_str(
+            std::fs::read_to_string(abs(PROFILES_JSON_REL))
+                .expect("run Get-ProfilesStatus.ps1 first")
+                .trim_start_matches('\u{feff}'),
+        )
+        .expect("parse the PowerShell snapshot");
+
+        let (np, pp) = (
+            native["profiles"].as_array().unwrap(),
+            ps["profiles"].as_array().unwrap(),
+        );
+        assert_eq!(np.len(), pp.len(), "profile count differs");
+        let mut diffs = Vec::new();
+        for (n, p) in np.iter().zip(pp) {
+            let name = n["name"].as_str().unwrap_or("?");
+            for key in [
+                "exists",
+                "credentialsPresent",
+                "credentialsValid",
+                "settingsPresent",
+                "onboardingComplete",
+                "needsOnboarding",
+                "logoutResidue",
+                "linksIntact",
+                "linksValid",
+                "sharedLinks",
+            ] {
+                if n[key] != p[key] {
+                    diffs.push(format!("{name}.{key}: native={} ps={}", n[key], p[key]));
+                }
+            }
+        }
+        println!(
+            "native conflicts={} ps={}   native isAdmin={} ps={}",
+            native["syncConflicts"]["count"], ps["syncConflicts"]["count"], native["isAdmin"], ps["isAdmin"]
+        );
+        println!("native backup={}", native["backup"]);
+        println!("ps     backup={}", ps["backup"]);
+        assert!(diffs.is_empty(), "port diverges from the script:\n{}", diffs.join("\n"));
+    }
+
+    #[test]
+    #[ignore]
+    fn elevation_query_live_smoke() {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        unsafe {
+            let mut token = HANDLE::default();
+            assert!(
+                OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_ok(),
+                "OpenProcessToken failed — the elevation check would silently report 'not admin'"
+            );
+            let mut elevation = TOKEN_ELEVATION::default();
+            let mut returned = 0u32;
+            let q = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(std::ptr::addr_of_mut!(elevation).cast()),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned,
+            );
+            let _ = CloseHandle(token);
+            assert!(q.is_ok(), "GetTokenInformation(TokenElevation) failed");
+            assert_eq!(
+                returned as usize,
+                std::mem::size_of::<TOKEN_ELEVATION>(),
+                "short read — the struct size passed to the API is wrong"
+            );
+            println!("elevated = {}", elevation.TokenIsElevated != 0);
+        }
+        assert_eq!(
+            is_elevated(),
+            {
+                // Recompute independently so a caching bug in the OnceLock shows up as a mismatch.
+                let out = std::process::Command::new("powershell.exe")
+                    .args(["-NoProfile", "-NonInteractive", "-Command",
+                        "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .expect("powershell.exe (5.1, always present) must run for the cross-check");
+                String::from_utf8_lossy(&out.stdout).trim().eq_ignore_ascii_case("true")
+            },
+            "native token check disagrees with the .NET WindowsPrincipal answer"
+        );
+    }
+
+    /// Live smoke of the native Recycle Bin path. `#[ignore]` because it genuinely puts items in
+    /// the bin — running it on every `cargo test` would litter the developer's shell.
+    /// `cargo test recycle_live_smoke -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn recycle_live_smoke() {
+        // Own scratch dir rather than reaching into the sibling test module's helper — this test
+        // needs nothing from that module and the coupling would outlive the reason for it.
+        let dir = std::env::temp_dir().join(format!("castellyn_recyc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 1. A single file.
+        let f = dir.join("one.txt");
+        std::fs::write(&f, "x").unwrap();
+        super::recycle_path(&f.to_string_lossy()).expect("recycling a file must succeed");
+        assert!(!f.exists(), "the file is still on disk after recycling");
+
+        // 2. A whole subtree — SHFileOperation handles a directory identically, which is why the
+        //    old dir/file split collapsed into one function.
+        let sub = dir.join("tree");
+        std::fs::create_dir_all(sub.join("deep")).unwrap();
+        std::fs::write(sub.join("deep").join("two.txt"), "y").unwrap();
+        super::recycle_path(&sub.to_string_lossy()).expect("recycling a subtree must succeed");
+        assert!(!sub.exists(), "the subtree is still on disk after recycling");
+
+        // 3. A path that does not exist must FAIL, not silently report success — the whole reason
+        //    this stopped shelling out to pwsh is that failures there were being swallowed.
+        let ghost = dir.join("nope.txt");
+        assert!(
+            super::recycle_path(&ghost.to_string_lossy()).is_err(),
+            "recycling a missing path reported success"
+        );
+
+        // 4. A relative path must be refused rather than resolved against an unknown CWD.
+        assert!(super::recycle_path("some\\relative\\path").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probe_separates_empty_from_unexplained() {
+        // The whole point of the type: an empty payload with NO reason means "the read worked and
+        // there is genuinely nothing", which the UI must not dress up as a failure.
+        let fine: Probe<Vec<u8>> = Probe::ok(Vec::new());
+        assert!(fine.items.is_empty());
+        assert!(fine.unavailable.is_none(), "an empty-but-successful read must carry no reason");
+
+        let broken: Probe<Vec<u8>> = Probe::fail(Unavailable::new("avail.ghMissing").cmd("winget install --id GitHub.cli"));
+        assert!(broken.items.is_empty(), "the payload stays the right shape so callers can ignore the reason");
+        let why = broken.unavailable.expect("a failed read must carry a reason");
+        assert_eq!(why.reason, "avail.ghMissing");
+        assert_eq!(why.fix_command.as_deref(), Some("winget install --id GitHub.cli"));
+        assert!(why.fix_url.is_none() && why.detail.is_none(), "unset fields stay unset, not empty strings");
+    }
+
+    #[test]
+    fn unavailable_detail_is_trimmed_capped_and_dropped_when_blank() {
+        // detail is raw tool output. Whitespace-only stderr is the common case on success-adjacent
+        // failures; rendering it would open an empty "details" section for the user to click into.
+        assert!(Unavailable::new("x").detail("").detail.is_none());
+        assert!(Unavailable::new("x").detail("   \n\t ").detail.is_none());
+        assert_eq!(Unavailable::new("x").detail("  boom  ").detail.as_deref(), Some("boom"));
+        // A runaway stderr must not become the UI payload. Counted in CHARS, so a Cyrillic or CJK
+        // message is capped at 400 characters rather than sliced mid-codepoint.
+        let long = "я".repeat(1000);
+        let capped = Unavailable::new("x").detail(long).detail.unwrap();
+        assert_eq!(capped.chars().count(), 400);
+    }
+
+    #[test]
+    fn os_locale_maps_exactly_like_the_frontend() {
+        // Must stay identical to resolveInitialLocale in src/lib/i18n/index.svelte.ts:33-43,
+        // otherwise the tray and the window can render in two different languages at startup.
+        // Note the fallback is EN, not Ru: Ru is the source language of the string table, which is
+        // a different question from "what should an unknown user see".
+        for ru in ["ru", "ru-RU", "RU-ru"] {
+            assert!(matches!(lang_from_locale_name(ru), Lang::Ru), "{ru}");
+        }
+        // Traditional variants map to Simplified — the only Chinese the table carries.
+        for zh in ["zh", "zh-CN", "zh-TW", "zh-Hant-HK"] {
+            assert!(matches!(lang_from_locale_name(zh), Lang::Zh), "{zh}");
+        }
+        for en in ["en", "en-US", "en-GB"] {
+            assert!(matches!(lang_from_locale_name(en), Lang::En), "{en}");
+        }
+        // Anything unknown, and the degenerate empty name, fall through to English.
+        for other in ["de-DE", "fr", "pt-BR", "", "  "] {
+            assert!(matches!(lang_from_locale_name(other), Lang::En), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn ps51_fallback_adds_the_encoding_preamble_and_pwsh_is_untouched() {
+        const PRE: &str = "[Console]::OutputEncoding";
+        // pwsh present: byte-for-byte the previous behaviour. This is the owner's path — any change
+        // here would be a regression on a machine that was working fine.
+        assert_eq!(pty_command(false, None), None, "a bare pwsh shell takes no -Command");
+        assert_eq!(pty_command(false, Some("claude".into())).as_deref(), Some("claude"));
+
+        // 5.1: the preamble is prepended...
+        let with_cmd = pty_command(true, Some("claude --resume".into())).unwrap();
+        assert!(with_cmd.starts_with(PRE), "preamble must run FIRST: {with_cmd}");
+        assert!(with_cmd.ends_with("; claude --resume"), "command must survive intact: {with_cmd}");
+
+        // ...and — the subtle case — a BARE shell still gets it, so an interactive 5.1 pane is not
+        // left in the console code page. `-NoExit` is what keeps it interactive afterwards.
+        let bare = pty_command(true, None).expect("5.1 needs a preamble even with no command");
+        assert!(bare.starts_with(PRE));
+        assert!(!bare.contains(';') || bare.matches(';').count() == 1, "preamble only: {bare}");
+    }
+
+    #[test]
+    fn empty_profile_launches_but_malformed_still_refused() {
+        // The bug this pins: a machine with no ~/.claude-* dirs sends profile="" and used to get
+        // err.invalid_profile on EVERY claude launch — the app's core action, dead out of the box.
+        assert!(profile_arg_ok("claude", ""), "empty = claude's own ~/.claude");
+        assert!(profile_arg_ok("claude", "   "), "whitespace-only is empty too");
+        assert!(profile_arg_ok("claude", "cc2"));
+        // The charset gate is NOT weakened: a non-empty malformed name is still refused, so a
+        // traversal attempt cannot ride the relaxed branch into `~/.claude-<name>`.
+        assert!(!profile_arg_ok("claude", "../evil"));
+        assert!(!profile_arg_ok("claude", "a b"));
+        assert!(!profile_arg_ok("claude", "x/y"));
+        // Non-claude tools never consult the profile at all.
+        assert!(profile_arg_ok("shell", "../evil"));
+        assert!(profile_arg_ok("opencode", ""));
+    }
 
     #[test]
     fn omniroute_url_maps_the_stack_entry() {
@@ -17324,7 +18181,12 @@ mod tests {
     #[test]
     #[ignore]
     fn marketplace_drift_live_smoke() {
-        let item = marketplace_versions_drift_item();
+        // None here is a legitimate outcome (no installed_plugins.json on this machine) — the check
+        // simply does not apply, which is the whole point of the Option return.
+        let Some(item) = marketplace_versions_drift_item() else {
+            println!("marketplace check does not apply on this machine (no installed plugins)");
+            return;
+        };
         println!("id={} state={} detail={}", item.id, item.state, item.detail);
         assert_eq!(item.fix, None);
     }
@@ -18230,6 +19092,146 @@ mod tests {
             out.contains("agenthub-pty-probe"),
             "pty output was: {out:?}"
         );
+    }
+
+    /// G9: does Cyrillic survive Windows PowerShell 5.1 in a REAL PTY?
+    ///
+    /// The planned fallback for a machine without PowerShell 7 is `powershell.exe`, which streams in
+    /// the console code page rather than UTF-8 — the open question was whether the UTF-8 preamble is
+    /// enough or whether panes would render mojibake. This runs the actual PTY plumbing
+    /// `session_spawn` uses, so it answers that for the shell's own output.
+    ///
+    /// NOT answered here (needs the GUI stand): how a full-screen TUI's box-drawing renders in
+    /// xterm.js, and whether a CHILD process inherits the preamble's encoding.
+    /// `cargo test pty_powershell51_cyrillic -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn pty_powershell51_cyrillic() {
+        use portable_pty::{CommandBuilder, PtySize};
+        use std::io::Read;
+        let pair = portable_pty::native_pty_system()
+            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .expect("openpty");
+        // 5.1 specifically — `powershell.exe` is the Windows-bundled one, never PowerShell 7.
+        let mut cmd = CommandBuilder::new("powershell.exe");
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg(
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+             $OutputEncoding=[Text.Encoding]::UTF8; \
+             Write-Output 'кириллица-проба-ёжик'",
+        );
+        let mut child = pair.slave.spawn_command(cmd).expect("spawn powershell.exe");
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().expect("reader");
+        let mut out = String::new();
+        let mut buf = [0u8; 4096];
+        for _ in 0..400 {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    out.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if out.contains("кириллица-проба-ёжик") {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = child.wait();
+        println!("--- shell's own output ---\n{out}\n--- end ---");
+        assert!(
+            out.contains("кириллица-проба-ёжик"),
+            "Cyrillic did not survive powershell.exe in a PTY — the fallback would show mojibake. \
+             Output was: {out:?}"
+        );
+
+        // The case that actually matters: `claude` is a CHILD of the shell (a Node process), so the
+        // shell's own encoding proving out says nothing about what the agent's output looks like.
+        // Node is the same runtime `claude` runs on, which makes this a faithful stand-in.
+        if exe_on_path("node").is_none() {
+            println!("node not on PATH — child-process leg skipped");
+            return;
+        }
+        let pair2 = portable_pty::native_pty_system()
+            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .expect("openpty");
+        let mut c2 = CommandBuilder::new("powershell.exe");
+        c2.arg("-NoProfile");
+        c2.arg("-NonInteractive");
+        c2.arg("-Command");
+        c2.arg(
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+             $OutputEncoding=[Text.Encoding]::UTF8; \
+             node -e \"console.log('кириллица-из-дочернего')\"",
+        );
+        let mut ch2 = pair2.slave.spawn_command(c2).expect("spawn child leg");
+        drop(pair2.slave);
+        let mut r2 = pair2.master.try_clone_reader().expect("reader");
+        let mut out2 = String::new();
+        for _ in 0..400 {
+            match r2.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    out2.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if out2.contains("кириллица-из-дочернего") {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = ch2.wait();
+        println!("--- child process output ---\n{out2}\n--- end ---");
+        assert!(
+            out2.contains("кириллица-из-дочернего"),
+            "a CHILD process's Cyrillic was mangled under powershell.exe — this is the case that \
+             decides whether the fallback is usable, since the agent runs as a child. Output: {out2:?}"
+        );
+
+        // A full-screen TUI is box-drawing glyphs plus ANSI SGR. The shell can only CORRUPT bytes;
+        // it cannot change how xterm.js paints correct ones — so byte fidelity here settles the
+        // "will the agent's frames render" question without needing the GUI. Emitted from a Node
+        // child for the same reason as above.
+        let pair3 = portable_pty::native_pty_system()
+            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .expect("openpty");
+        let mut c3 = CommandBuilder::new("powershell.exe");
+        c3.arg("-NoProfile");
+        c3.arg("-NonInteractive");
+        c3.arg("-Command");
+        c3.arg(
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+             $OutputEncoding=[Text.Encoding]::UTF8; \
+             node -e \"console.log('\\u001b[36m┌───────┐\\u001b[0m'); \
+                       console.log('\\u001b[36m│ ✔ ok  │\\u001b[0m'); \
+                       console.log('\\u001b[36m└───────┘\\u001b[0m')\"",
+        );
+        let mut ch3 = pair3.slave.spawn_command(c3).expect("spawn tui leg");
+        drop(pair3.slave);
+        let mut r3 = pair3.master.try_clone_reader().expect("reader");
+        let mut out3 = String::new();
+        for _ in 0..400 {
+            match r3.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    out3.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if out3.contains("└───────┘") {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = ch3.wait();
+        println!("--- TUI frame bytes ---\n{out3}\n--- end ---");
+        for glyph in ["┌", "─", "┐", "│", "└", "┘", "✔"] {
+            assert!(
+                out3.contains(glyph),
+                "box-drawing glyph {glyph:?} was mangled under powershell.exe — TUI frames would \
+                 render as garbage. Output: {out3:?}"
+            );
+        }
+        // The colour escape must survive untouched too, or frames lose their styling.
+        assert!(out3.contains("\u{1b}[36m"), "ANSI SGR was altered: {out3:?}");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 // Russian dictionary — assembled from per-namespace files. This object's shape
 // is the source of truth for TranslationDict (see ../types.ts).
+import avail from './avail';
 import common from './common';
 import nav from './nav';
 import onboarding from './onboarding';
@@ -26,6 +27,7 @@ import components from './components';
 import agents from './agents';
 
 const ru = {
+  avail,
   common,
   nav,
   onboarding,

@@ -470,16 +470,17 @@ function Get-ForkSyncConfig {
     }
     # Read by key PRESENCE, not truthiness — two distinct reasons, both live:
     #  * roots/paths: an empty array is falsy in PowerShell, so a registry the user emptied in the
-    #    Forks tab used to fall through to the hardcoded developer defaults and keep scanning (and
-    #    MUTATING, under -FfMain/-DeleteMerged) repos that were de-registered. Absent = defaults,
-    #    present-but-empty = scan nothing.
+    #    Forks tab used to fall through to the fallback below and keep scanning (and MUTATING,
+    #    under -FfMain/-DeleteMerged) repos that were de-registered. Absent and present-but-empty
+    #    now agree: scan nothing. The fallback used to be the AUTHOR's own paths, which meant a
+    #    fresh install listed someone else's repositories on the Forks tab.
     #  * timeouts: Set-StrictMode makes reading a missing property a TERMINATING error, and
     #    Castellyn's writer omits fetchTimeoutSec/ghTimeoutSec whenever they are unset — that threw
     #    before any status envelope was written, leaving the Forks card frozen on its last state.
     # Falsy ELEMENTS are still dropped (a JSON null lands as a one-null array under @()).
     $keys = if ($cfg) { @($cfg.PSObject.Properties.Name) } else { @() }
-    $r = if ($Roots) { $Roots } elseif ($keys -contains 'roots') { @($cfg.roots | Where-Object { $_ }) } else { @('E:\Scripts\External') }
-    $p = if ($Paths) { $Paths } elseif ($keys -contains 'paths') { @($cfg.paths | Where-Object { $_ }) } else { @('C:\Users\User\rtk-windows-hook-pr\rtk') }
+    $r = if ($Roots) { $Roots } elseif ($keys -contains 'roots') { @($cfg.roots | Where-Object { $_ }) } else { @() }
+    $p = if ($Paths) { $Paths } elseif ($keys -contains 'paths') { @($cfg.paths | Where-Object { $_ }) } else { @() }
     $op = if ($keys -contains 'ownPaths') { @($cfg.ownPaths | Where-Object { $_ }) } else { @() }
     # Timeouts keep the truthiness check on top of presence: a configured 0 is not a usable timeout.
     $ft = if ($FetchTimeoutSec) { $FetchTimeoutSec } elseif (($keys -contains 'fetchTimeoutSec') -and $cfg.fetchTimeoutSec) { [int]$cfg.fetchTimeoutSec } else { 120 }

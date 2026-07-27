@@ -137,7 +137,22 @@ export type GithubRepo = {
   stars: number;
 };
 
-export const listGithubRepos = () => invoke<GithubRepo[]>('list_github_repos');
+// Why a read produced nothing. An empty list alone cannot distinguish "the tool isn't installed"
+// from "you have no repositories", and the UI used to render both as the same blank table.
+// `reason` is an i18n key (t(reason) resolves it); `detail` is raw tool output — never localized,
+// only ever shown behind a details toggle.
+export type Unavailable = {
+  reason: string;
+  fixCommand?: string;
+  fixUrl?: string;
+  detail?: string;
+};
+
+// A read that may not have happened. `items` is always the right shape, so a caller that ignores
+// `unavailable` behaves exactly as it did before this type existed.
+export type Probe<T> = { items: T; unavailable?: Unavailable };
+
+export const listGithubRepos = () => invoke<Probe<GithubRepo[]>>('list_github_repos');
 
 // Your own OPEN PRs/issues anywhere on GitHub. The fork scan only reports PRs whose topic branch
 // still exists locally (merged branches get deleted → the PR vanishes from the cards), and it never
@@ -151,7 +166,7 @@ export type MyGithubItem = {
   updatedAt: string;
   comments: number;
 };
-export const listMyGithubItems = () => invoke<MyGithubItem[]>('list_my_github_items');
+export const listMyGithubItems = () => invoke<Probe<MyGithubItem[]>>('list_my_github_items');
 
 // --- Backup tab ---
 export type BackupAction = 'backup' | 'restore-preview' | 'restore' | 'delete-snapshot';
@@ -202,6 +217,8 @@ export type ProfileAction =
   | 'reinstall'
   | 'repair'
   | 'create'
+  | 'share-files'
+  | 'sync-files'
   | 'fix-onboarding';
 
 export type ProfileInfo = {
@@ -221,6 +238,14 @@ export type ProfileInfo = {
   needsOnboarding?: boolean;
   logoutResidue?: boolean;
   sharedLinks: Record<string, string | null>;
+  // Shared FILES (CLAUDE.md, RTK.md, settings.local.json):
+  //   "link"  — shared by a link, cannot drift
+  //   "copy"  — a copy identical to the shared original
+  //   "drift" — a copy that differs from it (may be a deliberate per-profile customisation)
+  //   null    — the profile does not have it
+  // Reported only: an existing profile neither acquires nor re-syncs these on its own, because
+  // both cases can be intentional. See docs/adr/0003.
+  sharedFiles?: Record<string, string | null>;
   linksIntact: boolean;
 };
 
@@ -243,11 +268,8 @@ export const resolveSyncConflict = (path: string, action: 'keep-local' | 'keep-o
 // F23: repair the links of several profiles in one run (Home "Repair All").
 export const repairAllProfiles = (names: string[]) =>
   invoke<number>('repair_all_profiles', { names });
-// Finish a half-built profile's folder symlinks with admin rights (one-off UAC).
-export const repairProfileElevated = (name: string) =>
-  invoke<number>('repair_profile_elevated', { name });
-// Relaunch the whole app elevated (so inline symlink creation works).
-export const relaunchAsAdmin = () => invoke<void>('relaunch_as_admin');
+// Single-profile repair goes through runProfiles('repair', name) — it needs no rights since
+// folder links became junctions (docs/adr/0003), so the elevated variants that lived here are gone.
 export const openProfileDir = (name: string) => invoke('open_profile_dir', { name });
 export const openTerminal = (path: string) => invoke('open_terminal', { path });
 export const launchProfile = (name: string, mode: 'terminal' | 'vscode') =>
@@ -607,7 +629,8 @@ export type AnalyticsSeriesPoint = {
   totalOutputTokens: number;
 };
 export type FreellmapiAnalytics = {
-  available: boolean; // false → gateway DB/node/data missing (empty state)
+  available: boolean; // is there data to render? (true + all-zero totals is legitimate)
+  unavailable?: Unavailable; // why there is none — set whenever `available` is false
   totals: AnalyticsTotals;
   perModel: AnalyticsModel[];
   series: AnalyticsSeriesPoint[]; // per-model usage over time (sparkline source)

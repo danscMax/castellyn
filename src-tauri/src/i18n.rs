@@ -125,7 +125,6 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("err.orphan_bad_name", ["недопустимое имя сироты: {n}", "invalid orphan name: {n}", "孤立目录名称无效: {n}"]),
     ("err.orphan_session_active", ["профиль «{n}» сейчас используется активной сессией — закройте её и повторите", "profile '{n}' is in use by a live session — close it and retry", "配置「{n}」正被活动会话使用——请关闭后重试"]),
     ("err.orphan_has_links", ["каталог «.claude-{n}» содержит junction-ссылки в общие данные — удалите его вручную (через путь \\\\?\\), чтобы не задеть общий контент", "'.claude-{n}' contains junction links into shared data — delete it manually (via a \\\\?\\ path) so the shared content is not swept in", "「.claude-{n}」包含指向共享数据的 junction 链接——请手动删除（使用 \\\\?\\ 路径），以免波及共享内容"]),
-    ("err.elevation_cancelled", ["Повышение прав отменено.", "Elevation cancelled.", "已取消提权。"]),
     ("err.unknown_sync_action", ["неизвестное действие sync: {action}", "unknown sync action: {action}", "未知的 sync 操作: {action}"]),
     ("err.invalid_service_id", ["недопустимый id сервиса: {id}", "invalid service id: {id}", "服务 id 无效: {id}"]),
     ("err.unknown_stack_action", ["неизвестное действие стека: {action}", "unknown stack action: {action}", "未知的 stack 操作: {action}"]),
@@ -274,10 +273,19 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("log.done", ["Готово.", "Done.", "完成。"]),
     ("log.bulk_cancelled", ["Массовая операция отменена.", "Bulk operation cancelled.", "批量操作已取消。"]),
 
-    // ── relink (elevated, embedded in a PowerShell Write-Host — keep apostrophe-free) ──
-    ("log.relink_start", ["Запуск починки связей от администратора (подтвердите UAC)…", "Running link repair as administrator (confirm UAC)…", "正在以管理员身份修复链接 (请确认 UAC)…"]),
-    ("log.relink_error_code", ["Ошибка починки, код ", "Repair failed, code ", "修复失败，代码 "]),
-    ("log.relink_cancelled", ["Повышение прав отменено или не удалось.", "Elevation cancelled or failed.", "提权已取消或失败。"]),
+    // ── relink (native, no elevation — folders are junctions; see docs/adr/0003) ──────
+    ("log.relink_start", ["=== Починка связей: {name} ===", "=== Repairing links: {name} ===", "=== 修复链接: {name} ==="]),
+    ("log.relink_ok", ["  [{item}] уже связано", "  [{item}] already linked", "  [{item}] 已链接"]),
+    ("log.relink_made", ["  [{item}] связано", "  [{item}] linked", "  [{item}] 已连接"]),
+    ("log.relink_rebuilt", ["  [{item}] ссылка вела не туда — пересоздана", "  [{item}] link pointed elsewhere — recreated", "  [{item}] 链接指向错误 — 已重建"]),
+    ("log.relink_has_data", ["  [{item}] здесь реальные данные — не трогаю; слияние делает переустановка", "  [{item}] real data here — left untouched; a reinstall merges it", "  [{item}] 此处有真实数据 — 保持不变；重新安装可合并"]),
+    ("log.relink_failed", ["  [{item}] ОШИБКА: {e}", "  [{item}] ERROR: {e}", "  [{item}] 错误: {e}"]),
+    ("log.relink_history_local", ["  [{item}] связать не вышло — история промптов останется отдельной для этого профиля", "  [{item}] could not link — prompt history stays separate for this profile", "  [{item}] 无法链接 — 此配置的提示历史将保持独立"]),
+    ("log.relink_summary", ["Итог: связано {made}, уже было {ok}, пропущено {skipped}, ошибок {failed}", "Total: linked {made}, already fine {ok}, skipped {skipped}, failed {failed}", "合计: 已连接 {made}, 已正常 {ok}, 已跳过 {skipped}, 失败 {failed}"]),
+    ("err.profile_dir_missing", ["Каталог профиля не найден: {path}", "Profile directory not found: {path}", "未找到配置目录: {path}"]),
+    ("log.relink_locked", ["Починка «{name}» уже выполняется в другом процессе — пропускаю.", "A repair of “{name}” is already running in another process — skipping.", "「{name}」的修复已在其他进程中运行 — 跳过。"]),
+    ("log.share_copied", ["  [{item}] скопирован (у настроек нет наследования)", "  [{item}] copied (settings have no inheritance)", "  [{item}] 已复制（设置不支持继承）"]),
+    ("log.relink_snapshot_failed", ["Связи починены, но обновить снимок статуса не удалось ({e}) — нажмите «Проверить».", "Links repaired, but refreshing the status snapshot failed ({e}) — press “Check”.", "链接已修复，但刷新状态快照失败 ({e}) — 请点击「检查」。"]),
 
     // ── provider-test JSON details (shown in the provider test UI) ────────────
     ("det.responded_models", ["ответил (моделей: {n})", "responded (models: {n})", "已响应 (模型数: {n})"]),
