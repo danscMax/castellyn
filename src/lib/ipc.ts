@@ -1,12 +1,17 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 
-export type Component = {
-  id: string;
-  name: string;
-  group: string;
-  lastJson: string | null;
-  supportsApply: boolean;
-};
+// Types generated from the Rust structs by ts-rs (`cargo test` rewrites src/lib/generated/*.ts —
+// see the `#[ts(export)]` derives in src-tauri/src/lib.rs). Re-exported so callers keep importing
+// everything from `$lib/ipc`, and a field rename on the Rust side breaks the build instead of the
+// app. Only the structs most likely to drift are generated; the rest of this file stays
+// hand-written because it also describes payloads produced by the PowerShell scripts, which have
+// no Rust struct to generate from.
+import type { Component } from './generated/Component';
+import type { ForkConfig } from './generated/ForkConfig';
+import type { GithubRepo } from './generated/GithubRepo';
+import type { MyGithubItem } from './generated/MyGithubItem';
+import type { Unavailable } from './generated/Unavailable';
+export type { Component, ForkConfig, GithubRepo, MyGithubItem, Unavailable };
 
 export type RunMode = 'check' | 'apply';
 
@@ -50,13 +55,7 @@ export const readForkRepoStatus = (path: string) => invoke<ForkRepo | null>('rea
 
 // User-editable fork discovery config (durable %APPDATA%\castellyn\forks.json). roots = parent dirs
 // scanned for .git repos; paths = explicit fork dirs; ownPaths = your own (non-fork) repos.
-export type ForkConfig = {
-  roots: string[];
-  paths: string[];
-  ownPaths: string[];
-  fetchTimeoutSec?: number;
-  ghTimeoutSec?: number;
-};
+// ForkConfig: generated (see the import block at the top of this file).
 export const readForkConfig = () => invoke<ForkConfig>('read_fork_config');
 export const writeForkConfig = (config: ForkConfig) => invoke('write_fork_config', { config });
 
@@ -121,32 +120,7 @@ export type ForkStatus = {
   repos?: ForkRepo[];
 };
 
-// A repo on the user's GitHub account (from `gh repo list`), used to surface repos
-// that aren't locally cloned. Reconciled with ForkRepo by name in the Forks tab.
-export type GithubRepo = {
-  owner: string;
-  name: string;
-  nameWithOwner: string;
-  isPrivate: boolean;
-  isFork: boolean;
-  isArchived: boolean;
-  url: string;
-  updatedAt: string;
-  description: string;
-  language: string;
-  stars: number;
-};
-
-// Why a read produced nothing. An empty list alone cannot distinguish "the tool isn't installed"
-// from "you have no repositories", and the UI used to render both as the same blank table.
-// `reason` is an i18n key (t(reason) resolves it); `detail` is raw tool output — never localized,
-// only ever shown behind a details toggle.
-export type Unavailable = {
-  reason: string;
-  fixCommand?: string;
-  fixUrl?: string;
-  detail?: string;
-};
+// GithubRepo and Unavailable are generated — their docs live on the Rust structs.
 
 // A read that may not have happened. `items` is always the right shape, so a caller that ignores
 // `unavailable` behaves exactly as it did before this type existed.
@@ -154,18 +128,6 @@ export type Probe<T> = { items: T; unavailable?: Unavailable };
 
 export const listGithubRepos = () => invoke<Probe<GithubRepo[]>>('list_github_repos');
 
-// Your own OPEN PRs/issues anywhere on GitHub. The fork scan only reports PRs whose topic branch
-// still exists locally (merged branches get deleted → the PR vanishes from the cards), and it never
-// reports issues at all — this fills both gaps.
-export type MyGithubItem = {
-  repo: string; // "owner/repo"
-  number: number;
-  title: string;
-  url: string;
-  isPr: boolean;
-  updatedAt: string;
-  comments: number;
-};
 export const listMyGithubItems = () => invoke<Probe<MyGithubItem[]>>('list_my_github_items');
 
 // --- Backup tab ---

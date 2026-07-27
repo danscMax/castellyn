@@ -600,7 +600,8 @@ struct RawComponent {
 }
 
 /// Component as sent to the UI (absolute paths, camelCase).
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, ts_rs::TS)]
+#[ts(export, export_to = "../../src/lib/generated/")]
 struct Component {
     id: String,
     name: String,
@@ -1523,8 +1524,9 @@ fn fork_repo_out_file(path: &str) -> Option<String> {
 
 /// User-editable fork discovery config, surfaced in the Forks tab. Mirrors the JSON the fork-sync
 /// script reads (`roots`/`paths`/`ownPaths`/`fetchTimeoutSec`/`ghTimeoutSec`).
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/generated/")]
 struct ForkConfig {
     #[serde(default)]
     roots: Vec<String>,
@@ -1533,8 +1535,10 @@ struct ForkConfig {
     #[serde(default)]
     own_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     fetch_timeout_sec: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     gh_timeout_sec: Option<u32>,
 }
 
@@ -5551,15 +5555,21 @@ async fn read_engine_models(base_url: String) -> Vec<String> {
 /// `reason` is an i18n KEY resolved by the frontend (never a pre-rendered sentence — the backend
 /// does not know the window's locale at read time). `detail` is raw machine output: never
 /// localized, never the primary message, shown only behind a "details" affordance.
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone, Default, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/generated/")]
 struct Unavailable {
     reason: String,
+    // `#[ts(optional)]` mirrors `skip_serializing_if`: the key is ABSENT on the wire, so the TS must
+    // be `fixCommand?: string` — ts-rs would otherwise emit a required `string | null`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     fix_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     fix_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     detail: Option<String>,
 }
 
@@ -5611,7 +5621,10 @@ impl<T: Default> Probe<T> {
     }
 }
 
-#[derive(Serialize)]
+/// A repo on the user's GitHub account (from `gh repo list`), used to surface repos that aren't
+/// locally cloned. Reconciled with `ForkRepo` by name in the Forks tab.
+#[derive(Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/lib/generated/")]
 struct GithubRepo {
     owner: String,
     name: String,
@@ -5628,6 +5641,9 @@ struct GithubRepo {
     updated_at: String,
     description: String,
     language: String,
+    // ts-rs maps u64 to `bigint`, but this crosses the IPC as JSON — `JSON.parse` yields a plain
+    // `number`. Same override on every u64 below.
+    #[ts(type = "number")]
     stars: u64,
 }
 
@@ -5719,9 +5735,14 @@ async fn list_github_repos() -> Probe<Vec<GithubRepo>> {
     )
 }
 
-#[derive(Serialize)]
+/// One of your own OPEN PRs/issues anywhere on GitHub. The fork scan only reports PRs whose topic
+/// branch still exists locally (merged branches get deleted → the PR vanishes from the cards), and
+/// it never reports issues at all — this fills both gaps.
+#[derive(Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/lib/generated/")]
 struct MyGithubItem {
     repo: String, // "owner/repo"
+    #[ts(type = "number")]
     number: u64,
     title: String,
     url: String,
@@ -5729,6 +5750,7 @@ struct MyGithubItem {
     is_pr: bool,
     #[serde(rename = "updatedAt")]
     updated_at: String,
+    #[ts(type = "number")]
     comments: u64,
 }
 

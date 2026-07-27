@@ -49,6 +49,11 @@ tauri-plugin-process = "2"
 # OS toasts for agent-status transitions in Sessions (fired from Rust — needs no JS capability).
 tauri-plugin-notification = "2"
 toml_edit = "0.25.12"
+# TypeScript bindings for the IPC structs most likely to drift (see `#[ts(export)]` in lib.rs).
+# A NORMAL dependency, not dev-only: the derive sits on types the lib compiles. The files are
+# written by `cargo test` (already a mandatory gate) into src/lib/generated/ and are COMMITTED —
+# src/lib/ipc.ts re-exports them, so a fresh clone must type-check before anything Rust has run.
+ts-rs = "12.0.1"
 
 # Win32 Job Object so PTY child trees (pwsh → claude/node, ssh.exe) die with the app instead of
 # orphaning on a kill/crash. Windows-only; no-op stub elsewhere.
