@@ -22,9 +22,12 @@ single binary.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Backend (`src-tauri/src/lib.rs`)
+## Backend (`src-tauri/src/lib.rs` + peeled-off modules)
 
-One file holds all commands. Key pieces:
+`lib.rs` holds most of the commands; coherent groups have been moved into their own modules over
+time (`ssh_hosts.rs` is the most recent and the pattern to copy). The authority on what is
+registered is the `generate_handler![…]` list at the bottom of `lib.rs` — a command dropped from
+it fails only at runtime, so treat its length as an invariant across any move. Key pieces:
 
 - **`pump_and_wait(app, id, child, log_event, done_event)`** — the single shared streaming path:
   pumps a child's stdout/stderr line-by-line as `run-log` events and emits a final `run-done`
@@ -58,6 +61,13 @@ One file holds all commands. Key pieces:
 - **`session_bus.rs`** — minimal inter-session mailbox (`%APPDATA%\castellyn\messages.json`):
   `bus_send` / `bus_poll` (direct, `@all`, `@idle`) / `bus_mark_read`, with separate
   delivered/read stamps so a restart never replays already-shown mail. No task-DAG by design.
+- **`mcp_probe.rs`** — opt-in liveness probe (`probe_mcp`): spawns a configured MCP server via the
+  `rmcp` client, completes the initialize handshake, lists its tools, then kills it. `read_mcp` can
+  only say a server is CONFIGURED; this says whether it ANSWERS. Never automatic — a probe starts a
+  real process (often an `npx` download), so opening the MCP tab probes nothing. It takes only the
+  server NAME and reads the command line from `config\.mcp.json` in the backend, so the frontend
+  cannot hand it an arbitrary process to spawn.
+- **`ssh_hosts.rs`** — the SSH host CRUD + connection test behind the Sessions tab.
 - **`limits.rs`** — OAuth usage monitors: per-profile Claude (5h/7d/scoped) AND the Codex plan
   (`~/.codex/auth.json` → `chatgpt.com/backend-api/wham/usage`, event `codex-limits-status`),
   sharing one edge-triggered 85/99 alert path.

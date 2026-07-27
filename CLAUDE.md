@@ -30,16 +30,31 @@ output; the Svelte UI renders their `*.last.json` status envelopes.
 
 - **Tauri v2** single binary. Frontend **SvelteKit (static adapter, SPA) + Svelte 5 runes**;
   backend **Rust** (`src-tauri/`). No DB, no sidecar process.
-- **Backend** is essentially one file: `src-tauri/src/lib.rs` — all `#[tauri::command]`s.
+- **Backend** is still mostly one file: `src-tauri/src/lib.rs` holds the bulk of the
+  `#[tauri::command]`s, with coherent groups peeled off into their own modules over time
+  (`links.rs`, `profiles_status.rs`, `limits.rs`, `agent_status.rs`, `agent_schedules.rs`,
+  `worktree.rs`, `session_bus.rs`, `stack_health.rs`, `schedules_watch.rs`, `mcp_probe.rs`,
+  `ssh_hosts.rs`). Peeling off one more group is the established move — `ssh_hosts.rs` is the
+  pattern to copy. **The registration list `generate_handler![…]` is the invariant**: a command
+  that silently falls out of it breaks at runtime with nothing red beforehand, so count it before
+  and after any move.
   - `pump_and_wait(...)` is the single streaming primitive (child stdout/stderr → `run-log`,
     exit → `run-done`). Reach it through an existing wrapper: `spawn_streamed` → `_io` → `_prog`
     for a script under the single-run `RunState` guard, `spawn_pwsh_phase` / `spawn_stack_phase`
     for stack phases, `run_fork_repo` for the concurrent per-repo fork runs. `cancel_run` kills
-    the tree.
+    the tree. It also joins every child to the kill-on-close Job Object, so a hard crash cannot
+    orphan a script tree — don't add a spawn path that bypasses it.
   - Native (no-script) readers exist where cheaper: `read_mcp`, `read_providers`,
-    `port_listening`, plugin/skill scans.
+    `port_listening`, plugin/skill scans. `probe_mcp` (`mcp_probe.rs`) goes further and actually
+    handshakes with a configured MCP server — opt-in only, never on render.
   - **All process spawns set `CREATE_NO_WINDOW`** (0x08000000) — otherwise a black console
     flashes. Keep this on every new `Command`.
+  - **Errors that reach the UI go through `tr`/`trv` with `err.*` keys** in `src-tauri/src/i18n.rs`
+    (ru/en/zh). That mechanism already exists in ~165 places — do NOT add `thiserror`, an error
+    enum or error codes beside it. A raw `format!` string reaching the user is the bug.
+  - **Types shared with the frontend are generated, not mirrored**: five structs derive `ts-rs`
+    and export into `src/lib/generated/` during `cargo test`; `src/lib/ipc.ts` re-exports them.
+    Mirror a struct by hand only if it has no Rust source (the PowerShell-produced payloads).
   - Config: `HubConfig` in `%APPDATA%\castellyn\config.json` (`config_path()`), with a
     legacy-path read fallback (`legacy_config_path`) kept for the pre-rename location.
   - Autostart: HKCU\…\Run value `Castellyn` (`AUTOSTART_NAME`); migrated once from `AgentHub`.
@@ -96,13 +111,24 @@ npm test               # vitest (i18n parity, outcome, attention)
 npm run check:i18n     # ru/en/zh leaf-key parity (tsx)
 npm run build          # frontend → build/
 npm run verify         # ALL gates in order (verify.ps1) — the single source of truth
+npm run smoke          # walk every tab of a RUNNING isolated instance over CDP (see below)
 .\build_all.ps1        # release exe (castellyn.exe) + desktop shortcut (Castellyn.lnk)
 ```
 
-Green gates before declaring done: `npm run verify` (i18n parity → PSScriptAnalyzer →
-svelte-check 0/0 → vitest → frontend build → `cargo clippy -D warnings` → cargo test), and a
-release build via `build_all.ps1`. Don't hand-maintain that list here — read `verify.ps1`.
-See `docs/BUILD.md`.
+Green gates before declaring done: `npm run verify`, and a release build via `build_all.ps1`.
+Don't hand-maintain the gate list here — read `verify.ps1`. See `docs/BUILD.md`.
+
+**The gates are blind to runtime.** Every one of them passes while a tab fails to render, so a
+UI change is not done until `tools/smoke.mjs` has walked it:
+
+```bash
+pwsh -File tools/iso-test.ps1 -World   # bring up the sandbox (+ -Build after Rust changes)
+npm run smoke                          # exit 0 pass · 1 a tab is broken · 2 nothing to attach to
+pwsh -File tools/iso-test.ps1 -Stop
+```
+
+It prints the rendered character count per tab, which doubles as a cheap refactor check: a pure
+move should leave those counts identical.
 
 ## Isolated test instance (safe full click-through)
 
