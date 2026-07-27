@@ -1,3 +1,8 @@
 # Shell hooks must stay LF — a CRLF shebang breaks /bin/sh ("bad interpreter").
 .githooks/** text eol=lf
 *.sh text eol=lf
+
+# ts-rs writes these with LF. Without this rule git checks them out as CRLF on Windows, so every
+# `cargo test` rewrote them back to LF and left five files permanently showing as modified with an
+# empty diff — phantom noise in every `git status` that trains you to ignore the real thing.
+src/lib/generated/** text eol=lf
