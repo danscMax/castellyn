@@ -76,13 +76,21 @@ jobs:
       - run: npm run build
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      # The dependency gate: RustSec advisories + a permissive-license allow-list, config in
-      # src-tauri/deny.toml. Ordered last because it needs no build artifacts, so a compile break
-      # still surfaces first. On its first run it caught RUSTSEC-2026-0194/0195 in quick-xml —
-      # reachable only through the Linux Wayland clipboard backend, which is why deny.toml pins
-      # the graph to the Windows target instead of carrying an ignore-list.
-      - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  # The dependency gate: RustSec advisories + a permissive-license allow-list, config in
+  # src-tauri/deny.toml. On its first run it caught RUSTSEC-2026-0194/0195 in quick-xml —
+  # reachable only through the Linux Wayland clipboard backend, which is why deny.toml pins the
+  # GRAPH to the Windows target instead of carrying an ignore-list that would rot.
+  #
+  # Its own job on ubuntu, NOT a step in `rust` above: cargo-deny-action is a container action and
+  # containers only run on Linux runners, so on windows-latest it fails with "Container action is
+  # only supported on Linux" before it ever looks at a dependency. The runner OS does not affect
+  # the result — deny.toml fixes the target, and this reads Cargo.toml/Cargo.lock, never builds.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: src-tauri/Cargo.toml
           command: check advisories bans licenses
