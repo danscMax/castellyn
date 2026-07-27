@@ -54,6 +54,11 @@ toml_edit = "0.25.12"
 # written by `cargo test` (already a mandatory gate) into src/lib/generated/ and are COMMITTED —
 # src/lib/ipc.ts re-exports them, so a fresh clone must type-check before anything Rust has run.
 ts-rs = "12.0.1"
+# Official MCP SDK — used ONLY as a client, to run a real initialize/tools-list handshake against a
+# configured MCP server (`probe_mcp` in mcp_probe.rs). `read_mcp` can only say a server is CONFIGURED.
+# default-features off drops the server half, the macros and every HTTP transport: client +
+# stdio-child-process costs 6 new crates (rmcp, process-wrap, futures, tokio-stream, cfg_aliases, nix).
+rmcp = { version = "2.2.0", default-features = false, features = ["client", "transport-child-process"] }
 
 # Win32 Job Object so PTY child trees (pwsh → claude/node, ssh.exe) die with the app instead of
 # orphaning on a kill/crash. Windows-only; no-op stub elsewhere.

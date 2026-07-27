@@ -31,6 +31,7 @@
     setLaunchConfig,
     measureContext,
     readMcp,
+    probeMcp,
     runMcp,
     mcpUpsertServer,
     mcpRemoveServer,
@@ -2604,7 +2605,8 @@
         <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} {scriptsAvail} />
       {:else if active === 'mcp'}
         <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy}
-          onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra} />
+          onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra}
+          onProbe={probeMcp} />
       {:else if active === 'envs'}
         <EnvironmentsTab {running} {askConfirm}
           onOpenConfig={(p) => openPath(p).catch(toastErr)} onOpenProviders={() => (active = 'providers')}

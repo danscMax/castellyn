@@ -829,7 +829,21 @@ export type McpServer = {
 export type McpExtra = { name: string; presentIn: string[] };
 export type McpStatus = { source: McpServer[]; extras: McpExtra[]; profiles: string[] };
 
+/// Outcome of actually launching a server and completing the MCP handshake (`probe_mcp`).
+export type McpProbeResult = {
+  name: string;
+  ok: boolean;
+  /// `name version` the server reported at initialize; empty when unreachable.
+  server: string;
+  tools: number;
+  /// Localized reason for `ok: false`; empty when ok.
+  error: string;
+  ms: number;
+};
+
 export const readMcp = () => invoke<McpStatus>('read_mcp');
+// Opt-in ONLY: this starts a real process. Never call it on mount/refresh.
+export const probeMcp = (name: string) => invoke<McpProbeResult>('probe_mcp', { name });
 export const runMcp = (action: 'deploy', only?: string[]) =>
   invoke<number>('run_mcp', { action, only: only && only.length ? only : null });
 // Canonical config\.mcp.json CRUD (definition is the server's JSON object, serialized).

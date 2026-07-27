@@ -31,6 +31,7 @@ mod session_bus;
 mod worktree;
 mod i18n;
 mod links;
+mod mcp_probe;
 mod profiles_status;
 use i18n::{tr, trv, Lang};
 
@@ -71,6 +72,7 @@ mod spawn_window_guard {
         ("session_bus.rs", include_str!("session_bus.rs")),
         ("schedules_watch.rs", include_str!("schedules_watch.rs")),
         ("i18n.rs", include_str!("i18n.rs")),
+        ("mcp_probe.rs", include_str!("mcp_probe.rs")),
         ("main.rs", include_str!("main.rs")),
     ];
 
@@ -17607,6 +17609,7 @@ read_opencode_models,
             mcp_upsert_server,
             mcp_remove_server,
             mcp_remove_extra,
+            mcp_probe::probe_mcp,
             list_plugins,
             list_skills,
             read_environments,

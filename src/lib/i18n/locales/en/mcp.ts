@@ -26,6 +26,16 @@ export default {
   profileDeployedTitle: 'Deployed in profile {p}',
   deployToProfileTip: 'Deploy all MCP servers to profile {p}',
 
+  // Liveness probe (starts a real process — explicit click only)
+  colHealth: 'Health',
+  probeGo: 'check',
+  probeTip: 'Launch the server, complete the MCP handshake and list its tools. Starts a real process and kills it right after.',
+  probeAll: 'Check health',
+  probeAllTip: 'Handshake with every server in config/.mcp.json. Each one is really launched.',
+  probeOkBadge: '{n} tools',
+  probeOkTitle: '{server} — {n} tools, answered in {ms} ms',
+  probeFail: 'unreachable',
+
   // Empty state
   emptyTitle: 'No data',
   emptyHint: 'config/.mcp.json not found or empty.',

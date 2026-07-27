@@ -26,6 +26,16 @@ export default {
   profileDeployedTitle: '已部署到配置 {p}',
   deployToProfileTip: '将所有 MCP 服务器部署到配置 {p}',
 
+  // 连通性检查（会启动真实进程 — 仅在明确点击时执行）
+  colHealth: '连接',
+  probeGo: '检查',
+  probeTip: '启动服务器，完成 MCP 握手并列出其工具。会启动真实进程并随即结束它。',
+  probeAll: '检查连接',
+  probeAllTip: '对 config/.mcp.json 中的每个服务器进行握手检查。每个都会被真实启动。',
+  probeOkBadge: '{n} 个工具',
+  probeOkTitle: '{server} — {n} 个工具，用时 {ms} 毫秒',
+  probeFail: '无法连接',
+
   // Empty state
   emptyTitle: '无数据',
   emptyHint: '未找到 config/.mcp.json 或文件为空。',

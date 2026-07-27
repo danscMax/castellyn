@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { McpStatus, McpServer } from '$lib/ipc';
+  import type { McpStatus, McpServer, McpProbeResult } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
@@ -14,7 +14,8 @@
     onDeploy,
     onUpsert,
     onRemoveServer,
-    onRemoveExtra
+    onRemoveExtra,
+    onProbe
   }: {
     data: McpStatus | null;
     running: string | null;
@@ -23,9 +24,34 @@
     onUpsert: (name: string, definition: string) => Promise<void>;
     onRemoveServer: (name: string) => void;
     onRemoveExtra: (name: string, profile: string) => void;
+    onProbe: (name: string) => Promise<McpProbeResult>;
   } = $props();
 
   const busy = $derived(!!running);
+
+  // --- Liveness probe (opt-in) ---
+  // A probe LAUNCHES the server, so it is never automatic: nothing here runs on mount or on
+  // refresh. One click probes one server; "check all" fans out over the visible ones.
+  let probes = $state<Record<string, McpProbeResult>>({});
+  let probing = $state<Record<string, boolean>>({});
+  const probingAny = $derived(Object.values(probing).some(Boolean));
+  async function probe(name: string) {
+    if (probing[name]) return;
+    probing = { ...probing, [name]: true };
+    try {
+      probes = { ...probes, [name]: await onProbe(name) };
+    } catch (e) {
+      // The backend rejects only for a config problem (unknown server / no command). Render it in
+      // the row like any other failure — a "check all" must not bury N reasons behind one toast.
+      const error = String((e as { message?: string })?.message ?? e);
+      probes = { ...probes, [name]: { name, ok: false, server: '', tools: 0, error, ms: 0 } };
+    } finally {
+      probing = { ...probing, [name]: false };
+    }
+  }
+  function probeAll() {
+    for (const s of source) void probe(s.name);
+  }
 
   // --- Add/edit a canonical server (config\.mcp.json) ---
   const DEFAULT_DEF = '{\n  "command": "npx",\n  "args": []\n}';
@@ -135,6 +161,7 @@
     // needs the room the truncating monospace command column was hogging; at the old widths the
     // note and the last chip clipped against the actions column on a 1440px window.
     { key: 'command', label: t('mcp.colCommand'), width: '200px' },
+    { key: 'health', label: t('mcp.colHealth'), width: '120px', align: 'center', interactive: true },
     { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
     { key: 'profiles', label: t('mcp.colProfiles'), width: '230px', interactive: true },
     { key: 'actions', label: t('mcp.colActions'), width: '110px', align: 'right', interactive: true }
@@ -158,6 +185,10 @@
       <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onRefresh}
         title={t('mcp.refreshTitle')}>
         {running === 'mcp' ? t('common.busy') : t('common.refresh')}
+      </button>
+      <button class="sw-btn sw-btn-ghost" disabled={busy || probingAny || !source.length}
+        onclick={probeAll} title={t('mcp.probeAllTip')}>
+        {probingAny ? t('common.busy') : t('mcp.probeAll')}
       </button>
       <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={openAdd}
         title={t('mcp.addServerTitle')}>
@@ -200,6 +231,20 @@
           <span class="font-medium truncate" title={srv.name}>{srv.name}</span>
         {:else if col.key === 'command'}
           <span class="font-mono text-sw-xs text-sw-text-muted truncate block" title={srv.command}>{srv.command}</span>
+        {:else if col.key === 'health'}
+          {@const pr = probes[srv.name]}
+          {#if probing[srv.name]}
+            <span class="badge badge-muted">{t('common.busy')}</span>
+          {:else if pr}
+            <button class="badge {pr.ok ? 'badge-ok' : 'badge-err'}" disabled={busy}
+              onclick={() => probe(srv.name)}
+              title={pr.ok ? t('mcp.probeOkTitle', { server: pr.server, n: pr.tools, ms: pr.ms }) : pr.error}>
+              {pr.ok ? t('mcp.probeOkBadge', { n: pr.tools }) : t('mcp.probeFail')}
+            </button>
+          {:else}
+            <button class="badge badge-muted" disabled={busy} onclick={() => probe(srv.name)}
+              title={t('mcp.probeTip')}>{t('mcp.probeGo')}</button>
+          {/if}
         {:else if col.key === 'deployed'}
           {#if isPlugin(srv.name)}
             <span class="badge badge-info" title={t('mcp.pluginBadgeTitle')}>{t('mcp.pluginBadge')}</span>

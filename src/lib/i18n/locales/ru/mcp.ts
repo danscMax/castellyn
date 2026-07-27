@@ -26,6 +26,16 @@ export default {
   profileDeployedTitle: 'Развёрнут в профиле {p}',
   deployToProfileTip: 'Развернуть все MCP-серверы в профиль {p}',
 
+  // Liveness probe (запускает реальный процесс — только по явному клику)
+  colHealth: 'Связь',
+  probeGo: 'проверить',
+  probeTip: 'Запустить сервер, выполнить рукопожатие MCP и получить список инструментов. Стартует реальный процесс и сразу же его гасит.',
+  probeAll: 'Проверить связь',
+  probeAllTip: 'Проверить рукопожатие у всех серверов из config/.mcp.json. Каждый сервер реально запускается.',
+  probeOkBadge: 'инстр.: {n}',
+  probeOkTitle: '{server} — инструментов: {n}, ответил за {ms} мс',
+  probeFail: 'нет связи',
+
   // Empty state
   emptyTitle: 'Нет данных',
   emptyHint: 'config/.mcp.json не найден или пуст.',

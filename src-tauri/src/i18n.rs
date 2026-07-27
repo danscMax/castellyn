@@ -100,6 +100,12 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("err.mcp_parse", ["разбор .mcp.json: {e}", "parsing .mcp.json: {e}", "解析 .mcp.json: {e}"]),
     ("err.mcp_no_servers", ["в .mcp.json нет mcpServers", "no mcpServers in .mcp.json", ".mcp.json 中没有 mcpServers"]),
     ("err.mcp_unsafe_chars", ["{name}: значения содержат небезопасные для cmd символы", "{name}: values contain characters unsafe for cmd", "{name}: 值包含对 cmd 不安全的字符"]),
+    // Liveness probe (mcp_probe.rs) — the server was actually launched and spoken to.
+    ("err.mcp_no_such_server", ["в config/.mcp.json нет сервера «{name}»", "no server \"{name}\" in config/.mcp.json", "config/.mcp.json 中没有服务器 “{name}”"]),
+    ("err.mcp_no_command", ["у сервера «{name}» не задана команда — запускать нечего", "server \"{name}\" has no command — nothing to launch", "服务器 “{name}” 未设置命令 — 无法启动"]),
+    ("err.mcp_probe_spawn", ["не удалось запустить: {e}", "could not launch: {e}", "无法启动: {e}"]),
+    ("err.mcp_probe_failed", ["рукопожатие MCP не удалось: {e}", "the MCP handshake failed: {e}", "MCP 握手失败: {e}"]),
+    ("err.mcp_probe_timeout", ["сервер не ответил за {s} с", "the server did not answer within {s}s", "服务器在 {s} 秒内没有响应"]),
     ("err.opencode_missing", ["opencode.json не найден (OpenCode установлен?)", "opencode.json not found (is OpenCode installed?)", "未找到 opencode.json（OpenCode 是否已安装？）"]),
     ("err.opencode_parse", ["разбор opencode.json: {e}", "parsing opencode.json: {e}", "解析 opencode.json: {e}"]),
     ("err.opencode_not_object", ["opencode.json не является JSON-объектом", "opencode.json is not a JSON object", "opencode.json 不是 JSON 对象"]),
