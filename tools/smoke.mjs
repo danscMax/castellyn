@@ -21,6 +21,9 @@ const CDP_PORT = Number(process.env.CASTELLYN_CDP_PORT ?? 9223);
 const NAV = 'nav.sidebar button.nav-item';
 const MIN_TEXT = 20; // chars of rendered text below which a tab counts as blank
 const SETTLE_MS = 8000;
+// How long to wait for the Svelte app to mount after attaching. Generous: on a cold vite start the
+// dev server is still compiling when CDP already answers.
+const MOUNT_MS = 60000;
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log(
@@ -158,14 +161,24 @@ async function main() {
   await sleep(500);
   const startupErrors = errors.splice(0);
 
-  const tabs = await evaluate(
-    cdp,
-    `[...document.querySelectorAll(${JSON.stringify(NAV)})].map((b) => b.dataset.tab).filter(Boolean)`
-  );
-  if (!tabs?.length) {
-    console.error(`✗ No sidebar tabs found (selector ${NAV}). The window may not have rendered.`);
-    cdp.close();
-    process.exit(1);
+  // CDP answers as soon as the WebView exists, which is BEFORE Svelte has mounted — attaching the
+  // moment the port opens found an empty sidebar and reported the app broken. Wait for the nav to
+  // appear instead of assuming it: a smoke test that cries wolf is one nobody reads.
+  const listTabs = `[...document.querySelectorAll(${JSON.stringify(NAV)})].map((b) => b.dataset.tab).filter(Boolean)`;
+  let tabs = [];
+  const mountBy = Date.now() + MOUNT_MS;
+  for (;;) {
+    tabs = (await evaluate(cdp, listTabs)) ?? [];
+    if (tabs.length) break;
+    if (Date.now() > mountBy) {
+      console.error(`✗ No sidebar tabs after ${MOUNT_MS / 1000}s (selector ${NAV}).`);
+      console.error(`  document.readyState=${await evaluate(cdp, 'document.readyState')}`);
+      console.error(`  body text: ${JSON.stringify(((await evaluate(cdp, 'document.body.innerText')) ?? '').slice(0, 200))}`);
+      if (errors.length) console.error(`  console: ${errors[0].split('\n')[0]}`);
+      cdp.close();
+      process.exit(1);
+    }
+    await sleep(250);
   }
 
   const failures = startupErrors.length ? [{ tab: '(startup)', errors: startupErrors }] : [];

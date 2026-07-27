@@ -1,25 +1,26 @@
 <script lang="ts">
-  import type { SchedulesStatus, ScheduleAction } from '$lib/ipc';
+  import type { ScheduleAction } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
   import NoScriptsBanner from './NoScriptsBanner.svelte';
   import { formatAbsTime } from '$lib/relativeTime';
   import { requestTab } from '$lib/nav.svelte';
   import { Clock } from '@lucide/svelte';
+  import { schedState } from '$lib/schedState.svelte';
 
   let {
-    data,
     running,
-    onAction,
-    onRefresh,
     scriptsAvail = true
   }: {
-    data: SchedulesStatus | null;
     running: string | null;
-    onAction: (action: ScheduleAction, id: string, time?: string) => void;
-    onRefresh: () => void;
     scriptsAvail?: boolean;
   } = $props();
+
+  // This tab owns its data (schedState), like ProfilesTab owns MatrixState. The run lock and the
+  // confirm gate are page-level on purpose and are wired to schedState there.
+  if (!schedState.loaded) schedState.loadOnce();
+  const data = $derived(schedState.data);
+  const onAction = (action: ScheduleAction, id: string, time?: string) => schedState.action(action, id, time);
 
   const busy = $derived(!!running);
   const tasks = $derived(data?.tasks ?? []);
@@ -47,7 +48,7 @@
         {t('schedule.agentSchedNote')}
       </button>
     </div>
-    <button class="sw-btn sw-btn-ghost shrink-0" disabled={busy} onclick={onRefresh}
+    <button class="sw-btn sw-btn-ghost shrink-0" disabled={busy} onclick={() => schedState.load()}
       title={t('schedule.refreshHint')}>
       {running === 'schedule' ? t('common.busy') : t('common.refresh')}
     </button>

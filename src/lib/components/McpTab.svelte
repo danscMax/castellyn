@@ -1,31 +1,22 @@
 <script lang="ts">
-  import type { McpStatus, McpServer, McpProbeResult } from '$lib/ipc';
+  import type { McpServer, McpProbeResult } from '$lib/ipc';
+  import { probeMcp } from '$lib/ipc';
   import { t } from '$lib/i18n';
   import EmptyState from './EmptyState.svelte';
   import DataTable, { type DTColumn } from './DataTable.svelte';
   import ModalShell from './ModalShell.svelte';
   import { Server, Pencil, Trash2 } from '@lucide/svelte';
   import SectionHeader from './SectionHeader.svelte';
+  import { mcpState } from '$lib/mcpState.svelte';
 
-  let {
-    data,
-    running,
-    onRefresh,
-    onDeploy,
-    onUpsert,
-    onRemoveServer,
-    onRemoveExtra,
-    onProbe
-  }: {
-    data: McpStatus | null;
-    running: string | null;
-    onRefresh: () => void;
-    onDeploy: (target?: string | string[]) => void;
-    onUpsert: (name: string, definition: string) => Promise<void>;
-    onRemoveServer: (name: string) => void;
-    onRemoveExtra: (name: string, profile: string) => void;
-    onProbe: (name: string) => Promise<McpProbeResult>;
-  } = $props();
+  let { running }: { running: string | null } = $props();
+
+  // This tab owns its data (mcpState), like ProfilesTab owns MatrixState. The run lock and the
+  // confirm gate are page-level on purpose and are wired to mcpState there. No load-on-open gate:
+  // +page loads mcpState on mount (the palette and the profile matrix read it too).
+  const data = $derived(mcpState.data);
+  const onDeploy = (target?: string | string[]) => mcpState.deploy(target);
+  const onRemoveExtra = (name: string, profile: string) => mcpState.removeExtra(name, profile);
 
   const busy = $derived(!!running);
 
@@ -39,7 +30,7 @@
     if (probing[name]) return;
     probing = { ...probing, [name]: true };
     try {
-      probes = { ...probes, [name]: await onProbe(name) };
+      probes = { ...probes, [name]: await probeMcp(name) };
     } catch (e) {
       // The backend rejects only for a config problem (unknown server / no command). Render it in
       // the row like any other failure — a "check all" must not bury N reasons behind one toast.
@@ -115,7 +106,7 @@
     try {
       // U4: await the backend result — only close on success. A rejected upsert keeps the form
       // (and the typed JSON) open with the reason, instead of closing as if it saved.
-      await onUpsert(formName.trim(), formJson);
+      await mcpState.upsert(formName.trim(), formJson);
       formOpen = false;
     } catch (e) {
       formError = String((e as { message?: string })?.message ?? e);
@@ -182,7 +173,7 @@
       </p>
     </div>
     <div class="flex shrink-0 gap-sw-2">
-      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={onRefresh}
+      <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => mcpState.load()}
         title={t('mcp.refreshTitle')}>
         {running === 'mcp' ? t('common.busy') : t('common.refresh')}
       </button>
@@ -277,7 +268,7 @@
             <span class="acts">
               <button class="iact" disabled={busy} onclick={() => openEdit(srv)}
                 title={t('mcp.editServerTitle')} aria-label={t('common.edit')}><Pencil size={15} /></button>
-              <button class="iact danger" disabled={busy} onclick={() => onRemoveServer(srv.name)}
+              <button class="iact danger" disabled={busy} onclick={() => mcpState.removeServer(srv.name)}
                 title={t('mcp.removeServerTitle')} aria-label={t('common.delete')}><Trash2 size={15} /></button>
             </span>
           </div>

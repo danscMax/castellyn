@@ -30,16 +30,7 @@
     readLaunchConfig,
     setLaunchConfig,
     measureContext,
-    readMcp,
-    probeMcp,
     runMcp,
-    mcpUpsertServer,
-    mcpRemoveServer,
-    mcpRemoveExtra,
-    readSync,
-    runSync,
-    readConfigDrift,
-    runConfigDrift,
     readEngines,
     runRouter,
     runConnectRouter,
@@ -80,9 +71,6 @@
     pluginSyncStatus,
     pluginSyncSet,
     runPluginSync,
-    readSchedules,
-    readSchedulesCached,
-    runSchedule,
     cancelRun,
     cancelAll,
     readConfig,
@@ -98,23 +86,17 @@
     type BackupList,
     type RestoreOpts,
     type ProfileAction,
-    type ConfigDriftStatus,
-    type ConfigDriftAction,
     type ProfilesStatus,
     type ProfilesConfig,
     type ProfileMgmtArgs,
     type OrphanInfo,
     type LaunchConfigStatus,
-    type McpStatus,
-    type SyncStatus,
     type EngineStatus,
     type ProfileProvider,
     type ProviderArgs,
     type MatrixApply,
     type MyProvider,
     type MyProviderInput,
-    type SchedulesStatus,
-    type ScheduleAction,
     type PluginInfo,
     type SkillInfo,
     type PluginAction,
@@ -197,10 +179,15 @@
     type ConfirmRequest
   } from '$lib/confirmGate';
   import { setLanguage } from '$lib/ipc';
-  // Environments + Subagents own their data (and their own actions) in these $state classes,
-  // mirroring MatrixState/ProfilesTab. The page only reads their `loading` for the refresh overlay.
+  import type { SpawnRun } from '$lib/runSpawn';
+  // Environments, Subagents, MCP, Sync and Schedule own their data (and their own actions) in these
+  // $state classes, mirroring MatrixState/ProfilesTab. The page only reads their `loading` for the
+  // refresh overlay, and hands the page-level machinery (confirm gate, run lock) in below.
   import { envState } from '$lib/envState.svelte';
   import { agentsState } from '$lib/agentsState.svelte';
+  import { mcpState } from '$lib/mcpState.svelte';
+  import { syncState } from '$lib/syncState.svelte';
+  import { schedState } from '$lib/schedState.svelte';
 
   let components = $state<Component[]>([]);
   let statuses = $state<Record<string, any>>({});
@@ -266,12 +253,6 @@
   let orphansData = $state<OrphanInfo[]>([]);
   let profilesConfig = $state<ProfilesConfig | null>(null);
   let launchConfig = $state<LaunchConfigStatus | null>(null);
-  let mcpData = $state<McpStatus | null>(null);
-  // Bumped on every MCP reload → tells the profile matrix to re-read its mcp facts (deploy/remove).
-  let mcpTick = $state(0);
-  let syncData = $state<SyncStatus | null>(null);
-  let driftData = $state<ConfigDriftStatus | null>(null);
-  let syncLoaded = $state(false);
   let enginesData = $state<EngineStatus[] | null>(null);
   let providersData = $state<ProfileProvider[] | null>(null);
   let myProvidersData = $state<MyProvider[] | null>(null);
@@ -282,8 +263,6 @@
   // fires each loader exactly once, instead of re-firing while the IPC is still in flight.
   let stackLoaded = $state(false);
   let opencodeLoaded = $state(false);
-  let schedulesData = $state<SchedulesStatus | null>(null);
-  let schedulesLoaded = $state(false);
   let pluginsData = $state<PluginInfo[] | null>(null);
   let skillsData = $state<SkillInfo[] | null>(null);
   let pluginUpdates = $state<PluginUpdate[]>([]);
@@ -470,6 +449,34 @@
   const closeConfirm = () => gateClose(confirm);
   const doConfirm = () => gateDo(confirm);
   const askConfirm = (req: ConfirmRequest) => gateAsk(confirm, confirmDestructive, req);
+
+  // The single entry point into the global run lock for the tab state classes ($lib/*State.svelte.ts).
+  // The lock (`running`) and the console buffer (`log`) stay HERE — a state class never owns either,
+  // it just starts a run through this, the same way it asks for a confirm through `askConfirm`.
+  const spawnRun: SpawnRun = (id, line, run, opts) => {
+    if (running) {
+      if (opts?.busyToast) pushToast({ kind: 'info', title: t('page.busy_running', { name: opName(running) }) });
+      return false;
+    }
+    running = id;
+    log = [line];
+    const p = run().catch(onSpawnErr);
+    // `awaited`: the IPC resolving IS the completion signal (no run-done event), so release here —
+    // otherwise the lock sticks and `busy` disables controls across every tab.
+    if (opts?.awaited)
+      void p.finally(() => {
+        if (running === id) running = null;
+      });
+    return true;
+  };
+  mcpState.askConfirm = askConfirm;
+  mcpState.spawn = spawnRun;
+  mcpState.toastErr = toastErr;
+  syncState.askConfirm = askConfirm;
+  syncState.spawn = spawnRun;
+  syncState.reloadProfiles = reloadProfiles;
+  schedState.askConfirm = askConfirm;
+  schedState.spawn = spawnRun;
 
   function onApply(comp: Component) {
     askConfirm({
@@ -994,106 +1001,6 @@
     return { skipped };
   }
 
-  // --- MCP tab ---
-  async function reloadMcp() {
-    try {
-      mcpData = await readMcp();
-    } catch {
-      mcpData = null;
-    }
-    mcpTick++;
-  }
-
-  function startMcp(action: 'deploy', only?: string[]) {
-    if (running) return;
-    running = 'mcp';
-    log = [t('page.mcp_log')];
-    runMcp(action, only).catch(onSpawnErr);
-  }
-
-  // No arg → deploy to all profiles (confirm). A profile name or array → deploy just those.
-  function onMcpDeploy(target?: string | string[]) {
-    const profiles = target ? (Array.isArray(target) ? target : [target]) : null;
-    // Gate broad writes (all profiles, or a multi-profile selection) behind a confirm; a single
-    // explicit profile chip the user clicked deploys directly. Idempotent either way. (Was: only
-    // the all-profiles path confirmed, while a multi-select bulk overwrote silently.)
-    if (profiles && profiles.length === 1) {
-      startMcp('deploy', profiles);
-      return;
-    }
-    askConfirm({
-      title: t('page.confirm_mcp_title'),
-      message: t('page.confirm_mcp_msg'),
-      confirmLabel: t('page.confirm_mcp_btn'),
-      action: () =>
-      startMcp('deploy', profiles ?? undefined)
-    });
-  }
-
-  // Canonical .mcp.json CRUD (native invokes; reload + toast, no run-log stream).
-  async function onMcpUpsert(name: string, definition: string) {
-    try {
-      await mcpUpsertServer(name, definition);
-      await reloadMcp();
-      pushToast({ kind: 'success', title: t('mcp.savedServer', { name }) });
-    } catch (e) {
-      // U4: rethrow so the form stays open with the error, instead of closing and losing the JSON.
-      toastErr(e);
-      throw e;
-    }
-  }
-  function onMcpRemoveServer(name: string) {
-    askConfirm({
-      title: t('page.confirm_mcp_remove_title'),
-      message: t('page.confirm_mcp_remove_msg', { name }),
-      confirmLabel: t('common.delete'),
-      action: async () => {
-        try {
-          await mcpRemoveServer(name);
-          await reloadMcp();
-          pushToast({ kind: 'success', title: t('mcp.removedServer', { name }) });
-        } catch (e) {
-          toastErr(e);
-        }
-      },
-      danger: true
-    });
-  }
-  function onMcpRemoveExtra(name: string, profile: string) {
-    askConfirm({
-      title: t('page.confirm_mcp_extra_title'),
-      message: t('page.confirm_mcp_extra_msg', { name, profile }),
-      confirmLabel: t('common.delete'),
-      action: async () => {
-        try {
-          await mcpRemoveExtra(name, profile);
-          await reloadMcp();
-          pushToast({ kind: 'success', title: t('mcp.removedExtra', { name, profile }) });
-        } catch (e) {
-          toastErr(e);
-        }
-      },
-      danger: true
-    });
-  }
-
-  // --- Sync tab ---
-  async function reloadSync() {
-    try {
-      syncData = await readSync();
-    } catch {
-      syncData = null;
-    }
-  }
-
-  async function reloadConfigDrift() {
-    try {
-      driftData = await readConfigDrift();
-    } catch {
-      driftData = null;
-    }
-  }
-
   // --- Home / Overview tab (USE-1): aggregates the other tabs' data ---
   let homeLoaded = $state(false);
   // F23: Home now shows stack + live-session chips, so refresh those too.
@@ -1159,9 +1066,9 @@
     }
     await Promise.all([
       reloadProfiles(),
-      reloadConfigDrift(),
-      reloadSync(),
-      reloadSchedules(),
+      syncState.loadDrift(),
+      syncState.load(),
+      schedState.load(),
       reloadStack(),
       reloadStackDrift(),
       globalSessionCount()
@@ -1199,7 +1106,7 @@
         onStack('stop');
         break;
       case 'relink':
-        onSyncDrift('relink');
+        syncState.driftAction('relink');
         break;
       case 'clean-conflicts':
         onProfileAction('clean-conflicts');
@@ -1225,99 +1132,6 @@
       reloadHome().finally(() => setLoading('home', false));
     }
   });
-
-  function startSync(action: 'query' | 'set', enabled?: string[]) {
-    if (running) return;
-    running = 'sync';
-    log = [action === 'set' ? t('page.sync_log_set') : t('page.sync_log_query')];
-    // run_sync is a direct async command (no spawn_streamed → no run-done event), so the promise
-    // resolving IS the completion signal. Clear the lock here; otherwise `running='sync'` sticks
-    // forever and `busy` disables controls across every tab (the "everything is dead" symptom).
-    runSync(action, enabled)
-      // Re-read syncData after the run so the UI reflects reality — otherwise after "Применить"
-      // (set) the "требует применения" banner never clears (stignoreMatches stays false) and the
-      // button just re-appears, reading as a no-op. reloadSync is self-guarded (never throws).
-      .then(() => reloadSync())
-      .catch(onSpawnErr)
-      .finally(() => {
-        if (running === 'sync') running = null;
-      });
-  }
-
-  // Lazy-load on first open + run a fresh query to fetch live Syncthing status.
-  $effect(() => {
-    if (active === 'sync' && !syncLoaded) {
-      syncLoaded = true;
-      setLoading('sync', true);
-      Promise.all([reloadSync(), reloadConfigDrift(), reloadProfiles()])
-        .then(() => startSync('query'))
-        .finally(() => setLoading('sync', false));
-    }
-  });
-
-  function onSyncRefresh() {
-    startSync('query');
-  }
-
-  function onSyncApply(enabled: string[]) {
-    const all = ['history', 'projects', 'skills', 'agents', 'commands', 'keybindings', 'castellyn'];
-    const off = all.filter((i) => !enabled.includes(i));
-    // Enabling/keeping sync items is additive and safe — only gate behind a confirm when something
-    // is actually being DISABLED (the destructive direction).
-    if (!off.length) {
-      startSync('set', enabled);
-      return;
-    }
-    askConfirm({
-      title: t('page.confirm_sync_title'),
-      message: t('page.sync_apply_off', { off: off.join(', ') }),
-      confirmLabel: t('page.confirm_sync_btn'),
-      action: () => startSync('set', enabled)
-    });
-  }
-
-  // --- Config drift (FUN-7): shares the 'sync' run slot + outcome/toast ---
-  function startConfigDrift(action: ConfigDriftAction) {
-    if (running) return;
-    running = 'sync';
-    const verb =
-      action === 'relink'
-        ? t('page.drift_verb_relink')
-        : action === 'sync-now'
-          ? t('page.drift_verb_sync')
-          : t('page.drift_verb_check');
-    log = [t('page.drift_log', { verb })];
-    // Re-read drift + sync state after the run (relink/sync-now/check) so the UI reflects the result
-    // — without this "Починить связи" finished (exit 0) but the drift status never refreshed, so the
-    // banner looked unchanged ("did it work?"). Also clear the 'sync' lock (run_config_drift is a
-    // direct invoke with no run-done, so nothing else releases it → the whole UI stayed busy).
-    runConfigDrift(action)
-      .then(() => Promise.all([reloadConfigDrift(), reloadSync()]))
-      .catch(onSpawnErr)
-      .finally(() => {
-        if (running === 'sync') running = null;
-      });
-  }
-
-  function onSyncDrift(action: ConfigDriftAction) {
-    if (action === 'check') {
-      startConfigDrift('check');
-    } else if (action === 'relink') {
-      askConfirm({
-        title: t('page.confirm_relink_title'),
-        message: t('page.confirm_relink_msg'),
-        confirmLabel: t('page.confirm_relink_btn'),
-        action: () => startConfigDrift('relink')
-      });
-    } else {
-      askConfirm({
-        title: t('page.confirm_driftsync_title'),
-        message: t('page.confirm_driftsync_msg'),
-        confirmLabel: t('page.confirm_driftsync_btn'),
-        action: () => startConfigDrift('sync-now')
-      });
-    }
-  }
 
   // --- Providers / engines tab ---
   async function reloadProviders() {
@@ -1550,58 +1364,6 @@
     });
   }
 
-  // --- Schedule tab ---
-  async function reloadSchedules() {
-    try {
-      schedulesData = await readSchedules();
-    } catch {
-      schedulesData = null;
-    }
-  }
-
-  // Lazy-load schedules the first time the tab is opened (query spawns pwsh).
-  $effect(() => {
-    if (active === 'schedule' && !schedulesLoaded) {
-      // L54: set the flag SYNCHRONOUSLY — a quick tab toggle during the (slow, spawning) load
-      // would otherwise re-fire the effect while the first IPC is still in flight.
-      schedulesLoaded = true;
-      setLoading('schedule', true);
-      reloadSchedules().finally(() => setLoading('schedule', false));
-    }
-  });
-
-  function startSchedule(action: ScheduleAction, id: string, time?: string) {
-    if (running) {
-      // Don't silently drop the click — tell the user why (a run holds the single slot). Without this,
-      // clicking "Создать расписание" while busy looked like a dead button.
-      pushToast({ kind: 'info', title: t('page.busy_running', { name: opName(running) }) });
-      return;
-    }
-    running = 'schedule';
-    const verb: Record<ScheduleAction, string> = {
-      enable: t('page.sched_verb_enable'),
-      disable: t('page.sched_verb_disable'),
-      run: t('page.sched_verb_run'),
-      create: t('page.sched_verb_create'),
-      delete: t('page.sched_verb_delete')
-    };
-    log = [t('page.sched_log', { id, verb: verb[action] })];
-    runSchedule(action, id, time).catch(onSpawnErr);
-  }
-
-  function onScheduleAction(action: ScheduleAction, id: string, time?: string) {
-    if (action === 'delete') {
-      askConfirm({
-        title: t('page.confirm_sched_delete_title'),
-        message: t('page.confirm_sched_delete_msg', { id }),
-        confirmLabel: t('page.confirm_sched_delete_btn'),
-        action: () => startSchedule('delete', id)
-      });
-    } else {
-      startSchedule(action, id, time);
-    }
-  }
-
   // --- Plugins & Skills tab ---
   async function reloadPluginUpdates() {
     try {
@@ -1656,7 +1418,7 @@
     forks: forksAttention(statuses.forks),
     backup: backupAttention(backupData),
     profiles: profilesAttention(profilesData),
-    sync: syncAttention(syncData),
+    sync: syncAttention(syncState.data),
     extensions: pluginsAttention(pluginUpdates.length),
     sessions: sessionsAttention(agentSummary),
     // U3: a pending Castellyn update surfaces as an info badge on Settings (never auto-installs).
@@ -1665,7 +1427,7 @@
     home: maxAttention([
       stackDriftAttention(stackDrift),
       backupAttention(backupData),
-      syncAttention(syncData),
+      syncAttention(syncState.data),
       profilesAttention(profilesData)
     ])
   });
@@ -1686,9 +1448,11 @@
   const tabLoading = $derived.by(() => {
     const m: Record<string, boolean> = { ...loading };
     if (running === 'forks') m.forks = true;
-    // Envs/Agents own their first-open load, but the overlay + sidebar spinner are page-level.
+    // The state-class tabs own their first-open load, but the overlay + sidebar spinner are page-level.
     m.envs = envState.loading;
     m.agents = agentsState.loading;
+    m.sync = syncState.loading;
+    m.schedule = schedState.loading;
     return m;
   });
   const tabRefreshing = $derived(!!tabLoading[active]);
@@ -2078,7 +1842,7 @@
       label: `${t('nav.profiles')} · ${p.name}`,
       run: () => { active = 'profiles'; highlightTarget = { tab: 'profiles', id: `profile:${p.name}` }; }
     })),
-    ...(mcpData?.source ?? []).map((s) => ({
+    ...(mcpState.data?.source ?? []).map((s) => ({
       id: `mcp:${s.name}`,
       label: `${t('nav.mcp')} · ${s.name}`,
       run: () => { active = 'mcp'; highlightTarget = { tab: 'mcp', id: `mcp:${s.name}` }; }
@@ -2190,15 +1954,11 @@
     reloadBackup();
     // Await profiles so the first-run check sees real data (no profiles → empty-setup signal).
     await reloadProfiles();
-    reloadMcp();
+    mcpState.load();
     reloadPluginUpdates();
     // Seed schedules from the on-disk envelope (file-only, no pwsh) so Home's task rollup shows from
     // launch. The Schedule tab's lazy full read (which queries pwsh) still refreshes it on first open.
-    readSchedulesCached()
-      .then((s) => {
-        if (s && schedulesData == null) schedulesData = s;
-      })
-      .catch(() => {});
+    schedState.seedCached();
     scriptsAvailable()
       .then((v) => (scriptsAvail = v))
       .catch(() => {});
@@ -2312,16 +2072,16 @@
         // Component-specific data reloads (keep fresh before surfacing the outcome).
         if (id === STREAM_IDS.BACKUP) await reloadBackup();
         if (id === STREAM_IDS.PROFILES) await reloadProfiles();
-        if (id === STREAM_IDS.MCP) await reloadMcp();
+        if (id === STREAM_IDS.MCP) await mcpState.load();
         if (id === STREAM_IDS.SYNC) {
-          await reloadSync();
-          await reloadConfigDrift();
+          await syncState.load();
+          await syncState.loadDrift();
           await reloadProfiles();
         }
         if (id === STREAM_IDS.ENGINE || id === STREAM_IDS.PROVIDER) await reloadProviders();
         if (id === STREAM_IDS.ENGINE) await reloadStack();
         if (id === STREAM_IDS.PROVIDER) await reloadOpencode();
-        if (id === STREAM_IDS.SCHEDULE) await reloadSchedules();
+        if (id === STREAM_IDS.SCHEDULE) await schedState.load();
         if (id === STREAM_IDS.PLUGIN_MGR) await reloadExtensions();
 
         // Auto-recheck after a successful single-component apply (apply scripts write the applied
@@ -2533,7 +2293,7 @@
       // off-screen tabs re-fetch lazily on next open, so don't burst N pwsh spawns on every alt-tab.
       if (active === 'backup') reloadBackup();
       if (active === 'profiles' || active === 'home' || active === 'sync') reloadProfiles();
-      if (active === 'mcp') reloadMcp();
+      if (active === 'mcp') mcpState.load();
       // pluginUpdates also feeds the sidebar "extensions" badge, so keep it fresh app-wide — but
       // at most once every 5 min on focus (the CLI spawn isn't worth firing on every alt-tab).
       const now = Date.now();
@@ -2593,7 +2353,7 @@
         class:hidden={showOnboarding}
       >
       {#if active === 'home'}
-        <HomeTab profiles={profilesData} sync={syncData} drift={driftData} schedules={schedulesData}
+        <HomeTab profiles={profilesData} sync={syncState.data} drift={syncState.drift} schedules={schedState.data}
           stack={stackData} sessionCount={homeSessionCount} {stackDrift} {gcItems} busy={!!running} {components} {statuses}
           onOpen={(id) => (active = id)} onRefresh={reloadHome} onReloadDrift={reloadStackDrift}
           onReloadGc={reloadGc} onGcDelete={onGcDelete} onAction={onHomeAction} busyAction={homeBusyAction} />
@@ -2604,23 +2364,20 @@
       {:else if active === 'backup'}
         <BackupTab data={backupData} {running} {log} {confirmDestructive} profiles={(profilesData?.profiles ?? []).map((p) => p.name)} onAction={onBackupAction} onRefresh={reloadBackup} {scriptsAvail} />
       {:else if active === 'mcp'}
-        <McpTab data={mcpData} {running} onRefresh={reloadMcp} onDeploy={onMcpDeploy}
-          onUpsert={onMcpUpsert} onRemoveServer={onMcpRemoveServer} onRemoveExtra={onMcpRemoveExtra}
-          onProbe={probeMcp} />
+        <McpTab {running} />
       {:else if active === 'envs'}
         <EnvironmentsTab {running} {askConfirm}
           onOpenConfig={(p) => openPath(p).catch(toastErr)} onOpenProviders={() => (active = 'providers')}
           onOpenMcp={() => (active = 'mcp')}
           onOpenUrl={(u) => openUrl(u).catch(toastErr)} />
       {:else if active === 'sync'}
-        <SyncTab data={syncData} {running} onRefresh={onSyncRefresh} onApply={onSyncApply}
-          driftData={driftData} conflictCount={profilesData?.syncConflicts?.count ?? 0}
+        <SyncTab {running} conflictCount={profilesData?.syncConflicts?.count ?? 0}
           conflictFiles={profilesData?.syncConflicts?.files ?? []} onResolveConflict={onResolveConflict}
-          onDriftApply={onSyncDrift} onCleanConflicts={() => onProfileAction('clean-conflicts')} {scriptsAvail} />
+          onCleanConflicts={() => onProfileAction('clean-conflicts')} {scriptsAvail} />
       {:else if active === 'analytics'}
         <AnalyticsTab onOpenProviders={() => (active = 'providers')} {onOpenUrl} />
       {:else if active === 'schedule'}
-        <ScheduleTab data={schedulesData} {running} onAction={onScheduleAction} onRefresh={reloadSchedules} {scriptsAvail} />
+        <ScheduleTab {running} {scriptsAvail} />
       {:else if active === 'agents'}
         <SubagentsTab {running} {askConfirm} onOpenExtensions={() => (active = 'extensions')} />
       {:else if active === 'settings'}
@@ -2696,9 +2453,9 @@
               {onProviderClear}
               myProviders={myProvidersData}
               {onApplyMatrix}
-              onMcpDeployProfile={onMcpDeploy}
-              {onMcpRemoveExtra}
-              {mcpTick}
+              onMcpDeployProfile={(p) => mcpState.deploy(p)}
+              onMcpRemoveExtra={(n, prof) => mcpState.removeExtra(n, prof)}
+              mcpTick={mcpState.tick}
             />
           </div>
         {/if}

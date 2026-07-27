@@ -1,37 +1,37 @@
 <script lang="ts">
-  import { openPath, readDriftDiff, type SyncStatus, type SyncItem, type ConfigDriftStatus, type ConfigDriftAction, type DriftDiff } from '$lib/ipc';
+  import { openPath, readDriftDiff, type SyncItem, type ConfigDriftAction, type DriftDiff } from '$lib/ipc';
   import SectionHeader from './SectionHeader.svelte';
   import NoScriptsBanner from './NoScriptsBanner.svelte';
   import Toggle from './Toggle.svelte';
   import { t, pConflict } from '$lib/i18n';
   import { relTime } from '$lib/relativeTime';
   import { fmtBytes as fmtBytesShared } from '$lib/bytes';
+  import { syncState } from '$lib/syncState.svelte';
 
   let {
-    data,
     running,
-    onRefresh,
-    onApply,
-    driftData = null,
     conflictCount = 0,
     conflictFiles = [],
     onResolveConflict,
-    onDriftApply,
     onCleanConflicts,
     scriptsAvail = true
   }: {
-    data: SyncStatus | null;
     running: string | null;
-    onRefresh: () => void;
-    onApply: (enabled: string[]) => void;
-    driftData?: ConfigDriftStatus | null;
     conflictCount?: number;
     conflictFiles?: string[];
     onResolveConflict?: (path: string, action: 'keep-local' | 'keep-other') => void;
-    onDriftApply?: (action: ConfigDriftAction) => void;
     onCleanConflicts?: () => void;
     scriptsAvail?: boolean;
   } = $props();
+
+  // This tab owns its data (syncState), like ProfilesTab owns MatrixState. The run lock and the
+  // confirm gate are page-level on purpose and are wired to syncState there. The conflict list
+  // still comes from +page: it lives in the PROFILES envelope, not the sync one.
+  if (!syncState.loaded) syncState.loadOnce();
+  const data = $derived(syncState.data);
+  const driftData = $derived(syncState.drift);
+  const onApply = (enabled: string[]) => syncState.apply(enabled);
+  const onDriftApply = (action: ConfigDriftAction) => syncState.driftAction(action);
 
   let showConflicts = $state(false);
   // Parent folder of a conflict file (both slash styles), for the "open folder" action.
@@ -137,7 +137,7 @@
         {t('sync.subtitle')}
       </p>
     </div>
-    <button class="sw-btn sw-btn-ghost shrink-0" disabled={busy} onclick={onRefresh}
+    <button class="sw-btn sw-btn-ghost shrink-0" disabled={busy} onclick={() => syncState.query()}
       title={t('sync.refreshTitle')}>
       {running === 'sync' ? t('common.busy') : t('common.refresh')}
     </button>
@@ -206,14 +206,14 @@
         </div>
         <p class="text-sw-sm text-sw-text-secondary mb-sw-3">{t('sync.configDriftDesc')}</p>
         <div class="flex flex-wrap gap-sw-2">
-          <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => onDriftApply?.('check')}
+          <button class="sw-btn sw-btn-ghost" disabled={busy} onclick={() => onDriftApply('check')}
             title={t('sync.driftCheckTip')}>{t('sync.driftCheckBtn')}</button>
           {#if drifted > 0}
-            <button class="sw-btn" disabled={busy} onclick={() => onDriftApply?.('sync-now')}
+            <button class="sw-btn" disabled={busy} onclick={() => onDriftApply('sync-now')}
               title={t('sync.syncNowTip')}>{t('sync.syncNowBtn')}</button>
           {/if}
           {#if drifted > 0 || unlinked > 0}
-            <button class="sw-btn" disabled={busy} onclick={() => onDriftApply?.('relink')}
+            <button class="sw-btn" disabled={busy} onclick={() => onDriftApply('relink')}
               title={t('sync.relinkTip')}>{t('sync.relinkBtn')}</button>
           {/if}
         </div>
