@@ -23,7 +23,9 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 mod agent_status;
+mod agents;
 mod backups;
+mod gc;
 mod limits;
 mod stack_health;
 mod schedules_watch;
@@ -79,6 +81,8 @@ mod spawn_window_guard {
         ("ssh_hosts.rs", include_str!("ssh_hosts.rs")),
         ("monitors.rs", include_str!("monitors.rs")),
         ("backups.rs", include_str!("backups.rs")),
+        ("agents.rs", include_str!("agents.rs")),
+        ("gc.rs", include_str!("gc.rs")),
         ("main.rs", include_str!("main.rs")),
     ];
 
@@ -3330,7 +3334,7 @@ fn cmd_on_path(name: &str) -> bool {
 /// and `std::process::Command` can run; Rust ≥1.77 launches .cmd/.bat via cmd.exe with safe argument
 /// escaping). Skips extension-less and .ps1 shims (npm drops all three for the same tool). None if
 /// not found. Used to spawn npm-installed CLIs (`claude`, `ccr`, `npm`) directly.
-fn exe_on_path(name: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn exe_on_path(name: &str) -> Option<std::path::PathBuf> {
     let exts = [".exe", ".cmd", ".bat"];
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
@@ -5581,7 +5585,7 @@ fn profile_name_from_dir(dir_name: &str) -> Option<String> {
 /// Profile names from config\profiles.json. Fallback (fresh OSS user with no profiles.json) scans
 /// %USERPROFILE% for `.claude-<name>` dirs and returns those — NEVER the owner's hardcoded
 /// PROFILE_NAMES, which would phantom-list profiles the user never created. Empty → empty Vec.
-fn profile_names() -> Vec<String> {
+pub(crate) fn profile_names() -> Vec<String> {
     if let Ok(c) = std::fs::read_to_string(abs(PROFILES_CONFIG_REL)) {
         if let Ok(v) = parse_json_bom(&c) {
             if let Some(arr) = v.get("profiles").and_then(|p| p.as_array()) {
@@ -9019,7 +9023,7 @@ fn own_marketplaces() -> std::collections::HashSet<String> {
 }
 
 /// First-block YAML frontmatter (between the first `---` pair) of a SKILL.md.
-fn extract_frontmatter(content: &str) -> String {
+pub(crate) fn extract_frontmatter(content: &str) -> String {
     // Strip a leading UTF-8 BOM first — it isn't White_Space, so trim_start() leaves it and the
     // `---` frontmatter fence then fails to match on a BOM-prefixed file.
     let t = content.trim_start_matches('\u{feff}').trim_start();
@@ -9031,7 +9035,7 @@ fn extract_frontmatter(content: &str) -> String {
     String::new()
 }
 
-fn fm_value(fm: &str, key: &str) -> Option<String> {
+pub(crate) fn fm_value(fm: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}:");
     for line in fm.lines() {
         if let Some(rest) = line.strip_prefix(&prefix) {
@@ -11132,7 +11136,7 @@ fn plugin_content_dir(id: &str, install_path: &str, markets: &serde_json::Value)
 
 /// M5: is this path itself a reparse point (Windows junction OR symlink)? Stat's the link, not its
 /// target (symlink_metadata), same FILE_ATTRIBUTE_REPARSE_POINT test has_reparse_child uses.
-fn is_reparse_point(p: &std::path::Path) -> bool {
+pub(crate) fn is_reparse_point(p: &std::path::Path) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
     p.symlink_metadata()
@@ -11763,330 +11767,6 @@ fn delete_skill(dir: String) -> Result<(), String> {
     }
 }
 
-// ---- Subagents manager (~/.claude/agents/*.md) ---------------------------------------------
-// Standalone user subagents that Claude Code reads from ~/.claude/agents. Structurally identical to
-// skills (frontmatter + body), so the SKILL.md parsers (extract_frontmatter/fm_value) are reused
-// verbatim. The `agents` folder is junction-linked into every profile AND Syncthing-synced between
-// machines (see ClaudeProfiles\config\profiles.json linkedFolders + sync_item_lines), so a write
-// here fans out with no extra code — do NOT add a per-profile copy path.
-
-#[derive(Serialize)]
-struct AgentInfo {
-    name: String,
-    description: String,
-    model: String,
-    tools: String,
-    path: String,
-}
-
-#[derive(Serialize)]
-struct AgentDetail {
-    name: String,
-    description: String,
-    model: String,
-    tools: String,
-    prompt: String,
-    path: String,
-}
-
-/// ~/.claude/agents — the canonical standalone-subagent dir (mirrors list_skills' ~/.claude/skills).
-fn agents_dir() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    Ok(std::path::Path::new(&home).join(".claude").join("agents"))
-}
-
-/// Refuse any target whose PARENT isn't the real agents dir — canonicalized so a junctioned dir and
-/// path-traversal both resolve honestly (same guard shape as delete_skill).
-fn agent_guard(target: &std::path::Path) -> Result<(), String> {
-    let dir = agents_dir()?;
-    let canon_dir = std::fs::canonicalize(&dir)
-        .map_err(|_| trv("err.dir_not_found", cur_lang(), &[("path", &dir.display())]))?;
-    let parent = target
-        .parent()
-        .ok_or_else(|| tr("err.bad_path", cur_lang()).to_string())?;
-    let canon_parent = std::fs::canonicalize(parent)
-        .map_err(|_| tr("err.bad_path", cur_lang()).to_string())?;
-    if canon_parent != canon_dir {
-        return Err(tr("err.bad_path", cur_lang()).into());
-    }
-    Ok(())
-}
-
-/// Body after the frontmatter's closing `---` (leading blank lines trimmed). No frontmatter → the
-/// whole file is the body. Tolerant of both `\n` and `\r\n` (the `\n---` match ignores a leading \r).
-fn frontmatter_body(content: &str) -> String {
-    let t = content.trim_start();
-    if let Some(rest) = t.strip_prefix("---") {
-        if let Some(end) = rest.find("\n---") {
-            // Skip the closing "---", then the rest of that line, then leading blank lines.
-            let after = &rest[end + 4..];
-            let after = after.split_once('\n').map(|(_, b)| b).unwrap_or("");
-            return after.trim_start_matches(['\r', '\n']).to_string();
-        }
-    }
-    content.to_string()
-}
-
-/// ASCII kebab-case slug for the .md filename. Non-ASCII/empty → "agent" (the display `name:`
-/// frontmatter still carries the user's text; Claude Code identifies a subagent by `name`, not file).
-fn slugify_agent(name: &str) -> String {
-    let slug = name
-        .trim()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    if slug.is_empty() { "agent".into() } else { slug }
-}
-
-/// A single-line YAML scalar, double-quoted only when the plain form would be invalid or would mean
-/// something else. `description: Use when: X` is the common real case — a plain scalar containing
-/// `: ` makes the whole frontmatter unparseable, and Claude Code then cannot load the subagent, while
-/// Castellyn's own naive `fm_value` reader (which strips surrounding quotes) reports it healthy either
-/// way. Left unquoted otherwise, matching the ecosystem convention for these files.
-fn yaml_scalar(v: &str) -> String {
-    let hostile = v.contains(": ")
-        || v.ends_with(':')
-        || v.contains(" #")
-        || v.starts_with(['#', '[', '{', '&', '*', '!', '|', '>', '%', '@', '`', '"', '\'', '-', '?', ','])
-        || v.trim() != v;
-    if v.is_empty() || !hostile {
-        return v.to_string();
-    }
-    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// Render a subagent .md: frontmatter (name/description always; model/tools only when set) + body.
-/// UTF-8 without BOM (Castellyn's own writer convention). Unquoted scalars match the ecosystem
-/// convention (plugin agents ship unquoted) — the description is kept single-line by the UI.
-fn render_agent_md(name: &str, description: &str, model: &str, tools: &str, prompt: &str) -> String {
-    // Sanitize each scalar: a raw newline (or a line equal to `---`) in a value would break out of the
-    // YAML frontmatter block. Collapse interior CR/LF to spaces so every value stays on one line.
-    let clean = |v: &str| yaml_scalar(&v.trim().replace(['\r', '\n'], " "));
-    let mut s = String::from("---\n");
-    s.push_str(&format!("name: {}\n", clean(name)));
-    s.push_str(&format!("description: {}\n", clean(description)));
-    if !model.trim().is_empty() {
-        s.push_str(&format!("model: {}\n", clean(model)));
-    }
-    if !tools.trim().is_empty() {
-        s.push_str(&format!("tools: {}\n", clean(tools)));
-    }
-    s.push_str("---\n\n");
-    s.push_str(prompt.trim_end());
-    s.push('\n');
-    s
-}
-
-#[tauri::command]
-async fn list_agents() -> Vec<AgentInfo> {
-    tokio::task::spawn_blocking(list_agents_blocking)
-        .await
-        .unwrap_or_default()
-}
-
-fn list_agents_blocking() -> Vec<AgentInfo> {
-    let Ok(dir) = agents_dir() else {
-        return Vec::new();
-    };
-    let mut out: Vec<AgentInfo> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if !p.is_file() || p.extension().and_then(|s| s.to_str()) != Some("md") {
-                continue;
-            }
-            let content = std::fs::read_to_string(&p).unwrap_or_default();
-            let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
-            let fm = extract_frontmatter(content);
-            let stem = p
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            out.push(AgentInfo {
-                name: fm_value(&fm, "name").unwrap_or(stem),
-                description: fm_value(&fm, "description").unwrap_or_default(),
-                model: fm_value(&fm, "model").unwrap_or_default(),
-                tools: fm_value(&fm, "tools").unwrap_or_default(),
-                path: p.display().to_string(),
-            });
-        }
-    }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    out
-}
-
-#[tauri::command]
-fn read_agent(path: String) -> Result<AgentDetail, String> {
-    let p = std::path::Path::new(&path);
-    agent_guard(p)?;
-    let content = std::fs::read_to_string(p)
-        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &path), ("e", &e)]))?;
-    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
-    let fm = extract_frontmatter(content);
-    let stem = p
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-    Ok(AgentDetail {
-        name: fm_value(&fm, "name").unwrap_or(stem),
-        description: fm_value(&fm, "description").unwrap_or_default(),
-        model: fm_value(&fm, "model").unwrap_or_default(),
-        tools: fm_value(&fm, "tools").unwrap_or_default(),
-        prompt: frontmatter_body(content),
-        path: p.display().to_string(),
-    })
-}
-
-/// Write a subagent. `path` present → overwrite that file (edit); absent → create a new
-/// `<slug>.md`, made unique so a create never clobbers an existing agent. Returns the written path.
-#[tauri::command]
-fn save_agent(
-    name: String,
-    description: String,
-    model: String,
-    tools: String,
-    prompt: String,
-    path: Option<String>,
-) -> Result<String, String> {
-    let dir = agents_dir()?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| trv("err.fs_create", cur_lang(), &[("path", &dir.display()), ("e", &e)]))?;
-    let target = match path.as_deref().filter(|s| !s.is_empty()) {
-        Some(p) => {
-            let pp = std::path::Path::new(p).to_path_buf();
-            agent_guard(&pp)?;
-            pp
-        }
-        None => {
-            let base = slugify_agent(&name);
-            let mut cand = dir.join(format!("{base}.md"));
-            let mut n = 2;
-            while cand.exists() {
-                cand = dir.join(format!("{base}-{n}.md"));
-                n += 1;
-            }
-            cand
-        }
-    };
-    let content = render_agent_md(&name, &description, &model, &tools, &prompt);
-    std::fs::write(&target, content)
-        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &target.display()), ("e", &e)]))?;
-    Ok(target.display().to_string())
-}
-
-#[tauri::command]
-fn delete_agent(path: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    agent_guard(p)?;
-    std::fs::remove_file(p).map_err(|e| trv("err.fs_remove", cur_lang(), &[("path", &path), ("e", &e)]))
-}
-
-/// One check line of a subagent smoke test.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentTestLine {
-    ok: bool,
-    text: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentTestResult {
-    ok: bool,
-    lines: Vec<AgentTestLine>,
-}
-
-/// Smoke-test a subagent WITHOUT invoking it in a real session: validate its frontmatter + body, and
-/// for a wrapper agent (its prompt shells out to codex/opencode) probe that the target CLI actually
-/// resolves and answers `--version`. Answers "is this agent well-formed and are its deps present?".
-#[tauri::command]
-async fn test_subagent(path: String) -> Result<AgentTestResult, String> {
-    tokio::task::spawn_blocking(move || test_subagent_blocking(&path))
-        .await
-        .map_err(|e| format!("test_subagent panicked: {e}"))?
-}
-
-/// True when `cli` appears in a system prompt as a COMMAND, not merely as prose. The probe used to
-/// fire on a bare lowercase substring, so an agent that only MENTIONS codex/opencode (e.g. a
-/// `codex-review-notes` reference) failed its whole smoke test when that CLI was absent from PATH —
-/// for a wrapper it never was. A command sits either inside a fenced block / after a shell prompt
-/// marker, or right after a pipeline-chaining operator, and is followed by an argument.
-fn cli_invoked(body: &str, cli: &str) -> bool {
-    let mut in_fence = false;
-    for line in body.lines() {
-        let l = line.to_lowercase();
-        if l.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        let mut from = 0;
-        while let Some(rel) = l[from..].find(cli) {
-            let start = from + rel;
-            let end = start + cli.len();
-            // Followed by an argument (or the end of the command), never glued into a longer word.
-            let after_ok = end == l.len() || l[end..].starts_with(' ');
-            let before = l[..start].trim_end();
-            let before_ok = (before.is_empty() && in_fence)
-                || before.ends_with(['|', '&', ';', '(', '`', '$', '>']);
-            if after_ok && before_ok {
-                return true;
-            }
-            from = start + 1;
-        }
-    }
-    false
-}
-
-fn test_subagent_blocking(path: &str) -> Result<AgentTestResult, String> {
-    let p = std::path::Path::new(path);
-    agent_guard(p)?;
-    let raw = std::fs::read_to_string(p)
-        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &path), ("e", &e)]))?;
-    let content = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-    let fm = extract_frontmatter(content);
-    let body = frontmatter_body(content);
-    let mut lines: Vec<AgentTestLine> = Vec::new();
-    let push = |lines: &mut Vec<AgentTestLine>, ok: bool, text: String| lines.push(AgentTestLine { ok, text });
-
-    let has_name = fm_value(&fm, "name").is_some_and(|s| !s.trim().is_empty());
-    let has_desc = fm_value(&fm, "description").is_some_and(|s| !s.trim().is_empty());
-    push(&mut lines, has_name, if has_name { "name задан".into() } else { "нет name во frontmatter".into() });
-    push(&mut lines, has_desc, if has_desc { "description задан".into() } else { "пустое description — агент не будет авто-выбираться по задаче".into() });
-    let has_body = !body.trim().is_empty();
-    push(&mut lines, has_body, if has_body { "системный промпт задан".into() } else { "пустой системный промпт".into() });
-
-    // Wrapper agents shell out to an external CLI — that CLI must resolve and run. Only a real
-    // invocation counts; a passing mention of the name must not fail the agent's smoke test.
-    for cli in ["codex", "opencode"] {
-        if cli_invoked(&body, cli) {
-            match exe_on_path(cli) {
-                Some(exe) => {
-                    let out = std::process::Command::new(&exe)
-                        .arg("--version")
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output();
-                    match out {
-                        Ok(o) if o.status.success() => {
-                            let v = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
-                            push(&mut lines, true, format!("CLI `{cli}` найден и отвечает: {v}"));
-                        }
-                        _ => push(&mut lines, false, format!("CLI `{cli}` найден, но не отвечает на --version")),
-                    }
-                }
-                None => push(&mut lines, false, format!("CLI `{cli}` не найден на PATH — обёртка не сработает")),
-            }
-        }
-    }
-
-    let ok = lines.iter().all(|l| l.ok);
-    Ok(AgentTestResult { ok, lines })
-}
-
 /// Strip Syncthing's `.sync-conflict-<stamp>` infix to recover the original file's path.
 /// Format: `<name>.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX<.ext>` — the infix sits right before the
 /// final extension (or at the very end when the file has none). The stamp itself carries no `.`,
@@ -12172,49 +11852,6 @@ mod conflict_base_tests {
     #[test]
     fn no_marker_is_none() {
         assert_eq!(conflict_base_path(r"C:\u\.claude\settings.json"), None);
-    }
-}
-
-#[cfg(test)]
-mod agent_tests {
-    use super::{
-        extract_frontmatter, fm_value, frontmatter_body, render_agent_md, slugify_agent,
-    };
-
-    #[test]
-    fn round_trip_render_parse() {
-        let md = render_agent_md(
-            "my-agent",
-            "When to use it",
-            "sonnet",
-            "Read, Grep",
-            "You are a helper.\n\nDo the thing.",
-        );
-        let fm = extract_frontmatter(&md);
-        assert_eq!(fm_value(&fm, "name").as_deref(), Some("my-agent"));
-        assert_eq!(fm_value(&fm, "description").as_deref(), Some("When to use it"));
-        assert_eq!(fm_value(&fm, "model").as_deref(), Some("sonnet"));
-        assert_eq!(fm_value(&fm, "tools").as_deref(), Some("Read, Grep"));
-        assert_eq!(frontmatter_body(&md).trim_end(), "You are a helper.\n\nDo the thing.");
-    }
-
-    #[test]
-    fn omits_empty_model_and_tools() {
-        let md = render_agent_md("a", "desc", "", "  ", "body");
-        assert!(!md.contains("model:"));
-        assert!(!md.contains("tools:"));
-    }
-
-    #[test]
-    fn slug_kebabs_and_falls_back() {
-        assert_eq!(slugify_agent("My Cool Agent!"), "my-cool-agent");
-        assert_eq!(slugify_agent("  a__b  "), "a-b");
-        assert_eq!(slugify_agent("Агент"), "agent"); // non-ASCII → generic fallback
-    }
-
-    #[test]
-    fn body_without_frontmatter_is_whole() {
-        assert_eq!(frontmatter_body("just text"), "just text");
     }
 }
 
@@ -12489,7 +12126,7 @@ fn delete_orphan_profile(name: String) -> Result<(), String> {
 /// the link itself is stat'd, not its target) — this catches junctions AND symlinks, which
 /// `is_symlink()` alone can miss on Windows. Fails CLOSED on a read_dir error: if we can't prove the
 /// dir is junction-free, the destructive caller must refuse rather than risk sweeping a link target.
-fn has_reparse_child(dir: &std::path::Path) -> bool {
+pub(crate) fn has_reparse_child(dir: &std::path::Path) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -12516,7 +12153,7 @@ fn has_reparse_child(dir: &std::path::Path) -> bool {
 /// `method` is a hardcoded FileSystem method name ("DeleteDirectory" | "DeleteFile"), never user
 /// input. The path is passed through an env var (not string-interpolated) so trailing spaces /
 /// special chars survive verbatim and there is no quoting to escape.
-fn recycle_path(path: &str) -> Result<(), String> {
+pub(crate) fn recycle_path(path: &str) -> Result<(), String> {
     use windows::core::PCWSTR;
     use windows::Win32::UI::Shell::{
         SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
@@ -13458,406 +13095,6 @@ async fn create_settings_junction() -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-// --- Ф2-GC: stack garbage collector (Home card) ---
-//
-// Plugin updates leave junk behind in the physical plugin store
-// (~\.claude\plugins\cache\<org>\<plugin>\<ver>): superseded versions, `temp_git_*` clone
-// leftovers, `.bak` copies, and foreign-OS (darwin/linux) binaries. read_gc_scan itemizes them;
-// run_gc_delete recycles the deletable ones (never active versions, wrong_os is report-only).
-// Profile `plugins` dirs are junctions into the one physical store, so we scan physical stores only.
-
-/// One garbage item. Field names ARE the IPC contract (no serde rename).
-#[derive(Serialize, Clone)]
-struct GcItem {
-    /// Stable id: "stale:<org>/<plugin>/<ver>" | "tempgit:<dir>" | "bak:<name>" | "wrongos:<store>".
-    id: String,
-    /// "stale_version" | "temp_git" | "bak" | "wrong_os" (derived from the id prefix).
-    category: String,
-    label: String,
-    path: String,
-    size_bytes: u64,
-    /// wrong_os is report-only (false); the rest are recyclable.
-    deletable: bool,
-}
-
-#[derive(Serialize)]
-struct GcDeleteReport {
-    /// ids actually recycled.
-    deleted: Vec<String>,
-    /// (id, short english reason) for each id we refused / failed to delete.
-    skipped: Vec<(String, String)>,
-    freed_bytes: u64,
-}
-
-/// Map an id prefix to its category. Single source of truth used at item construction. Unit-tested.
-fn gc_id_category(id: &str) -> Option<&'static str> {
-    if id.starts_with("stale:") {
-        Some("stale_version")
-    } else if id.starts_with("tempgit:") {
-        Some("temp_git")
-    } else if id.starts_with("bak:") {
-        Some("bak")
-    } else if id.starts_with("wrongos:") {
-        Some("wrong_os")
-    } else {
-        None
-    }
-}
-
-fn gc_item(id: String, label: String, path: String, size_bytes: u64, deletable: bool) -> GcItem {
-    let category = gc_id_category(&id).unwrap_or("").to_string();
-    GcItem { category, id, label, path, size_bytes, deletable }
-}
-
-/// DirEntry list for a dir, or empty on any IO error (a per-store failure must not abort the scan).
-fn gc_read_dir(p: &std::path::Path) -> Vec<std::fs::DirEntry> {
-    std::fs::read_dir(p).into_iter().flatten().flatten().collect()
-}
-
-/// Physical plugin stores: `~\.claude\plugins` + `~\.claude-<name>\plugins` per profile, minus any
-/// that are missing or reparse points (profile stores junction into the canonical one — skip so we
-/// count each physical tree exactly once).
-fn gc_stores(home: &str) -> Vec<(String, std::path::PathBuf)> {
-    let mut names = vec![".claude".to_string()];
-    names.extend(profile_names().into_iter().map(|n| format!(".claude-{n}")));
-    let mut out = Vec::new();
-    for n in &names {
-        let p = std::path::Path::new(home).join(n).join("plugins");
-        if p.is_dir() && !is_reparse_point(&p) {
-            out.push((n.clone(), p));
-        }
-    }
-    out
-}
-
-/// Recursive byte size, depth-capped, reparse points NOT dereferenced (counted as 0), read errors
-/// skipped. A file path returns its own length.
-fn gc_dir_size(path: &std::path::Path) -> u64 {
-    fn walk(p: &std::path::Path, depth: u32) -> u64 {
-        if depth > 32 {
-            return 0;
-        }
-        let Ok(md) = p.symlink_metadata() else {
-            return 0;
-        };
-        if md.file_type().is_file() {
-            return md.len();
-        }
-        if is_reparse_point(p) || !md.is_dir() {
-            return 0;
-        }
-        gc_read_dir(p).iter().map(|e| walk(&e.path(), depth + 1)).sum()
-    }
-    walk(path, 0)
-}
-
-/// Extract `(org, plugin, ver)` from an installPath's tail after `...\plugins\cache\`. Marker match
-/// is case-insensitive and slash-agnostic; components keep their original case. None if the marker
-/// is absent or fewer than three components follow. Unit-tested.
-fn install_path_tuple(install_path: &str) -> Option<(String, String, String)> {
-    let norm = install_path.replace('/', "\\");
-    let lower = norm.to_ascii_lowercase();
-    let marker = "\\plugins\\cache\\";
-    let pos = lower.find(marker)?;
-    let tail = &norm[pos + marker.len()..];
-    let mut comps = tail.split('\\').filter(|s| !s.is_empty());
-    let org = comps.next()?.to_string();
-    let plugin = comps.next()?.to_string();
-    let ver = comps.next()?.to_string();
-    Some((org, plugin, ver))
-}
-
-type GcActiveSets = (
-    std::collections::HashSet<(String, String)>,
-    std::collections::HashSet<(String, String, String)>,
-    // Dirnames of stores whose installed_plugins.json was read+parsed OK. Stale detection is
-    // limited to these: an unreadable manifest means this store's active versions were never
-    // blessed, and a blessing from ANOTHER store would then flag them as stale (fail-closed).
-    std::collections::HashSet<String>,
-);
-
-/// Global active-version sets (lowercased) over every store's installed_plugins.json:
-/// (org, plugin) pairs and (org, plugin, ver) triples. installPaths point through any profile alias,
-/// so the version is blessed across all physical stores.
-fn gc_active_sets(stores: &[(String, std::path::PathBuf)]) -> GcActiveSets {
-    let mut pairs = std::collections::HashSet::new();
-    let mut triples = std::collections::HashSet::new();
-    let mut manifest_ok = std::collections::HashSet::new();
-    for (dirname, store) in stores {
-        let Ok(txt) = std::fs::read_to_string(store.join("installed_plugins.json")) else {
-            continue;
-        };
-        let Ok(v) = parse_json_bom(&txt) else {
-            continue;
-        };
-        manifest_ok.insert(dirname.clone());
-        let Some(plugins) = v.get("plugins").and_then(|p| p.as_object()) else {
-            continue;
-        };
-        for arr in plugins.values() {
-            let Some(entries) = arr.as_array() else {
-                continue;
-            };
-            for e in entries {
-                if let Some(ip) = e.get("installPath").and_then(|x| x.as_str()) {
-                    if let Some((org, plugin, ver)) = install_path_tuple(ip) {
-                        let o = org.to_ascii_lowercase();
-                        let p = plugin.to_ascii_lowercase();
-                        let ver = ver.to_ascii_lowercase();
-                        pairs.insert((o.clone(), p.clone()));
-                        triples.insert((o, p, ver));
-                    }
-                }
-            }
-        }
-    }
-    (pairs, triples, manifest_ok)
-}
-
-/// A version dir is stale iff its (org, plugin) has SOME active version but THIS version isn't it.
-/// A pair with no active version at all is left alone (conservative). Case-insensitive. Unit-tested.
-fn is_stale_ver(
-    org: &str,
-    plugin: &str,
-    ver: &str,
-    pairs: &std::collections::HashSet<(String, String)>,
-    triples: &std::collections::HashSet<(String, String, String)>,
-) -> bool {
-    let o = org.to_ascii_lowercase();
-    let p = plugin.to_ascii_lowercase();
-    let key3 = (o.clone(), p.clone(), ver.to_ascii_lowercase());
-    pairs.contains(&(o, p)) && !triples.contains(&key3)
-}
-
-/// True if `token` appears in `name_lower` as a whole token — bounded by start/end of string or one
-/// of `-_.` on each side. `token` and `name_lower` must be ASCII-lowercased. Unit-tested.
-fn token_bounded(name_lower: &str, token: &str) -> bool {
-    let bytes = name_lower.as_bytes();
-    let mut from = 0;
-    while let Some(rel) = name_lower[from..].find(token) {
-        let start = from + rel;
-        let end = start + token.len();
-        let before_ok = start == 0 || matches!(bytes[start - 1], b'-' | b'_' | b'.');
-        let after_ok = end == bytes.len() || matches!(bytes[end], b'-' | b'_' | b'.');
-        if before_ok && after_ok {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
-/// Foreign-OS binary name? (`darwin`/`linux` as a bounded token, case-insensitive).
-fn has_os_token(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    token_bounded(&lower, "darwin") || token_bounded(&lower, "linux")
-}
-
-/// Recursive walk of a cache dir summing foreign-OS entries; does not descend into a matched
-/// subtree. Returns (total_bytes, entry_count).
-fn gc_scan_wrong_os(cache: &std::path::Path) -> (u64, u64) {
-    fn walk(dir: &std::path::Path, depth: u32, bytes: &mut u64, count: &mut u64) {
-        if depth > 32 {
-            return;
-        }
-        for e in gc_read_dir(dir) {
-            let p = e.path();
-            let name = e.file_name().to_string_lossy().to_string();
-            if has_os_token(&name) {
-                *bytes += gc_dir_size(&p);
-                *count += 1;
-                continue; // matched: don't descend into its subtree
-            }
-            if p.is_dir() && !is_reparse_point(&p) {
-                walk(&p, depth + 1, bytes, count);
-            }
-        }
-    }
-    let mut bytes = 0;
-    let mut count = 0;
-    walk(cache, 0, &mut bytes, &mut count);
-    (bytes, count)
-}
-
-/// Scan all physical stores for garbage. Never errors: a per-store IO failure yields fewer items.
-fn gc_scan(home: &str) -> Vec<GcItem> {
-    let stores = gc_stores(home);
-    let (pairs, triples, manifest_ok) = gc_active_sets(&stores);
-    let mut items = Vec::new();
-    for (dirname, store) in &stores {
-        let cache = store.join("cache");
-
-        // 1. stale versions: cache\<org>\<plugin>\<ver> (exactly 3 levels). Only in stores whose
-        // own manifest was readable — otherwise this store's active versions were never blessed
-        // and another store's blessing of the same pair would flag them (fail-closed).
-        for org_e in gc_read_dir(&cache) {
-            if !manifest_ok.contains(dirname) {
-                break;
-            }
-            let org_p = org_e.path();
-            if !org_p.is_dir() || is_reparse_point(&org_p) {
-                continue;
-            }
-            let org = org_e.file_name().to_string_lossy().to_string();
-            for pl_e in gc_read_dir(&org_p) {
-                let pl_p = pl_e.path();
-                if !pl_p.is_dir() || is_reparse_point(&pl_p) {
-                    continue;
-                }
-                let plugin = pl_e.file_name().to_string_lossy().to_string();
-                for ver_e in gc_read_dir(&pl_p) {
-                    let ver_p = ver_e.path();
-                    if !ver_p.is_dir() || is_reparse_point(&ver_p) {
-                        continue;
-                    }
-                    let ver = ver_e.file_name().to_string_lossy().to_string();
-                    if is_stale_ver(&org, &plugin, &ver, &pairs, &triples) {
-                        items.push(gc_item(
-                            // Qualify with the store dirname: without it two profiles' caches can
-                            // produce the same id and run_gc_delete's first-match .find() resolves the
-                            // wrong item (or misses one).
-                            format!("stale:{dirname}:{org}/{plugin}/{ver}"),
-                            format!("{plugin} {ver} ({org})"),
-                            ver_p.to_string_lossy().into_owned(),
-                            gc_dir_size(&ver_p),
-                            true,
-                        ));
-                    }
-                }
-            }
-        }
-
-        // 2. temp_git_* leftover clone dirs at cache top-level.
-        for e in gc_read_dir(&cache) {
-            let name = e.file_name().to_string_lossy().to_string();
-            let p = e.path();
-            if name.starts_with("temp_git_") && p.is_dir() {
-                items.push(gc_item(
-                    format!("tempgit:{dirname}:{name}"),
-                    name.clone(),
-                    p.to_string_lossy().into_owned(),
-                    gc_dir_size(&p),
-                    true,
-                ));
-            }
-        }
-
-        // 3. .bak files/dirs at store and cache top-levels (case-insensitive). Suffix match only:
-        // a bare `contains(".bak")` would also flag `.backup`, `x.bak2`, `x.bak.zip` for deletion.
-        for (base_tag, base) in [("store", store.as_path()), ("cache", cache.as_path())] {
-            for e in gc_read_dir(base) {
-                let name = e.file_name().to_string_lossy().to_string();
-                if name.to_ascii_lowercase().ends_with(".bak") {
-                    let p = e.path();
-                    let size = if p.is_dir() {
-                        gc_dir_size(&p)
-                    } else {
-                        p.symlink_metadata().map(|m| m.len()).unwrap_or(0)
-                    };
-                    items.push(gc_item(
-                        // Qualify with store dirname + which base (store vs cache) so same-named .bak
-                        // entries across profiles/bases don't collide on run_gc_delete's first-match find.
-                        format!("bak:{dirname}:{base_tag}:{name}"),
-                        name.clone(),
-                        p.to_string_lossy().into_owned(),
-                        size,
-                        true,
-                    ));
-                }
-            }
-        }
-
-        // 4. wrong_os aggregate (report-only): one item per store.
-        let (wrong_bytes, wrong_count) = gc_scan_wrong_os(&cache);
-        if wrong_count > 0 {
-            items.push(gc_item(
-                format!("wrongos:{dirname}"),
-                format!("{wrong_count} darwin/linux entries"),
-                store.to_string_lossy().into_owned(),
-                wrong_bytes,
-                false,
-            ));
-        }
-    }
-    items.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
-    items
-}
-
-/// Itemize stack garbage across physical plugin stores. Err only when USERPROFILE is unset.
-#[tauri::command]
-async fn read_gc_scan() -> Result<Vec<GcItem>, String> {
-    let home = std::env::var("USERPROFILE")
-        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    tokio::task::spawn_blocking(move || gc_scan(&home))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Recycle the requested gc ids. Defense-in-depth (the UI already confirmed): a fresh rescan must
-/// still list the id, it must be deletable, live under a physical `plugins` store, not be a reparse
-/// point (nor, for dirs, contain reparse children), and actually vanish after the recycle call.
-#[tauri::command]
-async fn run_gc_delete(ids: Vec<String>) -> Result<GcDeleteReport, String> {
-    let home = std::env::var("USERPROFILE")
-        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
-    tokio::task::spawn_blocking(move || {
-        let stores = gc_stores(&home);
-        let items = gc_scan(&home);
-        let mut report = GcDeleteReport {
-            deleted: Vec::new(),
-            skipped: Vec::new(),
-            freed_bytes: 0,
-        };
-        for id in ids {
-            let Some(item) = items.iter().find(|i| i.id == id) else {
-                report.skipped.push((id, "not found on rescan".into()));
-                continue;
-            };
-            if !item.deletable {
-                report.skipped.push((id, "not deletable".into()));
-                continue;
-            }
-            let path = std::path::Path::new(&item.path);
-            // Must be strictly inside a known physical plugins store (component-wise prefix).
-            let under_store = stores
-                .iter()
-                .any(|(_, sp)| path.starts_with(sp) && path != sp.as_path());
-            if !under_store {
-                report.skipped.push((id, "path outside plugins store".into()));
-                continue;
-            }
-            if is_reparse_point(path) {
-                report.skipped.push((id, "target is a reparse point".into()));
-                continue;
-            }
-            let Ok(md) = path.symlink_metadata() else {
-                report.skipped.push((id, "target vanished".into()));
-                continue;
-            };
-            let is_dir = md.file_type().is_dir();
-            if is_dir && has_reparse_child(path) {
-                report.skipped.push((id, "contains reparse children".into()));
-                continue;
-            }
-            // One call for both: the shell operation recycles a file and a whole subtree
-            // identically, so `is_dir` no longer selects between two code paths.
-            if let Err(e) = recycle_path(&item.path) {
-                report.skipped.push((id, e));
-                continue;
-            }
-            if path.exists() {
-                report.skipped.push((id, "still present after recycle".into()));
-                continue;
-            }
-            report.freed_bytes += item.size_bytes;
-            report.deleted.push(id);
-        }
-        report
-    })
-    .await
-    .map_err(|e| e.to_string())
-}
-
 // --- Agent-status lifecycle hook (Sessions tab) ---
 //
 // castellyn_status.py reports Claude Code lifecycle events (working/blocked/idle) into
@@ -14152,22 +13389,6 @@ mod audit_fixes_tests {
             Some(".credentials.json")
         );
         assert_eq!(tmp_secret_base("not-a-temp.json"), None);
-    }
-
-    #[test]
-    fn is_stale_ver_classifies_only_old_versions_of_installed_plugins() {
-        // gc deletability classification (L138): an OLD version of an INSTALLED plugin is stale; the
-        // active version and any uninstalled plugin's dirs are kept.
-        let pairs: std::collections::HashSet<(String, String)> =
-            [("acme".to_string(), "widget".to_string())].into_iter().collect();
-        let triples: std::collections::HashSet<(String, String, String)> =
-            [("acme".to_string(), "widget".to_string(), "2.0.0".to_string())]
-                .into_iter()
-                .collect();
-        assert!(is_stale_ver("acme", "widget", "1.0.0", &pairs, &triples)); // old → stale
-        assert!(!is_stale_ver("acme", "widget", "2.0.0", &pairs, &triples)); // active → keep
-        assert!(!is_stale_ver("other", "thing", "1.0.0", &pairs, &triples)); // uninstalled → keep
-        assert!(is_stale_ver("ACME", "Widget", "1.0.0", &pairs, &triples)); // case-insensitive
     }
 
     #[test]
@@ -14544,55 +13765,6 @@ mod plugin_sync_tests {
             "a real profile dir must restore the check"
         );
         let _ = std::fs::remove_dir_all(&home);
-    }
-
-    #[test]
-    fn yaml_scalar_quotes_only_what_would_break_the_frontmatter() {
-        // Plain values stay plain — the ecosystem convention for these files.
-        for plain in ["my-agent", "Use for X", "sonnet", "Read, Grep, Glob"] {
-            assert_eq!(super::yaml_scalar(plain), plain);
-        }
-        // `: ` makes the whole frontmatter unparseable for any real YAML reader.
-        assert_eq!(
-            super::yaml_scalar("Use when: the user asks"),
-            "\"Use when: the user asks\""
-        );
-        assert_eq!(super::yaml_scalar("trailing:"), "\"trailing:\"");
-        assert_eq!(super::yaml_scalar("#comment"), "\"#comment\"");
-        // Quotes and backslashes inside a quoted scalar must be escaped, not emitted raw.
-        assert_eq!(
-            super::yaml_scalar("say: \"hi\\there\""),
-            "\"say: \\\"hi\\\\there\\\"\""
-        );
-    }
-
-    #[test]
-    fn render_agent_md_survives_a_colon_in_the_description() {
-        let md = super::render_agent_md("a", "Use when: X", "", "", "body");
-        assert!(md.contains("description: \"Use when: X\""), "{md}");
-        // Castellyn's own reader strips the surrounding quotes, so the fix is backward-compatible.
-        let fm = super::extract_frontmatter(&md);
-        assert_eq!(
-            super::fm_value(&fm, "description").as_deref(),
-            Some("Use when: X")
-        );
-    }
-
-    #[test]
-    fn cli_invoked_separates_a_command_from_a_mention() {
-        // Mentions must NOT trigger the CLI probe (they used to fail the whole agent test).
-        for prose in [
-            "See codex-review-notes for background.",
-            "This agent replaces opencode entirely.",
-            "codex is a CLI by OpenAI",
-        ] {
-            assert!(!super::cli_invoked(prose, "codex"), "{prose}");
-        }
-        // Real invocations still do.
-        assert!(super::cli_invoked("Run `codex exec \"fix it\"` now.", "codex"));
-        assert!(super::cli_invoked("```sh\ncodex exec --json\n```", "codex"));
-        assert!(super::cli_invoked("cd repo && opencode run", "opencode"));
-        assert!(super::cli_invoked("$ codex", "codex"));
     }
 
     #[test]
@@ -16878,16 +16050,16 @@ read_opencode_models,
             run_plugin_sync,
             read_stack_drift,
             run_managed_deploy,
-            read_gc_scan,
-            run_gc_delete,
+            gc::read_gc_scan,
+            gc::run_gc_delete,
             agent_status_hook_status,
             agent_status_hook_set,
             delete_skill,
-            list_agents,
-            read_agent,
-            save_agent,
-            delete_agent,
-            test_subagent,
+            agents::list_agents,
+            agents::read_agent,
+            agents::save_agent,
+            agents::delete_agent,
+            agents::test_subagent,
             resolve_sync_conflict,
             read_schedules,
             read_schedules_cached,
@@ -17454,103 +16626,6 @@ mod tests {
     }
 
     #[test]
-    fn gc_install_path_tuple_parses_alias_and_slashes() {
-        // A different profile's alias in the path is stripped down to (org, plugin, ver).
-        assert_eq!(
-            install_path_tuple(r"C:\Users\X\.claude-cc1\plugins\cache\org\pl\1.0.0"),
-            Some(("org".into(), "pl".into(), "1.0.0".into()))
-        );
-        // Forward slashes tolerated.
-        assert_eq!(
-            install_path_tuple("C:/Users/X/.claude/plugins/cache/max-marketplace/max/1.9.0"),
-            Some(("max-marketplace".into(), "max".into(), "1.9.0".into()))
-        );
-        // "unknown" is a valid version dir.
-        assert_eq!(
-            install_path_tuple(r"C:\u\.claude\plugins\cache\o\p\unknown"),
-            Some(("o".into(), "p".into(), "unknown".into()))
-        );
-        // Marker absent / too few components → None.
-        assert_eq!(install_path_tuple(r"C:\somewhere\else"), None);
-        assert_eq!(install_path_tuple(r"C:\u\.claude\plugins\cache\o\p"), None);
-    }
-
-    #[test]
-    fn gc_stale_detect() {
-        use std::collections::HashSet;
-        let mut pairs = HashSet::new();
-        let mut triples = HashSet::new();
-        pairs.insert(("max-marketplace".to_string(), "max".to_string()));
-        triples.insert((
-            "max-marketplace".to_string(),
-            "max".to_string(),
-            "1.9.0".to_string(),
-        ));
-        // active pair, different ver dir → stale.
-        assert!(is_stale_ver(
-            "max-marketplace",
-            "max",
-            "1.7.0",
-            &pairs,
-            &triples
-        ));
-        // the active ver itself → not stale (case-insensitive).
-        assert!(!is_stale_ver(
-            "Max-Marketplace",
-            "Max",
-            "1.9.0",
-            &pairs,
-            &triples
-        ));
-        // pair not in active-set at all → left alone (conservative).
-        assert!(!is_stale_ver("other", "plugin", "2.0.0", &pairs, &triples));
-    }
-
-    #[test]
-    fn gc_os_token_matcher() {
-        assert!(has_os_token("node-linux-x64"));
-        assert!(has_os_token("linux"));
-        assert!(has_os_token("foo.darwin.node"));
-        assert!(has_os_token("linux-notes.md"));
-        assert!(!has_os_token("mylinuxish"));
-        assert!(!has_os_token("darwinism")); // no trailing boundary
-        assert!(!has_os_token("windows-x64"));
-    }
-
-    #[test]
-    fn gc_id_category_roundtrip() {
-        assert_eq!(gc_id_category("stale:org/pl/1.0.0"), Some("stale_version"));
-        assert_eq!(gc_id_category("tempgit:temp_git_abc"), Some("temp_git"));
-        assert_eq!(gc_id_category("bak:foo.bak"), Some("bak"));
-        assert_eq!(gc_id_category("wrongos:.claude"), Some("wrong_os"));
-        assert_eq!(gc_id_category("mystery:x"), None);
-        // Constructor derives the category field from the id prefix.
-        let it = gc_item("bak:x.bak".into(), "x.bak".into(), "p".into(), 3, true);
-        assert_eq!(it.category, "bak");
-    }
-
-    #[test]
-    fn gc_dir_size_sums_tree() {
-        use std::io::Write;
-        let pid = std::process::id();
-        let root = std::env::temp_dir().join(format!("castellyn_gc_{pid}"));
-        let sub = root.join("sub");
-        std::fs::create_dir_all(&sub).unwrap();
-        std::fs::File::create(root.join("a.txt"))
-            .unwrap()
-            .write_all(&[0u8; 100])
-            .unwrap();
-        std::fs::File::create(sub.join("b.txt"))
-            .unwrap()
-            .write_all(&[0u8; 50])
-            .unwrap();
-        assert_eq!(gc_dir_size(&root), 150);
-        // A single file path returns its own length.
-        assert_eq!(gc_dir_size(&root.join("a.txt")), 100);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
     fn marketplace_versions_classify() {
         fn row(plugin: &str, mkt: &str, src: Option<&str>, inst: Option<&str>) -> MarketVer {
             MarketVer {
@@ -17676,26 +16751,6 @@ mod tests {
         // A different tree (old location, sibling dir) must NOT match.
         assert!(!link_target_matches(Path::new(r"E:\Old\!Настройки и MCP"), exp));
         assert!(!link_target_matches(Path::new(r"E:\Scripts\SettingsMCP"), exp));
-    }
-
-    /// Manual live smoke over the REAL plugin stores (read-only). Not part of the gates:
-    /// `cargo test gc_scan_live_smoke -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    fn gc_scan_live_smoke() {
-        let Ok(home) = std::env::var("USERPROFILE") else {
-            return;
-        };
-        let items = gc_scan(&home);
-        for i in &items {
-            println!(
-                "{:<14} {:>12} bytes  deletable={}  {}  [{}]",
-                i.category, i.size_bytes, i.deletable, i.label, i.path
-            );
-        }
-        // Every id must map to a known category and wrong_os must be report-only.
-        assert!(items.iter().all(|i| gc_id_category(&i.id) == Some(i.category.as_str())));
-        assert!(items.iter().filter(|i| i.category == "wrong_os").all(|i| !i.deletable));
     }
 
     #[test]
