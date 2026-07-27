@@ -218,8 +218,11 @@
       {/if}
       {#if !g.closed || collapsed}
         {#each g.items as it (it.id)}
+          <!-- data-tab is the locale-independent anchor tools/smoke.mjs walks (the label is
+               translated, the id is not). Keep it if you restructure this button. -->
           <button
             class="nav-item"
+            data-tab={it.id}
             class:active={active === it.id}
             class:dragging={dragId === it.id}
             aria-current={active === it.id ? 'page' : undefined}

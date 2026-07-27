@@ -19,6 +19,7 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "check:i18n": "tsx scripts/check-i18n-parity.ts",
     "test": "vitest run",
+    "smoke": "node tools/smoke.mjs",
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1",
     "tauri": "tauri"
   },
