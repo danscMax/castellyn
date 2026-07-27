@@ -26,6 +26,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # Dependabot only PROPOSES bumps weekly; nothing failed a build if a package already in the
+      # lockfile picked up an advisory in between. --omit=dev on purpose: the vite/vitest/svelte
+      # toolchain generates a constant stream of dev-only transitive findings that would train
+      # everyone to ignore this step, and none of it ships in the binary.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run check        # svelte-check — type + i18n shape gate (0/0)
       - run: npm run check:i18n    # ru/en/zh leaf-key parity
       - run: npm test              # vitest (i18n parity, outcome, attention)
@@ -71,3 +76,13 @@ jobs:
       - run: npm run build
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # The dependency gate: RustSec advisories + a permissive-license allow-list, config in
+      # src-tauri/deny.toml. Ordered last because it needs no build artifacts, so a compile break
+      # still surfaces first. On its first run it caught RUSTSEC-2026-0194/0195 in quick-xml —
+      # reachable only through the Linux Wayland clipboard backend, which is why deny.toml pins
+      # the graph to the Windows target instead of carrying an ignore-list.
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: src-tauri/Cargo.toml
+          command: check advisories bans licenses

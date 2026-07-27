@@ -126,9 +126,13 @@ mod spawn_window_guard {
     }
 }
 
-/// Assign a spawned PTY child to a process-global Job Object created with KILL_ON_JOB_CLOSE, so the
+/// Assign a spawned child to a process-global Job Object created with KILL_ON_JOB_CLOSE, so the
 /// whole tree (pwsh → claude/node, or ssh.exe) is terminated when the app process exits — including a
 /// hard crash, where `session_kill` never runs and ConPTY cleanup of grandchildren is only best-effort.
+/// Called from BOTH spawn paths: PTY sessions (`session_spawn`) and `pump_and_wait`, the single
+/// streaming primitive every maintenance/stack/fork run funnels through. Joining inside
+/// `pump_and_wait` rather than at each `set_pid` caller is deliberate — a future third streaming
+/// caller cannot forget it, and the test-only `set_pid(4242)` fixtures never reach a real OpenProcess.
 /// The job handle is intentionally never closed: it lives for the app's lifetime and its closure on
 /// process death is what triggers the kill. No-op on non-Windows (the app ships Windows-only).
 #[cfg(windows)]
@@ -716,13 +720,47 @@ fn read_json_or_recover(
 /// the UI can show "статус повреждён" instead of the misleading "нет данных" (wargaming A2 MED-3).
 #[tauri::command]
 fn read_status(path: String) -> Result<Option<serde_json::Value>, String> {
-    read_json_or_recover(&path, &path).map_err(|e| {
+    let parsed = read_json_or_recover(&path, &path).map_err(|e| {
         if std::path::Path::new(&path).exists() {
             format!("corrupt: {e}")
         } else {
             e
         }
-    })
+    })?;
+    match envelope_shape_error(parsed.as_ref()) {
+        Some(why) => Err(format!("corrupt: {why}")),
+        None => Ok(parsed),
+    }
+}
+
+/// Shape gate for a parsed status envelope, reusing the frozen "corrupt: " prefix above.
+///
+/// Deliberately NOT a `#[derive(Deserialize)]` struct over the 7 canonical fields: readers still
+/// support legacy writers (`changed[]` arrays, `plugins_changed`/`plugins_failed` numbers, and an
+/// absent `status` — see `src/lib/envelope.ts`), so a strict struct would report working components
+/// as broken. What IS invariant across every writer, past and present, is that the envelope is a
+/// JSON object and that when `status` is present it is a string — a script that emits an array, a
+/// bare literal or a numeric status used to read through as "no data yet", which is the one state
+/// it must never be confused with.
+fn envelope_shape_error(v: Option<&serde_json::Value>) -> Option<String> {
+    let v = v?;
+    if !v.is_object() {
+        return Some(format!(
+            "status envelope must be a JSON object, got {}",
+            match v {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "a boolean",
+                serde_json::Value::Number(_) => "a number",
+                serde_json::Value::String(_) => "a string",
+                serde_json::Value::Array(_) => "an array",
+                serde_json::Value::Object(_) => unreachable!(),
+            }
+        ));
+    }
+    match v.get("status") {
+        Some(s) if !s.is_string() => Some("status must be a string".to_string()),
+        _ => None,
+    }
 }
 
 // Tracks the PID of the currently-running child (Some(0) = reserved/starting).
@@ -1169,6 +1207,13 @@ async fn pump_and_wait(
     // the timeout can't error.
     const RUN_MAX: std::time::Duration = std::time::Duration::from_secs(30 * 60);
     let pid = child.id();
+    // Crash safety-net: without this, a hard crash (not a clean exit, where kill_tree/cancel_run
+    // never run) orphaned the script tree — pwsh plus whatever it spawned (npm/node under a plugin
+    // sync). PTY sessions were already covered; every streamed run funnels through here, so one
+    // join covers spawn_streamed_prog, the stack/pwsh phase runners and run_fork_repo at once.
+    if let Some(p) = pid {
+        assign_to_kill_job(p);
+    }
     let status = match tokio::time::timeout(RUN_MAX, child.wait()).await {
         Ok(s) => s,
         Err(_elapsed) => {
@@ -15322,6 +15367,11 @@ async fn measure_context(name: String, lean: bool) -> Result<i64, String> {
         .spawn()
         .map_err(|e| trv("err.claude_failed", cur_lang(), &[("e", &e)]))?;
     let pid = child.id();
+    // Same crash safety-net as pump_and_wait: this path spawns `cmd /c claude` (+ its node child)
+    // and does NOT go through the streaming primitive, so it needs its own join to the kill job.
+    if let Some(p) = pid {
+        assign_to_kill_job(p);
+    }
     let out = match tokio::time::timeout(
         std::time::Duration::from_secs(180),
         child.wait_with_output(),
@@ -18547,6 +18597,28 @@ mod tests {
 
         // Unknown action errors — never silently picks a script.
         assert!(backup_args("rm-rf", None, None, Some(true), None).is_err());
+    }
+
+    #[test]
+    fn envelope_shape_rejects_non_objects_but_tolerates_legacy_writers() {
+        use serde_json::json;
+        // Absent file (never ran) stays absent — the one state a broken envelope must not be confused with.
+        assert!(envelope_shape_error(None).is_none());
+        // Legacy shapes readers still support (src/lib/envelope.ts): no `status`, `changed[]` array,
+        // plugins_* counters. None of these may be reported as corrupt.
+        assert!(envelope_shape_error(Some(&json!({ "changed": ["a", "b"] }))).is_none());
+        assert!(envelope_shape_error(Some(&json!({ "plugins_changed": 2, "plugins_failed": 0 }))).is_none());
+        assert!(envelope_shape_error(Some(&json!({ "component": "forks" }))).is_none());
+        // Canonical envelope passes.
+        assert!(envelope_shape_error(Some(
+            &json!({ "schemaVersion": 1, "component": "forks", "status": "ok", "counts": { "changed": 0 } })
+        ))
+        .is_none());
+        // Shape violations that used to read through as "no data yet".
+        assert!(envelope_shape_error(Some(&json!([1, 2, 3]))).is_some());
+        assert!(envelope_shape_error(Some(&json!("ok"))).is_some());
+        assert!(envelope_shape_error(Some(&json!(null))).is_some());
+        assert!(envelope_shape_error(Some(&json!({ "status": 3 }))).is_some());
     }
 
     #[test]

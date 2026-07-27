@@ -53,8 +53,15 @@ jobs:
           $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           Write-Host "tag=$tag package.json=$pkg tauri.conf=$tauri Cargo=$cargo"
-          if ($pkg -ne $tauri -or $pkg -ne $cargo -or $pkg -ne $tag) {
-            throw "version mismatch — tag=$tag package.json=$pkg tauri.conf=$tauri Cargo=$cargo"
+          # tauri.conf.json no longer carries a version literal — it points at package.json, which
+          # is one fewer place to forget on a bump. Assert the delegation is still in place rather
+          # than dropping the leg entirely: someone re-inlining a literal here would otherwise
+          # re-introduce the drift this step exists to catch, silently.
+          if ($tauri -ne '../package.json') {
+            throw "tauri.conf.json version must delegate to ../package.json, found '$tauri'"
+          }
+          if ($pkg -ne $cargo -or $pkg -ne $tag) {
+            throw "version mismatch — tag=$tag package.json=$pkg Cargo=$cargo"
           }
       # Run the SAME gates as CI BEFORE the signing key is ever in scope — a release published from a
       # tag whose CI never ran (or failed) must not ship signed installers carrying a type/i18n/test/

@@ -1,0 +1,58 @@
+# cargo-deny gate. Runs in CI (.github/workflows/ci.yml) and locally:
+#   cargo deny --manifest-path src-tauri/Cargo.toml check advisories bans licenses
+#
+# Why this exists: dependabot proposes version bumps weekly, but nothing failed a build if a
+# crate already in Cargo.lock picked up a live RustSec advisory in between runs — and
+# portable-pty is deliberately pinned to 0.8 (see Cargo.toml), exactly the kind of held-back
+# dependency that gate is meant to watch.
+
+[graph]
+# Castellyn ships Windows-only (CLAUDE.md; cross-platform is a stub), so the graph is evaluated
+# for the Windows target alone. This is not a way to silence findings — it is what makes them
+# TRUE. Tauri drags in whole Linux/macOS backends that are never compiled here: the archived GTK3
+# stack (atk/gdk/gtk/pango/webkit2gtk) and the Wayland clipboard path
+# (tauri-plugin-clipboard-manager → arboard → wl-clipboard-rs → wayland-scanner → quick-xml
+# 0.39.4, which carries RUSTSEC-2026-0194 and -0195). None of that code is in the shipped binary,
+# and none of it is fixable from here — wayland-scanner pins quick-xml ^0.39 upstream.
+# An advisory on anything Windows actually compiles still fails the build, which is the point.
+targets = [{ triple = "x86_64-pc-windows-msvc" }]
+
+[advisories]
+# Security advisories are hard errors — that is the point of the gate.
+# `unmaintained` stays scoped to first-party dependencies: an archived transitive crate we cannot
+# replace would otherwise mean either a rotting ignore-list or a red gate nobody can fix.
+unmaintained = "workspace"
+
+[licenses]
+# Everything actually present in the tree, all permissive. A license outside this list fails the
+# build — which is the check that keeps a copyleft dependency from reaching a shipped MIT binary.
+# MPL-2.0 (cssparser, selectors, option-ext) is file-level copyleft: linking is fine, only a
+# MODIFIED MPL file would have to stay MPL, and we vendor none of them.
+# r-efi offers "Apache-2.0 OR LGPL-2.1-or-later"; LGPL is deliberately absent here so the
+# resolver is forced onto the Apache half.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"   # a Tauri tree always carries several windows-sys/syn generations
+wildcards = "deny"            # a `*` version requirement in OUR manifest is a real mistake
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

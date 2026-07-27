@@ -5,6 +5,7 @@
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { trapTab } from '$lib/focusTrap';
   import { t } from '$lib/i18n';
 
   let {
@@ -90,24 +91,17 @@
     }
     if (e.key === 'Tab' && cardEl) {
       const f = Array.from(cardEl.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
-      if (!f.length) return;
-      const first = f[0];
-      const last = f[f.length - 1];
-      // The card itself (tabindex=-1) holds focus on open, and the backdrop sits BEFORE it in the
-      // overlay — without this branch Shift+Tab walked out of the dialog entirely, taking the
-      // Escape handler (bound on .overlay) with it.
-      if (!cardEl.contains(document.activeElement)) {
-        e.preventDefault();
-        (e.shiftKey ? last : first).focus();
-        return;
-      }
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
+      // The decision itself lives in $lib/focusTrap so it can be tested without a DOM — a broken
+      // trap is invisible to every other gate. This half stays here: query, then focus.
+      const decision = trapTab({
+        count: f.length,
+        activeIndex: f.indexOf(document.activeElement as HTMLElement),
+        cardHasFocus: cardEl.contains(document.activeElement),
+        shiftKey: e.shiftKey,
+      });
+      if (!decision) return;
+      e.preventDefault();
+      (decision === 'first' ? f[0] : f[f.length - 1]).focus();
     }
   }
 </script>

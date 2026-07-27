@@ -1,16 +1,30 @@
 version: 2
+# Routine minor/patch bumps are grouped into ONE pull request per ecosystem per week. Ungrouped,
+# every dependency opened its own PR — the review noise that gets a weekly bot muted, which is the
+# opposite of what a security-relevant bot is for. Majors stay ungrouped on purpose: those need to
+# be read one at a time. The advisory gate (cargo-deny / npm audit in ci.yml) is what compensates
+# for the lost granularity — a grouped PR carrying a vulnerable version still fails CI.
 updates:
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
   - package-ecosystem: cargo
     directory: "/src-tauri"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]

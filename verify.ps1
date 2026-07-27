@@ -62,7 +62,46 @@ Step 'svelte-check (types+i18n)' { npm run check }
 Step 'vitest'                    { npm test }
 Step 'frontend build'            { npm run build }
 Step 'cargo clippy'              { & $cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings }
-Step 'cargo test'                { & $cargo test  --manifest-path src-tauri/Cargo.toml }
+Step 'cargo test'                {
+  # nextest when available: a process per test, which is what the timing-sensitive PTY tests
+  # (pty_echo_roundtrip — the reason portable-pty is pinned to 0.8) actually want. It deliberately
+  # does NOT run doc-tests, so those are run separately; without that line the gate would silently
+  # narrow the moment nextest appears on a machine.
+  if (Get-Command cargo-nextest -ErrorAction SilentlyContinue) {
+    & $cargo nextest run --manifest-path src-tauri/Cargo.toml
+    if ($LASTEXITCODE -ne 0) { return }
+    & $cargo test --manifest-path src-tauri/Cargo.toml --doc
+  } else {
+    & $cargo test --manifest-path src-tauri/Cargo.toml
+  }
+}
+Step 'cargo-deny (advisories+licenses)' {
+  # Same gate CI runs (.github/workflows/ci.yml), config in src-tauri/deny.toml. Skipped with a
+  # loud note rather than silently when the tool is absent — a gate that quietly does nothing is
+  # exactly the failure this file exists to prevent.
+  if (Get-Command cargo-deny -ErrorAction SilentlyContinue) {
+    & $cargo deny --manifest-path src-tauri/Cargo.toml check advisories bans licenses
+  } else {
+    Write-Host "    SKIPPED — cargo-deny not installed (cargo install cargo-deny --locked); CI still enforces it" -ForegroundColor Yellow
+  }
+}
+Step 'npm audit (prod deps)'     {
+  # Through cmd on purpose: this script runs under Windows PowerShell 5.1 (see package.json's
+  # "verify" script), where the npm.ps1 shim mangles `--omit=dev` into an EALLOWSCRIPTS failure.
+  # It works under pwsh 7 and under cmd, so the indirection is the portable form, not a workaround
+  # for npm itself. --omit=dev matches ci.yml: the dev toolchain (vite/postcss/sveltekit) carries
+  # advisories that never reach the shipped binary, and gating on them trains everyone to ignore
+  # the step.
+  # `npm run verify` exports the user's global npm config into this child process. If that config
+  # carries `allow-scripts` (a machine-level setting — e.g. allow-scripts=@anthropic-ai/claude-code
+  # in ~/.npmrc), npm 12 refuses ANY project-scoped subcommand with EALLOWSCRIPTS, so the audit
+  # died on the developer's machine while being perfectly fine on a clean CI runner. Drop the
+  # inherited value for this one call and put it back.
+  $inherited = $env:npm_config_allow_scripts
+  Remove-Item env:npm_config_allow_scripts -ErrorAction SilentlyContinue
+  cmd /c "npm audit --omit=dev --audit-level=high"
+  if ($null -ne $inherited) { $env:npm_config_allow_scripts = $inherited }
+}
 
 Write-Host ""
 Write-Host "All gates green." -ForegroundColor Green
