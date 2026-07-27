@@ -691,9 +691,9 @@ fn read_json_opt(
     match std::fs::read_to_string(path.as_ref()) {
         Ok(c) => parse_json_bom(&c)
             .map(Some)
-            .map_err(|e| format!("parse {label}: {e}")),
+            .map_err(|e| trv("err.fs_parse", cur_lang(), &[("path", &label), ("e", &e)])),
         Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("read {label}: {e}")),
+        Err(e) => Err(trv("err.fs_read", cur_lang(), &[("path", &label), ("e", &e)])),
     }
 }
 
@@ -1581,9 +1581,9 @@ fn read_fork_config() -> ForkConfig {
 }
 
 fn write_fork_config_inner(config: &ForkConfig) -> Result<(), String> {
-    let p = fork_config_path().ok_or_else(|| "no APPDATA".to_string())?;
+    let p = fork_config_path().ok_or_else(|| tr("err.no_appdata", cur_lang()).to_string())?;
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    write_json_atomic(&p, &json).map_err(|e| e.to_string())
+    write_json_atomic(&p, &json).map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]))
 }
 
 /// Persist the fork discovery config to the durable path. Subsequent fork runs read it via -ConfigPath.
@@ -2251,9 +2251,11 @@ async fn run_profiles(
             // same engine the repair commands use. Creating one missing profile therefore costs
             // nothing like a full -Force reinstall, which re-touches every profile and re-runs the
             // global CLI/RTK steps.
-            let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+            let home = std::env::var("USERPROFILE")
+                .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
             let dir = format!("{home}\\.claude-{n}");
-            std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir}: {e}"))?;
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| trv("err.fs_create", cur_lang(), &[("path", &dir), ("e", &e)]))?;
             return run_native_streamed(app, state, stream_id::PROFILES.to_string(), move |out, _| {
                 let code = repair_profile_streaming(&n, true, out);
                 refresh_profiles_snapshot(out);
@@ -2455,7 +2457,8 @@ const CONFIG_SOURCE_REL: &str = "{{PROFILES}}\\config";
 /// Returns null if either file is missing.
 #[tauri::command]
 fn read_drift_diff(name: String) -> Result<Option<DriftDiff>, String> {
-    let home = std::env::var("USERPROFILE").map_err(|_| "no USERPROFILE".to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let tip_path = format!("{}\\.claude\\{}", home, name);
     // abs() expands the {{PROFILES}} placeholder in CONFIG_SOURCE_REL (which is an ABSOLUTE path);
     // a raw format! left the literal token in the path AND wrongly prefixed scripts_root(), so the
@@ -2725,14 +2728,15 @@ fn refresh_profiles_snapshot(out: &dyn Fn(&str)) {
 fn write_profiles_snapshot() -> Result<(), String> {
     let snap = build_profiles_snapshot()?;
     let json = serde_json::to_string_pretty(&snap).map_err(|e| format!("serialize: {e}"))?;
-    write_json_atomic(&abs(PROFILES_JSON_REL), &json).map_err(|e| format!("write: {e}"))
+    write_json_atomic(&abs(PROFILES_JSON_REL), &json)
+        .map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]))
 }
 
 /// The snapshot itself, separated from writing it so a live smoke can compare the native result
 /// against the PowerShell-produced file on this machine without overwriting the real one.
 fn build_profiles_snapshot() -> Result<profiles_status::Snapshot, String> {
     let home = std::path::PathBuf::from(
-        std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE: {e}"))?,
+        std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?,
     );
     // Missing OR corrupt profiles.json must DEGRADE, never blank the dashboard: profiles.json lives
     // in the same tree as the maintenance scripts, so the script-less machine this port exists for
@@ -3503,13 +3507,16 @@ fn sync_set(enabled: &[String]) -> Result<i32, String> {
         "items": items_obj,
     });
     let cfg_json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-    write_json_atomic(&cfg, &cfg_json).map_err(|e| format!("write sync-config.json: {e}"))?;
+    write_json_atomic(&cfg, &cfg_json)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &"sync-config.json"), ("e", &e)]))?;
 
     // Regenerate canonical (config\.stignore, backed up) + live (~/.claude/.stignore).
     let canon = abs(SYNC_CANON_STIGNORE_REL);
-    write_json_atomic(&canon, &content).map_err(|e| format!("write config\\.stignore: {e}"))?;
+    write_json_atomic(&canon, &content)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &canon), ("e", &e)]))?;
     let live = live_stignore_path();
-    write_json_atomic(&live, &content).map_err(|e| format!("write ~/.claude/.stignore: {e}"))?;
+    write_json_atomic(&live, &content)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &live), ("e", &e)]))?;
 
     syncthing_rescan();
     Ok(0)
@@ -4977,8 +4984,10 @@ pub(crate) fn read_stack_health_blocking() -> Vec<StackHealth> {
 #[tauri::command]
 fn update_engine(id: String, base_url: String, port: u16) -> Result<(), String> {
     let path = abs(ENGINES_CONFIG_REL);
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("read engines.json: {e}"))?;
-    let mut v = parse_json_bom(&content).map_err(|e| format!("parse engines.json: {e}"))?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &"engines.json"), ("e", &e)]))?;
+    let mut v = parse_json_bom(&content)
+        .map_err(|e| trv("err.fs_parse", cur_lang(), &[("path", &"engines.json"), ("e", &e)]))?;
     let arr = v
         .get_mut("engines")
         .and_then(|e| e.as_array_mut())
@@ -4997,7 +5006,8 @@ fn update_engine(id: String, base_url: String, port: u16) -> Result<(), String> 
     }
     let json = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     // Atomic temp+rename (+ .bak): a crash mid-write must never blank the engines tab.
-    write_json_atomic(&path, &json).map_err(|e| format!("write engines.json: {e}"))?;
+    write_json_atomic(&path, &json)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &"engines.json"), ("e", &e)]))?;
     Ok(())
 }
 
@@ -6018,11 +6028,12 @@ fn manage_provider_native(
 fn read_settings_for_edit(path: &str) -> Result<serde_json::Value, String> {
     match std::fs::read_to_string(path) {
         Ok(ref c) if !c.trim().is_empty() => {
-            parse_json_bom(c).map_err(|e| format!("parse settings: {e}"))
+            parse_json_bom(c)
+                .map_err(|e| trv("err.fs_parse", cur_lang(), &[("path", &path), ("e", &e)]))
         }
         Ok(_) => Ok(serde_json::json!({})),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
-        Err(e) => Err(format!("read settings: {e}")),
+        Err(e) => Err(trv("err.fs_read", cur_lang(), &[("path", &path), ("e", &e)])),
     }
 }
 
@@ -6332,7 +6343,8 @@ async fn read_profile_matrix() -> Result<Vec<MatrixRow>, String> {
 }
 
 fn read_profile_matrix_blocking() -> Result<Vec<MatrixRow>, String> {
-    let home = std::env::var("USERPROFILE").map_err(|_| "no USERPROFILE".to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let Some(cfg) = read_profiles_config()? else {
         return Ok(Vec::new());
     };
@@ -6463,7 +6475,8 @@ fn apply_proxy_env(settings_path: &str, url: &str) -> Result<(), String> {
     }
     let serialized =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {e}"))?;
-    write_json_atomic(settings_path, &serialized).map_err(|e| format!("write settings: {e}"))
+    write_json_atomic(settings_path, &serialized)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &settings_path), ("e", &e)]))
 }
 
 /// Set (or clear, when `url` empty) a profile's HTTP(S)_PROXY. Guards the live-session footgun like
@@ -6489,11 +6502,10 @@ fn set_profile_proxy(name: String, url: String) -> Result<(), String> {
         || url.starts_with("https://")
         || url.starts_with("socks5://");
     if !scheme_ok {
-        // ponytail: plain-English validation error — i18n.rs (the tr/trv catalog) is outside this
-        // agent's edit zone; add an err.* key later if this surfaces in the UI often.
-        return Err("proxy URL must start with http://, https:// or socks5://".to_string());
+        return Err(tr("err.proxy_url_scheme", cur_lang()).into());
     }
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let settings_path = format!("{home}\\.claude-{name}\\settings.json");
     apply_proxy_env(&settings_path, &url)
 }
@@ -6567,7 +6579,7 @@ fn set_profile_folders(name: String, folders: Vec<String>) -> Result<Vec<String>
         return Err(trv("err.invalid_profile_name", cur_lang(), &[("name", &name)]));
     }
     let Some(cfg) = read_profiles_config()? else {
-        return Err("profiles.json not found".to_string());
+        return Err(tr("err.profiles_json_missing", cur_lang()).into());
     };
     let known = profile_names();
     if !known.iter().any(|n| n == &name) {
@@ -6584,7 +6596,7 @@ fn set_profile_folders(name: String, folders: Vec<String>) -> Result<Vec<String>
     let defaults = shared_folders_default(&cfg);
     for f in &folders {
         if !defaults.iter().any(|d| d == f) {
-            return Err(format!("unknown shared folder: {f}"));
+            return Err(trv("err.unknown_shared_folder", cur_lang(), &[("f", &f)]));
         }
     }
     // 1. Surgically persist the new linkedFolders set.
@@ -6592,9 +6604,10 @@ fn set_profile_folders(name: String, folders: Vec<String>) -> Result<Vec<String>
     let serialized =
         serde_json::to_string_pretty(&updated).map_err(|e| format!("serialize profiles.json: {e}"))?;
     write_json_atomic(&abs(PROFILES_CONFIG_REL), &serialized)
-        .map_err(|e| format!("write profiles.json: {e}"))?;
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &"profiles.json"), ("e", &e)]))?;
     // 2. Detach links no longer wanted (reparse points only; real data is kept + reported).
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let profile_dir = std::path::Path::new(&home).join(format!(".claude-{name}"));
     let mut kept = Vec::new();
     for folder in &defaults {
@@ -6640,13 +6653,15 @@ fn set_profile_plugins(name: String, enable: Vec<String>, disable: Vec<String>) 
             return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", id)]));
         }
     }
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let settings_path = format!("{home}\\.claude-{name}\\settings.json");
     let mut settings: serde_json::Value = read_settings_for_edit(&settings_path)?;
     upsert_enabled_plugins(&mut settings, &enable, &disable);
     let serialized =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("serialize settings: {e}"))?;
-    write_json_atomic(&settings_path, &serialized).map_err(|e| format!("write settings: {e}"))?;
+    write_json_atomic(&settings_path, &serialized)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &settings_path), ("e", &e)]))?;
     invalidate_plugins_cache(); // P4: the enabled set changed — next open must re-read
     Ok(())
 }
@@ -6805,9 +6820,9 @@ fn kr_set(service: &str, user: &str, secret: &str) -> Result<(), String> {
         return iso_kr_store(&m);
     }
     keyring::Entry::new(service, user)
-        .map_err(|e| format!("credential store: {e}"))?
+        .map_err(|e| trv("err.keyring_save", cur_lang(), &[("e", &e)]))?
         .set_password(secret)
-        .map_err(|e| format!("save credential: {e}"))
+        .map_err(|e| trv("err.keyring_save", cur_lang(), &[("e", &e)]))
 }
 fn kr_delete(service: &str, user: &str) {
     if iso_mode() {
@@ -7051,7 +7066,8 @@ fn write_myproviders_raw(list: &[serde_json::Value]) -> Result<(), String> {
     let path = abs(MYPROVIDERS_CONFIG_REL);
     let v = serde_json::json!({ "schemaVersion": 1, "providers": list });
     let json = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    write_json_atomic(&path, &json).map_err(|e| format!("write myproviders.json: {e}"))
+    write_json_atomic(&path, &json)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &"myproviders.json"), ("e", &e)]))
 }
 
 fn myprovider_from_entry(e: &serde_json::Value) -> MyProvider {
@@ -7412,11 +7428,12 @@ fn delete_freellmapi_auth(key: String) -> Result<(), String> {
 /// F24: canonical `~/.claude/skills` path (resolves symlinks), mirroring gateway_base_url pattern.
 #[tauri::command]
 fn canonical_skills_dir() -> Result<String, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE: {e}"))?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let root = std::path::Path::new(&home).join(".claude").join("skills");
     std::fs::canonicalize(&root)
         .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("canonicalize skills dir: {e}"))
+        .map_err(|_| trv("err.dir_not_found", cur_lang(), &[("path", &root.display())]))
 }
 
 /// freellmapi gateway base URL from the `gateway` service port in stack.json. None if absent.
@@ -8127,18 +8144,20 @@ async fn check_provider_balance(id: String) -> serde_json::Value {
 #[tauri::command]
 async fn read_profile_file(name: String, which: String) -> Result<String, String> {
     if !valid_profile_name(&name) {
-        return Err("invalid profile name".into());
+        return Err(tr("err.invalid_profile_name_plain", cur_lang()).into());
     }
     let file = match which.as_str() {
         "claude" => "CLAUDE.md",
         "settings" => "settings.json",
         _ => return Err("unknown file".into()),
     };
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let path = std::path::Path::new(&home)
         .join(format!(".claude-{name}"))
         .join(file);
-    std::fs::read_to_string(&path).map_err(|e| format!("{e}"))
+    std::fs::read_to_string(&path)
+        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &file), ("e", &e)]))
 }
 
 // --- Claude Code usage limits (per profile) ---------------------------------------------------
@@ -8267,11 +8286,11 @@ fn sessions_prefs_path() -> Option<String> {
 /// Read the durable Sessions-prefs sidecar (BOM-tolerant). `None` when it doesn't exist yet.
 #[tauri::command]
 fn read_sessions_prefs() -> Result<Option<String>, String> {
-    let path = sessions_prefs_path().ok_or("no USERPROFILE")?;
+    let path = sessions_prefs_path().ok_or_else(|| tr("err.no_userprofile", cur_lang()))?;
     match std::fs::read_to_string(&path) {
         Ok(s) => Ok(Some(s.trim_start_matches('\u{feff}').to_string())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(trv("err.read", cur_lang(), &[("e", &e)])),
     }
 }
 
@@ -8279,8 +8298,8 @@ fn read_sessions_prefs() -> Result<Option<String>, String> {
 /// The frontend owns the JSON shape (a flat map of the mirrored cmh-* keys → their stored strings).
 #[tauri::command]
 fn write_sessions_prefs(json: String) -> Result<(), String> {
-    let path = sessions_prefs_path().ok_or("no USERPROFILE")?;
-    write_json_atomic(&path, &json).map_err(|e| e.to_string())
+    let path = sessions_prefs_path().ok_or_else(|| tr("err.no_userprofile", cur_lang()))?;
+    write_json_atomic(&path, &json).map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]))
 }
 
 /// opencode's global config path: $OPENCODE_CONFIG → $XDG_CONFIG_HOME\opencode → ~/.config/opencode.
@@ -8827,15 +8846,17 @@ fn mcp_remove_extra(name: String, profile: String) -> Result<(), String> {
             &[("id", &profile)],
         ));
     }
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let path = format!("{home}\\.claude-{profile}\\.claude.json");
     let mut doc = read_json_or_recover(&path, ".claude.json")?
-        .ok_or_else(|| format!("profile {profile} has no .claude.json"))?;
+        .ok_or_else(|| trv("err.file_not_found", cur_lang(), &[("path", &path)]))?;
     if let Some(obj) = doc.get_mut("mcpServers").and_then(|m| m.as_object_mut()) {
         obj.remove(&name);
     }
     let json = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
-    write_json_atomic(&path, &json).map_err(|e| format!("write .claude.json: {e}"))
+    write_json_atomic(&path, &json)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &path), ("e", &e)]))
 }
 
 const SCHEDULE_SCRIPT_REL: &str = "{{PROFILES}}\\Schedule-Hub.ps1";
@@ -9079,7 +9100,9 @@ async fn list_plugins() -> Result<serde_json::Value, String> {
         return Err(trv("err.claude_launch", cur_lang(), &[("e", &msg)]));
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let mut v = parse_json_bom(stdout.trim()).map_err(|e| format!("parse plugins: {e}"))?;
+    let mut v = parse_json_bom(stdout.trim()).map_err(|e| {
+        trv("err.fs_parse", cur_lang(), &[("path", &"claude plugin list"), ("e", &e)])
+    })?;
     let desc = plugin_descriptions();
     let own = own_marketplaces();
     // Scope per plugin (update must target it) + managed enabledPlugins policy (an explicit false
@@ -9167,9 +9190,10 @@ fn unblock_managed_plugin(id: String) -> Result<(), String> {
         return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
     }
     let path = source_managed_path();
-    let text =
-        std::fs::read_to_string(&path).map_err(|e| format!("read managed source: {e}"))?;
-    let mut v = parse_json_bom(&text).map_err(|e| format!("parse managed source: {e}"))?;
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &path), ("e", &e)]))?;
+    let mut v = parse_json_bom(&text)
+        .map_err(|e| trv("err.fs_parse", cur_lang(), &[("path", &path), ("e", &e)]))?;
     let removed = v
         .get_mut("enabledPlugins")
         .and_then(|ep| ep.as_object_mut())
@@ -9179,7 +9203,8 @@ fn unblock_managed_plugin(id: String) -> Result<(), String> {
         return Err(trv("err.plugin_not_blocked", cur_lang(), &[("id", &id)]));
     }
     let serialized = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    write_json_atomic(&path, &serialized).map_err(|e| format!("write managed source: {e}"))?;
+    write_json_atomic(&path, &serialized)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &path), ("e", &e)]))?;
     invalidate_plugins_cache(); // P4: block policy changed — next open must re-read
     Ok(())
 }
@@ -9902,7 +9927,8 @@ async fn share_skills() -> Result<ShareResult, String> {
 fn share_skills_blocking() -> Result<ShareResult, String> {
     let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let target_dir = format!("{home}\\.agents\\skills");
-    std::fs::create_dir_all(&target_dir).map_err(|e| format!("create {target_dir}: {e}"))?;
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| trv("err.fs_create", cur_lang(), &[("path", &target_dir), ("e", &e)]))?;
 
     let mut res = ShareResult {
         created: 0,
@@ -10040,7 +10066,8 @@ async fn share_commands() -> Result<ShareResult, String> {
 fn share_commands_blocking() -> Result<ShareResult, String> {
     let home = std::env::var("USERPROFILE").map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let target_dir = format!("{home}\\.agents\\skills");
-    std::fs::create_dir_all(&target_dir).map_err(|e| format!("create {target_dir}: {e}"))?;
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| trv("err.fs_create", cur_lang(), &[("path", &target_dir), ("e", &e)]))?;
 
     let mut res = ShareResult {
         created: 0,
@@ -10335,7 +10362,8 @@ fn run_opencode_mcp() -> Result<usize, String> {
     }
 
     let serialized = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    write_json_atomic(&cfg_path, &serialized).map_err(|e| format!("write opencode.json: {e}"))?;
+    write_json_atomic(&cfg_path, &serialized)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &cfg_path), ("e", &e)]))?;
     // R7: update the ledger through the atomic patch (bumps rev; can't lose a concurrent write).
     if let Err(e) = patch_config(|c| {
         c.managed_mcp.get_or_insert_default().opencode = Some(canon_names);
@@ -10484,7 +10512,8 @@ fn run_opencode_providers() -> Result<usize, String> {
     }
 
     let serialized = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    write_json_atomic(&cfg_path, &serialized).map_err(|e| format!("write opencode.json: {e}"))?;
+    write_json_atomic(&cfg_path, &serialized)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &cfg_path), ("e", &e)]))?;
     Ok(count)
 }
 
@@ -10659,7 +10688,7 @@ fn patch_codex_config(
     use toml_edit::{value, DocumentMut, Item, Table};
     let mut doc: DocumentMut = toml_text
         .parse()
-        .map_err(|e| format!("parse config.toml: {e}"))?;
+        .map_err(|e| trv("err.fs_parse", cur_lang(), &[("path", &"config.toml"), ("e", &e)]))?;
 
     fn subtable<'a>(parent: &'a mut Table, key: &str) -> &'a mut Table {
         if !parent.contains_key(key) || parent.get(key).and_then(Item::as_table).is_none() {
@@ -10694,7 +10723,7 @@ fn patch_codex_profile(
     let mut doc: DocumentMut = existing
         .trim_start_matches('\u{feff}')
         .parse()
-        .map_err(|e| format!("parse profile toml: {e}"))?;
+        .map_err(|e| trv("err.fs_parse", cur_lang(), &[("path", &"profile toml"), ("e", &e)]))?;
     doc.as_table_mut()
         .insert("model_provider", value(provider_id));
     if !doc.as_table().contains_key("model") {
@@ -10726,13 +10755,14 @@ fn deploy_codex_provider(
         base_url,
         env_key,
     )?;
-    write_json_atomic(&cfg_path, &patched).map_err(|e| format!("write config.toml: {e}"))?;
+    write_json_atomic(&cfg_path, &patched)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &cfg_path), ("e", &e)]))?;
 
     let prof_path = format!("{home}\\.codex\\{provider_id}.config.toml");
     let existing = std::fs::read_to_string(&prof_path).unwrap_or_default();
     let prof = patch_codex_profile(&existing, provider_id, seed_model)?;
     write_json_atomic(&prof_path, &prof)
-        .map_err(|e| format!("write {provider_id}.config.toml: {e}"))?;
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &prof_path), ("e", &e)]))?;
     Ok(())
 }
 
@@ -10875,7 +10905,8 @@ fn run_opencode_instructions() -> Result<usize, String> {
     }
 
     let serialized = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    write_json_atomic(&cfg_path, &serialized).map_err(|e| format!("write opencode.json: {e}"))?;
+    write_json_atomic(&cfg_path, &serialized)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &cfg_path), ("e", &e)]))?;
     Ok(paths.len())
 }
 
@@ -11730,7 +11761,7 @@ async fn run_marketplace_bump(
     level: String,
 ) -> Result<i32, String> {
     if !matches!(level.as_str(), "patch" | "minor" | "major") {
-        return Err(format!("unknown bump level: {level}"));
+        return Err(trv("err.unknown_mode", cur_lang(), &[("mode", &level)]));
     }
     // Same id guard as run_plugin: the id reaches process args and a filesystem path.
     if id.is_empty()
@@ -11749,10 +11780,14 @@ async fn run_marketplace_bump(
         return Err(trv("err.invalid_plugin_id", cur_lang(), &[("id", &id)]));
     }
     if !own_marketplaces().contains(&market) {
-        return Err(format!("{market} is not an own (directory-source) marketplace"));
+        return Err(trv(
+            "err.not_own_marketplace",
+            cur_lang(),
+            &[("market", &market)],
+        ));
     }
     let Some((_, _, markets)) = load_installed_plugins() else {
-        return Err("installed_plugins.json unreadable".into());
+        return Err(tr("err.installed_plugins_unreadable", cur_lang()).into());
     };
     let Some(loc) = markets
         .get(&market)
@@ -11760,11 +11795,15 @@ async fn run_marketplace_bump(
         .and_then(|v| v.as_str())
         .map(String::from)
     else {
-        return Err(format!("no installLocation for {market}"));
+        return Err(trv(
+            "err.no_install_location",
+            cur_lang(),
+            &[("market", &market)],
+        ));
     };
     let script = format!("{loc}\\Check-MarketplaceVersions.ps1");
     if !std::path::Path::new(&script).is_file() {
-        return Err(format!("bump script not found: {script}"));
+        return Err(trv("err.bump_script_missing", cur_lang(), &[("script", &script)]));
     }
     run_native_streamed(app, state, stream_id::PLUGIN_MGR.to_string(), move |out, err| {
         out(&trv(
@@ -11937,7 +11976,8 @@ async fn run_plugins_bulk(app: AppHandle, action: String, ids: Vec<String>) -> R
 /// ~/.agents stays intact. Plugin-bundled skills (parent ≠ ~/.claude/skills) are refused.
 #[tauri::command]
 fn delete_skill(dir: String) -> Result<(), String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let skills_root = std::path::Path::new(&home).join(".claude").join("skills");
     let target = std::path::Path::new(&dir);
     let parent = target.parent().ok_or(tr("err.bad_path", cur_lang()))?;
@@ -11988,19 +12028,22 @@ struct AgentDetail {
 
 /// ~/.claude/agents — the canonical standalone-subagent dir (mirrors list_skills' ~/.claude/skills).
 fn agents_dir() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE: {e}"))?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     Ok(std::path::Path::new(&home).join(".claude").join("agents"))
 }
 
 /// Refuse any target whose PARENT isn't the real agents dir — canonicalized so a junctioned dir and
 /// path-traversal both resolve honestly (same guard shape as delete_skill).
 fn agent_guard(target: &std::path::Path) -> Result<(), String> {
-    let canon_dir =
-        std::fs::canonicalize(agents_dir()?).map_err(|e| format!("agents dir: {e}"))?;
+    let dir = agents_dir()?;
+    let canon_dir = std::fs::canonicalize(&dir)
+        .map_err(|_| trv("err.dir_not_found", cur_lang(), &[("path", &dir.display())]))?;
     let parent = target
         .parent()
         .ok_or_else(|| tr("err.bad_path", cur_lang()).to_string())?;
-    let canon_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    let canon_parent = std::fs::canonicalize(parent)
+        .map_err(|_| tr("err.bad_path", cur_lang()).to_string())?;
     if canon_parent != canon_dir {
         return Err(tr("err.bad_path", cur_lang()).into());
     }
@@ -12118,7 +12161,8 @@ fn list_agents_blocking() -> Vec<AgentInfo> {
 fn read_agent(path: String) -> Result<AgentDetail, String> {
     let p = std::path::Path::new(&path);
     agent_guard(p)?;
-    let content = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let content = std::fs::read_to_string(p)
+        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &path), ("e", &e)]))?;
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
     let fm = extract_frontmatter(content);
     let stem = p
@@ -12147,7 +12191,8 @@ fn save_agent(
     path: Option<String>,
 ) -> Result<String, String> {
     let dir = agents_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| trv("err.fs_create", cur_lang(), &[("path", &dir.display()), ("e", &e)]))?;
     let target = match path.as_deref().filter(|s| !s.is_empty()) {
         Some(p) => {
             let pp = std::path::Path::new(p).to_path_buf();
@@ -12166,7 +12211,8 @@ fn save_agent(
         }
     };
     let content = render_agent_md(&name, &description, &model, &tools, &prompt);
-    std::fs::write(&target, content).map_err(|e| e.to_string())?;
+    std::fs::write(&target, content)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &target.display()), ("e", &e)]))?;
     Ok(target.display().to_string())
 }
 
@@ -12174,7 +12220,7 @@ fn save_agent(
 fn delete_agent(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     agent_guard(p)?;
-    std::fs::remove_file(p).map_err(|e| e.to_string())
+    std::fs::remove_file(p).map_err(|e| trv("err.fs_remove", cur_lang(), &[("path", &path), ("e", &e)]))
 }
 
 /// One check line of a subagent smoke test.
@@ -12236,7 +12282,8 @@ fn cli_invoked(body: &str, cli: &str) -> bool {
 fn test_subagent_blocking(path: &str) -> Result<AgentTestResult, String> {
     let p = std::path::Path::new(path);
     agent_guard(p)?;
-    let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let raw = std::fs::read_to_string(p)
+        .map_err(|e| trv("err.fs_read", cur_lang(), &[("path", &path), ("e", &e)]))?;
     let content = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
     let fm = extract_frontmatter(content);
     let body = frontmatter_body(content);
@@ -12299,30 +12346,35 @@ fn conflict_base_path(path: &str) -> Option<String> {
 fn resolve_sync_conflict(path: String, action: String) -> Result<(), String> {
     // Guard 1: the marker. Cheap string check first; also yields the base path for keep-other.
     let base = conflict_base_path(&path)
-        .ok_or_else(|| format!("not a sync-conflict file: {path}"))?;
+        .ok_or_else(|| trv("err.not_sync_conflict", cur_lang(), &[("path", &path)]))?;
     // Guard 2: canonicalize and confine to %USERPROFILE%\.claude (component-wise, not string prefix).
     let home = std::env::var("USERPROFILE")
         .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let claude_root = std::fs::canonicalize(std::path::Path::new(&home).join(".claude"))
         .map_err(|e| format!("resolve .claude: {e}"))?;
-    let canon = std::fs::canonicalize(&path).map_err(|e| format!("no such file: {e}"))?;
+    let canon = std::fs::canonicalize(&path)
+        .map_err(|_| trv("err.file_not_found", cur_lang(), &[("path", &path)]))?;
     if !canon.starts_with(&claude_root) {
-        return Err(format!("refused: {path} is outside {}", claude_root.display()));
+        return Err(trv(
+            "err.path_outside_claude",
+            cur_lang(),
+            &[("path", &path), ("root", &claude_root.display())],
+        ));
     }
     match action.as_str() {
-        "keep-local" => {
-            std::fs::remove_file(&path).map_err(|e| format!("delete conflict: {e}"))
-        }
+        "keep-local" => std::fs::remove_file(&path)
+            .map_err(|e| trv("err.fs_remove", cur_lang(), &[("path", &path), ("e", &e)])),
         "keep-other" => {
             // Back up the local original (best-effort: absent base just means nothing to preserve),
             // then promote the conflict copy into the original's place.
             if std::path::Path::new(&base).exists() {
                 std::fs::rename(&base, format!("{base}.pre-conflict.bak"))
-                    .map_err(|e| format!("backup base: {e}"))?;
+                    .map_err(|e| trv("err.fs_rename", cur_lang(), &[("path", &base), ("e", &e)]))?;
             }
-            std::fs::rename(&path, &base).map_err(|e| format!("promote conflict: {e}"))
+            std::fs::rename(&path, &base)
+                .map_err(|e| trv("err.fs_rename", cur_lang(), &[("path", &path), ("e", &e)]))
         }
-        _ => Err(format!("unknown action: {action}")),
+        _ => Err(trv("err.unknown_action", cur_lang(), &[("action", &action)])),
     }
 }
 
@@ -12588,7 +12640,8 @@ struct OrphanInfo {
 /// is enough to judge; add a bounded, symlink-skipping size only if the date proves insufficient.
 #[tauri::command]
 fn read_orphan_profiles() -> Result<Vec<OrphanInfo>, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let canon = profile_names();
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(&home) else {
@@ -12628,7 +12681,8 @@ fn read_orphan_profiles() -> Result<Vec<OrphanInfo>, String> {
 /// exact dir, and the guards below already close the traversal/wrong-target risks.
 #[tauri::command]
 fn delete_orphan_profile(name: String) -> Result<(), String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     // Defense-in-depth. A real read_dir name is a single component, but a hand-crafted IPC call
     // could smuggle separators/`..`, control chars, or a trailing space/dot that Windows strips
     // during path normalization (so `.claude-cc1 ` would resolve to the canon `.claude-cc1`).
@@ -12726,14 +12780,18 @@ fn recycle_path(path: &str) -> Result<(), String> {
     };
     let rc = unsafe { SHFileOperationW(&mut op) };
     if op.fAnyOperationsAborted.as_bool() {
-        return Err("recycle aborted".to_string());
+        return Err(tr("err.recycle_aborted", cur_lang()).into());
     }
     if rc == 0 {
         Ok(())
     } else {
         // SHFileOperation's codes are its own (DE_*), not GetLastError — report the raw value
         // rather than a misleading OS-error string.
-        Err(format!("recycle failed (SHFileOperation 0x{rc:X})"))
+        Err(trv(
+            "err.recycle_failed",
+            cur_lang(),
+            &[("rc", &format!("{rc:X}"))],
+        ))
     }
 }
 
@@ -12842,7 +12900,8 @@ struct PluginSyncStatus {
 
 #[tauri::command]
 fn plugin_sync_status() -> Result<PluginSyncStatus, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let (mut wired, mut unwired) = (Vec::new(), Vec::new());
     for (name, sp) in plugin_sync_profiles(&home) {
         let is_wired = std::fs::read_to_string(&sp)
@@ -12903,7 +12962,8 @@ fn sweep_profile_settings<K>(
 /// installs/updates the hook script. Unreadable/malformed settings files are skipped.
 #[tauri::command]
 fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     if enabled {
         ensure_plugin_sync_script(&home)?;
     }
@@ -12930,7 +12990,8 @@ fn plugin_sync_set(enabled: bool) -> Result<PluginSyncStatus, String> {
 /// Run the reconcile once now, streaming output into the console (component "pluginsync").
 #[tauri::command]
 async fn run_plugin_sync(app: AppHandle, state: State<'_, RunState>) -> Result<i32, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let script = ensure_plugin_sync_script(&home)?;
     run_native_streamed(app, state, stream_id::PLUGIN_SYNC.to_string(), move |out, err| {
         out(&format!("py -X utf8 {script} --verbose"));
@@ -13297,7 +13358,8 @@ fn marketplace_versions_drift_item() -> Option<StackDriftItem> {
 /// Never panics: every per-item IO failure still degrades to that item's state=error.
 #[tauri::command]
 fn read_stack_drift() -> Result<Vec<StackDriftItem>, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     Ok([
         plugin_sync_file_drift_item(&home),
         plugin_sync_wiring_drift_item(&home),
@@ -13612,17 +13674,21 @@ async fn create_settings_junction() -> Result<(), String> {
             ));
         }
         if !std::path::Path::new(&target).is_dir() {
-            return Err(format!("target missing: {target}"));
+            return Err(trv("err.dir_not_found", cur_lang(), &[("path", &target)]));
         }
         let st = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J", &link, &target])
             .creation_flags(CREATE_NO_WINDOW)
             .status()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| spawn_err_text("cmd", &e.to_string()))?;
         if std::path::Path::new(&link).is_dir() {
             Ok(())
         } else {
-            Err(format!("mklink /J failed (exit {:?})", st.code()))
+            Err(trv(
+                "err.mklink_failed",
+                cur_lang(),
+                &[("code", &format!("{:?}", st.code()))],
+            ))
         }
     })
     .await
@@ -13957,7 +14023,8 @@ fn gc_scan(home: &str) -> Vec<GcItem> {
 /// Itemize stack garbage across physical plugin stores. Err only when USERPROFILE is unset.
 #[tauri::command]
 async fn read_gc_scan() -> Result<Vec<GcItem>, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     tokio::task::spawn_blocking(move || gc_scan(&home))
         .await
         .map_err(|e| e.to_string())
@@ -13968,7 +14035,8 @@ async fn read_gc_scan() -> Result<Vec<GcItem>, String> {
 /// point (nor, for dirs, contain reparse children), and actually vanish after the recycle call.
 #[tauri::command]
 async fn run_gc_delete(ids: Vec<String>) -> Result<GcDeleteReport, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     tokio::task::spawn_blocking(move || {
         let stores = gc_stores(&home);
         let items = gc_scan(&home);
@@ -14196,7 +14264,8 @@ struct AgentStatusHookState {
 }
 
 fn agent_status_hook_state() -> Result<AgentStatusHookState, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let (mut wired, mut unwired, mut partial) = (Vec::new(), Vec::new(), Vec::new());
     for (name, sp) in plugin_sync_profiles(&home) {
         // Unreadable/malformed settings.json → treated as fully unwired (every event missing).
@@ -14234,7 +14303,8 @@ fn agent_status_hook_status() -> Result<AgentStatusHookState, String> {
 /// enable also installs/updates the hook script. Malformed settings files are skipped.
 #[tauri::command]
 fn agent_status_hook_set(enabled: bool) -> Result<AgentStatusHookState, String> {
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     if enabled {
         ensure_status_hook_script(&home)?;
     }
@@ -15324,7 +15394,9 @@ fn set_launch_config(
         serde_json::json!({ "mode": mode, "mcp": mcp, "claudeMd": claude_md }),
     );
     let json = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    write_json_atomic(&path, &json).map_err(|e| format!("write profile-launch.json: {e}"))?;
+    write_json_atomic(&path, &json).map_err(|e| {
+        trv("err.fs_write", cur_lang(), &[("path", &"profile-launch.json"), ("e", &e)])
+    })?;
     Ok(())
 }
 
@@ -15340,7 +15412,8 @@ async fn measure_context(name: String, lean: bool) -> Result<i64, String> {
             &[("name", &name)],
         ));
     }
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let dir = format!("{home}\\.claude-{name}");
     let mut argline: Vec<String> = vec!["/c".into(), "claude".into()];
     if lean {
@@ -15427,7 +15500,8 @@ fn launch_profile(name: String, mode: String) -> Result<(), String> {
             &[("mode", &mode)],
         ));
     }
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let dir = format!("{home}\\.claude-{name}");
     let (launch_mode, _, _) = read_profile_launch(&name);
     let lean = launch_mode == "lean";
@@ -15552,8 +15626,8 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
         return Err(trv("err.bad_url_scheme", cur_lang(), &[("url", &url)]));
     }
     app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| e.to_string())
+        .open_url(url.clone(), None::<&str>)
+        .map_err(|e| trv("err.open_path", cur_lang(), &[("path", &url), ("e", &e)]))
 }
 
 const AUTOSTART_KEY: &str = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -15653,12 +15727,12 @@ fn get_autostart() -> bool {
 #[tauri::command]
 fn set_autostart(enabled: bool) -> Result<(), String> {
     if iso_mode() {
-        let p = iso_autostart_flag().ok_or("no appdata")?;
+        let p = iso_autostart_flag().ok_or_else(|| tr("err.no_appdata", cur_lang()))?;
         if enabled {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            return std::fs::write(&p, "1").map_err(|e| e.to_string());
+            return std::fs::write(&p, "1").map_err(|e| trv("err.write", cur_lang(), &[("e", &e)]));
         }
         let _ = std::fs::remove_file(&p);
         return Ok(());
@@ -15682,7 +15756,7 @@ fn set_autostart(enabled: bool) -> Result<(), String> {
             ])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| spawn_err_text("reg", &e.to_string()))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).to_string());
         }
@@ -15691,7 +15765,7 @@ fn set_autostart(enabled: bool) -> Result<(), String> {
             .args(["delete", AUTOSTART_KEY, "/v", AUTOSTART_NAME, "/f"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| spawn_err_text("reg", &e.to_string()))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).to_string());
         }
@@ -15705,7 +15779,8 @@ fn open_profile_dir(name: String) -> Result<(), String> {
     if !valid_profile_name(&name) {
         return Err(tr("err.invalid_profile_name_plain", cur_lang()).into());
     }
-    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    let home = std::env::var("USERPROFILE")
+        .map_err(|_| tr("err.no_userprofile", cur_lang()).to_string())?;
     let path = format!("{home}\\.claude-{name}");
     std::process::Command::new("explorer")
         .arg(&path)
@@ -16007,7 +16082,7 @@ fn register_shortcut(app: &AppHandle, accel: &str) -> Result<(), String> {
         Shortcut::from_str(accel).map_err(|e| trv("err.bad_hotkey", cur_lang(), &[("e", &e)]))?;
     app.global_shortcut()
         .register(sc)
-        .map_err(|e| format!("{e}"))
+        .map_err(|e| trv("err.bad_hotkey", cur_lang(), &[("e", &e)]))
 }
 
 /// Register (replacing any previous) the OS-global show/hide accelerator. Errors on a bad/taken combo.
@@ -16259,7 +16334,7 @@ fn session_spawn(
     };
     let pair = portable_pty::native_pty_system()
         .openpty(size)
-        .map_err(|e| format!("openpty: {e}"))?;
+        .map_err(|e| trv("err.open_terminal", cur_lang(), &[("e", &e)]))?;
 
     // Tools are .cmd shims (claude/opencode) or a real exe (ssh) → launch inside pwsh; -NoExit keeps
     // the pane usable after the tool/connection exits. `shell` opens a bare interactive pwsh. For
@@ -16308,7 +16383,8 @@ fn session_spawn(
     // from a Node child (which is what the agent CLIs are). xterm.js cannot tell which shell
     // produced correct bytes, so nothing downstream needs to know about this fallback.
     let ps51 = exe_on_path("pwsh").is_none();
-    let mut cmd = CommandBuilder::new(if ps51 { "powershell.exe" } else { "pwsh" });
+    let shell = if ps51 { "powershell.exe" } else { "pwsh" };
+    let mut cmd = CommandBuilder::new(shell);
     cmd.arg("-NoLogo");
     cmd.env("CASTELLYN_SESSION_ID", &id);
     // Over SSH the local pwsh is only a launcher for ssh.exe — skip the user's profile banner.
@@ -16423,7 +16499,7 @@ fn session_spawn(
     let mut child = pair
         .slave
         .spawn_command(cmd)
-        .map_err(|e| format!("spawn: {e}"))?;
+        .map_err(|e| spawn_err_text(shell, &e.to_string()))?;
     drop(pair.slave); // close the slave in the parent so EOF arrives when the child exits
                       // Tie the child's process tree to the kill-on-close Job Object (#4): a crash/forced exit then
                       // can't leave orphaned node/ssh grandchildren running. Best-effort — never fail a spawn over it.
@@ -16441,7 +16517,7 @@ fn session_spawn(
         Ok(r) => r,
         Err(e) => {
             let _ = killer.kill();
-            return Err(format!("reader: {e}"));
+            return Err(trv("err.open_terminal", cur_lang(), &[("e", &e)]));
         }
     };
     let writer: std::sync::Arc<Mutex<Box<dyn std::io::Write + Send>>> =
@@ -16449,7 +16525,7 @@ fn session_spawn(
             Ok(w) => w,
             Err(e) => {
                 let _ = killer.kill();
-                return Err(format!("writer: {e}"));
+                return Err(trv("err.open_terminal", cur_lang(), &[("e", &e)]));
             }
         }));
 
@@ -16726,10 +16802,10 @@ fn session_list(state: State<'_, SessionState>) -> Vec<String> {
 #[tauri::command]
 fn open_in_editor(app: AppHandle, path: String, line: Option<u32>) -> Result<(), String> {
     // Resolve to a real on-disk path; a non-existent or metacharacter-laden string fails here.
-    let canon =
-        std::fs::canonicalize(&path).map_err(|_| "open_in_editor: no such file".to_string())?;
+    let canon = std::fs::canonicalize(&path)
+        .map_err(|_| trv("err.file_not_found", cur_lang(), &[("path", &path)]))?;
     if !canon.is_file() {
-        return Err("open_in_editor: not a regular file".into());
+        return Err(tr("err.not_regular_file", cur_lang()).into());
     }
     // Never auto-open an executable/script — opening it could run it.
     // ws/wsc are script hosts; url/scf/chm are indirection formats that launch a target on open.
@@ -16747,7 +16823,7 @@ fn open_in_editor(app: AppHandle, path: String, line: Option<u32>) -> Result<(),
         .unwrap_or_default()
         .to_string();
     if BLOCKED_EXT.iter().any(|b| b.eq_ignore_ascii_case(&ext)) {
-        return Err("open_in_editor: blocked file type".into());
+        return Err(tr("err.blocked_file_type", cur_lang()).into());
     }
     let canon_str = canon.to_string_lossy().to_string();
     // Prefer VS Code's --goto (jumps to the line) via argv — no shell. `code` resolves on installs
@@ -16771,14 +16847,14 @@ fn open_in_editor(app: AppHandle, path: String, line: Option<u32>) -> Result<(),
         return Ok(());
     }
     if NO_SHELL_OPEN_EXT.iter().any(|b| b.eq_ignore_ascii_case(&ext)) {
-        return Err("open_in_editor: no editor found for this file type".into());
+        return Err(tr("err.no_editor_for_type", cur_lang()).into());
     }
     // Fallback: open the validated path in its default app via the opener plugin (ShellExecute on the
     // path as data — not a shell command line). Loses the line jump but stays safe.
     use tauri_plugin_opener::OpenerExt;
     app.opener()
-        .open_path(canon_str, None::<&str>)
-        .map_err(|e| format!("open_in_editor: {e}"))
+        .open_path(canon_str.clone(), None::<&str>)
+        .map_err(|e| trv("err.open_path", cur_lang(), &[("path", &canon_str), ("e", &e)]))
 }
 
 /// Immediate subdirectories of `path` (full paths, sorted, hidden/dot dirs skipped) — powers the
@@ -16852,7 +16928,8 @@ fn write_ssh_hosts_saved(list: &[SshHost]) -> Result<(), String> {
     let path = abs(SSHHOSTS_CONFIG_REL);
     let v = serde_json::json!({ "schemaVersion": 1, "hosts": list });
     let json = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    write_json_atomic(&path, &json).map_err(|e| format!("write sshhosts.json: {e}"))
+    write_json_atomic(&path, &json)
+        .map_err(|e| trv("err.fs_write", cur_lang(), &[("path", &"sshhosts.json"), ("e", &e)]))
 }
 
 /// Strip ONE pair of surrounding double/single quotes (OpenSSH allows quoted values, e.g. an
@@ -17273,12 +17350,12 @@ fn open_monitor_window(app: AppHandle, label: String, monitor_index: usize) -> R
         // otherwise be replayed by the next window under this label) and report the failure so the
         // caller leaves the panes where they are.
         let _ = take_detach(label);
-        return Err("monitor window already open".to_string());
+        return Err(tr("err.monitor_window_open", cur_lang()).into());
     }
     let mons = app.available_monitors().map_err(|e| e.to_string())?;
     let m = mons
         .get(monitor_index)
-        .ok_or_else(|| "monitor index out of range".to_string())?;
+        .ok_or_else(|| tr("err.monitor_out_of_range", cur_lang()).to_string())?;
     let pos = *m.position();
     let size = *m.size();
     // Build OFF the main thread. The command runs on the main (event-loop) thread, and a synchronous
