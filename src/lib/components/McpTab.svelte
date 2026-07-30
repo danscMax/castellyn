@@ -147,13 +147,15 @@
   const sortedSource = $derived([...source].sort((a, b) => rank(a) - rank(b)));
 
   const COLS: DTColumn[] = $derived([
-    // 180px instead of the 260px grow default — the ONLY column trimmed here. The health column
-    // added by the liveness probe pushed the row to 1020px, over the 1015px a default window gives
-    // it. Every other width below is left alone on purpose: the notes beside them record clipping
-    // and wrapping that those exact values were raised to fix, and re-cutting them reproduced it
-    // (the Launch button in Profiles started 16px outside its own cell). The default stays 260px
-    // because five other tables share it.
-    { key: 'name', label: t('mcp.colName'), grow: true, width: '180px', sortable: true },
+    // 240px instead of the 260px grow default — the ONLY column trimmed here, and by the actual
+    // deficit: the health column added by the liveness probe pushed the row to 1020px against the
+    // ~1015px a default window gives, so this needed 5px, not the 80px an earlier revision took.
+    // This cell is a single line (just the server name), unlike the two-line one in Profiles — the
+    // two tables get different budgets because they hold different content, not one number copied
+    // twice. Every other width below is left alone on purpose: the notes beside them record the
+    // clipping those exact values were raised to fix, and re-cutting them reproduced it (the Launch
+    // button in Profiles ended up 16px outside its own cell). mcp-columns.test.ts enforces the sum.
+    { key: 'name', label: t('mcp.colName'), grow: true, width: '240px', sortable: true },
     // V1: budget the fixed columns to the real content — profiles (6 chips / the plugin note)
     // needs the room the truncating monospace command column was hogging; at the old widths the
     // note and the last chip clipped against the actions column on a 1440px window.

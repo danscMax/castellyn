@@ -243,9 +243,11 @@
   const colSpan = $derived(columns.length + (expand ? 1 : 0) + (selectable ? 1 : 0) + 1);
   // Column width source of truth, applied via <colgroup> (best practice for table-layout:fixed). A
   // resized width wins; else the configured width; else a default so the SPACER is the only auto col.
-  // The 260px `grow` default stays: SEVEN tables rely on it (MCP, Profiles, Environments, Plugins ×2,
-  // Forks ×2), so narrowing it here to make two of them fit would have silently truncated the other
-  // five. A table that needs a different budget states its own `width` on the grow column.
+  // The 260px `grow` default is shared, so it is not the lever for one table's layout: narrowing it
+  // to make MCP and Profiles fit silently truncated the name/title/description column of every other
+  // table using it (Environments, Plugins ×2, Forks ×2 at the time of writing — grep `grow: true`
+  // rather than trusting that list, it moves). A table that needs a different budget states its own
+  // `width` on the grow column, which is what MCP and Profiles now do.
   //
   // `auto` does NOT work as a grow value: the trailing spacer column is also auto, the two split the
   // slack, and the grow column collapses to its content minimum — the header truncated to "ПРОФИ" and

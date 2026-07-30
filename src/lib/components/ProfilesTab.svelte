@@ -352,9 +352,13 @@
   // Column widths trimmed so the six columns fit a ~1150px content pane without horizontal scroll
   // clipping the Действия column (the owner's "table doesn't fit / gets cut off"). name still grows.
   const COLS: DTColumn[] = $derived([
-    // 180px instead of the 260px grow default — the ONLY column trimmed here; see McpTab for why
-    // the rest are left alone and why the shared default is not the lever.
-    { key: 'name', label: t('profiles.colName'), grow: true, width: '180px', sortable: true },
+    // 210px instead of the 260px grow default — the ONLY column trimmed here, and trimmed by the
+    // actual deficit rather than a round number: the fixed columns plus the expand column come to
+    // 792px against the ~1015px a default window leaves, so 223px is the ceiling and 210 keeps a
+    // margin. This cell carries the most content in the table — name plus description on two lines —
+    // so every pixel taken from it turns into truncation; an earlier revision cut it to 180 and made
+    // truncation the common case rather than the exception. profiles-columns.test.ts enforces the sum.
+    { key: 'name', label: t('profiles.colName'), grow: true, width: '210px', sortable: true },
     { key: 'status', label: t('profiles.colStatus'), width: '120px', sortable: true },
     // Widened: the usage badge (5h/7d/scoped + reset) wrapped to 3-4 lines at 140px; the 3 action
     // buttons (Launch/Folder/⋯) overflowed 210px and the leftmost (Launch) was clipped on the left.
