@@ -147,21 +147,21 @@
   const sortedSource = $derived([...source].sort((a, b) => rank(a) - rank(b)));
 
   const COLS: DTColumn[] = $derived([
-    // Own width rather than the 260px grow default: with six columns this table has to fit the
-    // window, and the default is shared with five other tables that must not shrink for our sake.
+    // 180px instead of the 260px grow default — the ONLY column trimmed here. The health column
+    // added by the liveness probe pushed the row to 1020px, over the 1015px a default window gives
+    // it. Every other width below is left alone on purpose: the notes beside them record clipping
+    // and wrapping that those exact values were raised to fix, and re-cutting them reproduced it
+    // (the Launch button in Profiles started 16px outside its own cell). The default stays 260px
+    // because five other tables share it.
     { key: 'name', label: t('mcp.colName'), grow: true, width: '180px', sortable: true },
     // V1: budget the fixed columns to the real content — profiles (6 chips / the plugin note)
     // needs the room the truncating monospace command column was hogging; at the old widths the
     // note and the last chip clipped against the actions column on a 1440px window.
-    // V2: re-budgeted so the six columns fit the DEFAULT 1100px window (795px of table) instead of
-    // only a 1440px one — the health column added by the liveness probe pushed the total to 1020px
-    // and put `profiles` behind a horizontal scrollbar. Only the columns with slack were cut:
-    // command truncates with a full-text tooltip anyway, and health/deployed hold short pills.
-    { key: 'command', label: t('mcp.colCommand'), width: '150px' },
-    { key: 'health', label: t('mcp.colHealth'), width: '104px', align: 'center', interactive: true },
-    { key: 'deployed', label: t('mcp.colDeployed'), width: '84px', align: 'center', sortable: true },
-    { key: 'profiles', label: t('mcp.colProfiles'), width: '180px', interactive: true },
-    { key: 'actions', label: t('mcp.colActions'), width: '96px', align: 'right', interactive: true }
+    { key: 'command', label: t('mcp.colCommand'), width: '200px' },
+    { key: 'health', label: t('mcp.colHealth'), width: '120px', align: 'center', interactive: true },
+    { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
+    { key: 'profiles', label: t('mcp.colProfiles'), width: '230px', interactive: true },
+    { key: 'actions', label: t('mcp.colActions'), width: '110px', align: 'right', interactive: true }
   ]);
   type Srv = (typeof sortedSource)[number];
   function sortVal(s: Srv, key: string): string | number {
