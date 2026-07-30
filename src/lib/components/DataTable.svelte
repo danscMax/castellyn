@@ -243,17 +243,15 @@
   const colSpan = $derived(columns.length + (expand ? 1 : 0) + (selectable ? 1 : 0) + 1);
   // Column width source of truth, applied via <colgroup> (best practice for table-layout:fixed). A
   // resized width wins; else the configured width; else a default so the SPACER is the only auto col.
-  // The `grow` default was 260px, which made the sum of the configured widths a hard floor: on the
-  // default 1100px window the MCP and Profiles tables needed 1020 and 1052 against 795 available and
-  // pushed a column off screen behind a horizontal scrollbar. 180px is the budget that lets the MCP
-  // table fit without touching the fixed columns whose sizes are load-bearing (see the comments where
-  // they are declared — the usage badge wrapped to four lines at 140px, the action buttons clipped).
+  // The 260px `grow` default stays: SEVEN tables rely on it (MCP, Profiles, Environments, Plugins ×2,
+  // Forks ×2), so narrowing it here to make two of them fit would have silently truncated the other
+  // five. A table that needs a different budget states its own `width` on the grow column.
   //
-  // `auto` was tried here and is WRONG: the trailing spacer column is also auto, so the two split the
-  // slack and the name column collapsed to its content minimum — the header truncated to "ПРОФИ" and
-  // the profile subtitle to "IS…". A fixed budget is the predictable one.
+  // `auto` does NOT work as a grow value: the trailing spacer column is also auto, the two split the
+  // slack, and the grow column collapses to its content minimum — the header truncated to "ПРОФИ" and
+  // the profile subtitle to "IS…". A stated width is the predictable lever.
   const colWidth = (c: { key: string; width?: string; grow?: boolean }): string =>
-    colW[c.key] ?? c.width ?? (c.grow ? '180px' : '160px');
+    colW[c.key] ?? c.width ?? (c.grow ? '260px' : '160px');
   const rowExpandable = (r: Row) => !!expand && (!canExpand || canExpand(r));
 </script>
 

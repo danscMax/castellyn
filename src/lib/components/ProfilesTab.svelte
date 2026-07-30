@@ -352,7 +352,7 @@
   // Column widths trimmed so the six columns fit a ~1150px content pane without horizontal scroll
   // clipping the Действия column (the owner's "table doesn't fit / gets cut off"). name still grows.
   const COLS: DTColumn[] = $derived([
-    { key: 'name', label: t('profiles.colName'), grow: true, sortable: true },
+    { key: 'name', label: t('profiles.colName'), grow: true, width: '180px', sortable: true },
     // V2: trimmed so the row fits the DEFAULT 1100px window (795px of table) rather than overflowing
     // to 1052px with the last column behind a scrollbar. The floors below are load-bearing — see the
     // note on `usage` — so each cut is small and the grow column absorbs what is left.

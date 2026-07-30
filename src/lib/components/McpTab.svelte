@@ -147,7 +147,9 @@
   const sortedSource = $derived([...source].sort((a, b) => rank(a) - rank(b)));
 
   const COLS: DTColumn[] = $derived([
-    { key: 'name', label: t('mcp.colName'), grow: true, sortable: true },
+    // Own width rather than the 260px grow default: with six columns this table has to fit the
+    // window, and the default is shared with five other tables that must not shrink for our sake.
+    { key: 'name', label: t('mcp.colName'), grow: true, width: '180px', sortable: true },
     // V1: budget the fixed columns to the real content — profiles (6 chips / the plugin note)
     // needs the room the truncating monospace command column was hogging; at the old widths the
     // note and the last chip clipped against the actions column on a 1440px window.
