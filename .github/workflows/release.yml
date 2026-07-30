@@ -88,7 +88,8 @@ jobs:
       # tauri build runs `npm run build` (beforeBuildCommand) then bundles every
       # target — standalone exe + NSIS setup + WiX MSI (bundle.targets = "all").
       # The two TAURI_SIGNING_* env vars make the bundler sign the updater artifacts
-      # (createUpdaterArtifacts: "v1Compatible") — writes a *-setup.exe.sig used in latest.json.
+      # (createUpdaterArtifacts: true since 0.8.0) — writes a signature next to the NSIS installer,
+      # which the latest.json step below globs for rather than naming.
       # The private key is passwordless, so the password secret may be an empty string.
       - name: Build (signed updater artifacts)
         env:
@@ -126,11 +127,18 @@ jobs:
           $rel  = "src-tauri/target/release"
           $out  = "dist-release"
           $setup = Get-ChildItem "$rel/bundle/nsis/*-setup.exe" | Select-Object -First 1
-          $sigPath = "$($setup.FullName).sig"
-          if (-not (Test-Path $sigPath)) {
-            throw "no updater signature at $sigPath — is TAURI_SIGNING_PRIVATE_KEY set as a repo secret?"
+          # Glob for the signature instead of assuming "<setup>.exe.sig". The bundler's updater
+          # artifacts moved once already — createUpdaterArtifacts went from "v1Compatible" (which
+          # also wrapped the installer in a .zip and signed THAT) to true — and a hardcoded name
+          # would have failed here, after the release was already published and public. The URL
+          # below still points at the setup .exe, which is what the v2 updater downloads.
+          $sigFile = Get-ChildItem "$rel/bundle/nsis/*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sigFile) {
+            $found = (Get-ChildItem "$rel/bundle/nsis" | Select-Object -ExpandProperty Name) -join ', '
+            throw "no updater signature in $rel/bundle/nsis (found: $found) — is TAURI_SIGNING_PRIVATE_KEY set as a repo secret?"
           }
-          $sig = (Get-Content $sigPath -Raw).Trim()
+          Write-Host "updater signature: $($sigFile.Name)"
+          $sig = (Get-Content $sigFile.FullName -Raw).Trim()
           $notes = if ([string]::IsNullOrWhiteSpace($env:NOTES)) { "See the release page for details." } else { $env:NOTES }
           $manifest = [ordered]@{
             # Strip the tag's leading `v` — the manifest version must be bare semver (the installed
