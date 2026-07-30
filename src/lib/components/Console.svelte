@@ -158,9 +158,28 @@
     // pointercancel (touch/pen interruption) otherwise leaves move bound + capture unreleased.
     target.addEventListener('pointercancel', up);
   }
+
+  // Publish this panel's height so anything anchored to the bottom of the window can clear it.
+  // ToastHost is `position: fixed; bottom: …` and used to land ON the panel's Copy/Clear buttons.
+  // A hardcoded offset would not do: the panel is 40px collapsed and arbitrarily tall once the user
+  // drags it open, so the value has to follow the real element.
+  let consoleEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    const el = consoleEl;
+    if (!el) return;
+    const publish = () =>
+      document.documentElement.style.setProperty('--sw-console-h', `${el.offsetHeight}px`);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty('--sw-console-h');
+    };
+  });
 </script>
 
-<section class="console" class:collapsed>
+<section class="console" class:collapsed bind:this={consoleEl}>
   {#if !collapsed}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div

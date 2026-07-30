@@ -353,13 +353,16 @@
   // clipping the Действия column (the owner's "table doesn't fit / gets cut off"). name still grows.
   const COLS: DTColumn[] = $derived([
     { key: 'name', label: t('profiles.colName'), grow: true, sortable: true },
-    { key: 'status', label: t('profiles.colStatus'), width: '120px', sortable: true },
+    // V2: trimmed so the row fits the DEFAULT 1100px window (795px of table) rather than overflowing
+    // to 1052px with the last column behind a scrollbar. The floors below are load-bearing — see the
+    // note on `usage` — so each cut is small and the grow column absorbs what is left.
+    { key: 'status', label: t('profiles.colStatus'), width: '104px', sortable: true },
     // Widened: the usage badge (5h/7d/scoped + reset) wrapped to 3-4 lines at 140px; the 3 action
     // buttons (Launch/Folder/⋯) overflowed 210px and the leftmost (Launch) was clipped on the left.
-    { key: 'usage', label: t('profiles.colUsage'), width: '208px' },
-    { key: 'provider', label: t('profiles.colProvider'), width: '156px', interactive: true, sortable: true },
-    { key: 'links', label: t('profiles.colLinks'), width: '80px', align: 'center', sortable: true },
-    { key: 'actions', label: t('profiles.colActions'), width: '200px', interactive: true }
+    { key: 'usage', label: t('profiles.colUsage'), width: '188px' },
+    { key: 'provider', label: t('profiles.colProvider'), width: '132px', interactive: true, sortable: true },
+    { key: 'links', label: t('profiles.colLinks'), width: '64px', align: 'center', sortable: true },
+    { key: 'actions', label: t('profiles.colActions'), width: '184px', interactive: true }
   ]);
   function linkedCount(p: Prof): number {
     return Object.values(p.sharedLinks).filter(

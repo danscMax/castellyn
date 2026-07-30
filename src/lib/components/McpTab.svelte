@@ -151,11 +151,15 @@
     // V1: budget the fixed columns to the real content — profiles (6 chips / the plugin note)
     // needs the room the truncating monospace command column was hogging; at the old widths the
     // note and the last chip clipped against the actions column on a 1440px window.
-    { key: 'command', label: t('mcp.colCommand'), width: '200px' },
-    { key: 'health', label: t('mcp.colHealth'), width: '120px', align: 'center', interactive: true },
-    { key: 'deployed', label: t('mcp.colDeployed'), width: '100px', align: 'center', sortable: true },
-    { key: 'profiles', label: t('mcp.colProfiles'), width: '230px', interactive: true },
-    { key: 'actions', label: t('mcp.colActions'), width: '110px', align: 'right', interactive: true }
+    // V2: re-budgeted so the six columns fit the DEFAULT 1100px window (795px of table) instead of
+    // only a 1440px one — the health column added by the liveness probe pushed the total to 1020px
+    // and put `profiles` behind a horizontal scrollbar. Only the columns with slack were cut:
+    // command truncates with a full-text tooltip anyway, and health/deployed hold short pills.
+    { key: 'command', label: t('mcp.colCommand'), width: '150px' },
+    { key: 'health', label: t('mcp.colHealth'), width: '104px', align: 'center', interactive: true },
+    { key: 'deployed', label: t('mcp.colDeployed'), width: '84px', align: 'center', sortable: true },
+    { key: 'profiles', label: t('mcp.colProfiles'), width: '180px', interactive: true },
+    { key: 'actions', label: t('mcp.colActions'), width: '96px', align: 'right', interactive: true }
   ]);
   type Srv = (typeof sortedSource)[number];
   function sortVal(s: Srv, key: string): string | number {

@@ -49,7 +49,10 @@
   .toast-host {
     position: fixed;
     right: 16px;
-    bottom: 16px;
+    /* Sit ABOVE the run-log panel instead of on top of it — toasts used to cover its Copy/Clear
+       buttons. Console.svelte publishes its own height (collapsed 40px, more once dragged open);
+       the fallback keeps toasts sane on any screen that renders without the console. */
+    bottom: calc(var(--sw-console-h, 0px) + 16px);
     z-index: 60;
     display: flex;
     flex-direction: column;
