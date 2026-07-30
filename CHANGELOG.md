@@ -3,6 +3,86 @@
 All notable changes to **Castellyn** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-07-30
+
+A survey of this codebase against current outside practice found ten of its thirteen subsystems
+already at or above it, so this release is small on adoption and large on the things nothing was
+watching. Three of the survey's own recommendations turned out to rest on false premises and were
+dropped rather than built — including its flagship, which proposed a second error-localization
+mechanism beside the one already used in 165 places.
+
+### Added
+
+- **MCP servers can now be checked for liveness, not just listed.** `read_mcp` could only say a
+  server was configured, so one whose command was missing or which crashed at startup looked exactly
+  like a healthy one. A probe spawns the server, completes the MCP initialize handshake, lists its
+  tools and kills it. It is opt-in by design: opening the tab probes nothing, because a probe starts
+  a real process — often an `npx` package download — and doing that on render would launch every
+  configured server each time you glanced at the tab. The command takes only a server NAME and reads
+  the command line from `config\.mcp.json` in the backend, so the frontend cannot ask it to spawn an
+  arbitrary process.
+- **A scripted UI smoke test** (`npm run smoke`). Every gate this project had passed while a tab
+  failed to render; the isolated-instance harness existed but had to be driven by hand. It walks
+  every tab of a running instance over CDP and fails on a console error or a blank tab. No
+  dependency was added for it — raw CDP over Node's built-in `fetch` and `WebSocket`.
+- **A dependency gate** — `cargo-deny` and `npm audit` in CI and in `verify.ps1`. Dependabot only
+  proposed bumps weekly; nothing failed a build if a package already in the lockfile picked up an
+  advisory in between.
+
+### Fixed
+
+- **A hard crash orphaned every maintenance script tree.** The kill-on-close Job Object was wired to
+  exactly one spawn path — PTY sessions — while four other places recorded a child pid without
+  joining it. Scripts and their grandchildren (npm/node under a plugin sync) survived the app. The
+  join now happens inside the single streaming primitive every run funnels through, so a future
+  caller cannot forget it.
+- **A broken status envelope was indistinguishable from a component that had never run.** A script
+  emitting an array or a numeric status read through as "no data yet". Deliberately not a strict
+  struct over the seven canonical fields: readers still support legacy writers, which such a struct
+  would have reported as broken.
+- **PostCSS path traversal (GHSA-r28c-9q8g-f849, high).** Reached the tree through the vite
+  toolchain, so it never shipped in the binary — which is why it would have sat there indefinitely.
+- **Backend errors reached the UI as raw English** on about sixty paths that bypassed the existing
+  localization helpers, in an app that is otherwise fully localized.
+- **The MCP and Profiles tables did not fit the window.** Six columns needed 1020 and 1052 pixels
+  against 795 available, so a column sat off screen behind a horizontal scrollbar.
+- **Toast notifications covered the run-log panel's Copy and Clear buttons.** The panel now
+  publishes its own height and toasts sit above it, at 40 pixels collapsed or whatever it is once
+  dragged open.
+
+### Changed
+
+- **The default window is 1320×800**, up from 1100×720. Column trimming alone could not fit the
+  tables; this is the other half. An existing install keeps its saved size — only a first run on a
+  clean machine sees the new default.
+- **`createUpdaterArtifacts` is `true`** instead of the `v1Compatible` migration mode. This project
+  never shipped a Tauri v1 build, so the compatibility mode was dead weight that wrapped the NSIS
+  installer in an extra archive, and Tauri has announced its removal in v3.
+- **The version literal lives in two manifests instead of three** — `tauri.conf.json` reads it from
+  `package.json`, and the release workflow asserts the delegation is still in place.
+- **Five IPC types are generated from the Rust structs** by ts-rs during `cargo test`, rather than
+  mirrored by hand in `ipc.ts` where a renamed field was caught at runtime or never.
+- Dependabot groups routine minor and patch bumps into one PR per ecosystem per week; `cargo test`
+  runs under nextest when it is installed, with doc-tests kept as a separate call.
+- Internally, nine command groups moved out of `lib.rs` (19,536 → 17,799 lines) and seven tabs out
+  of the page orchestrator (3,023 → 2,230). Pure moves: the registered-command count is unchanged at
+  177 and the refactored tabs render identical output.
+
+### Not taken
+
+- **`thiserror` plus serde-tagged error codes**, the survey's flagship recommendation, endorsed by
+  two independent researchers. The mechanism already existed: `i18n.rs` carries `err.*` keys in
+  ru/en/zh and `lib.rs` already called the helpers in 165 places. Both researchers had looked at the
+  `Result<T, String>` signatures and at the toast rendering the message verbatim, and neither at
+  what produced the string.
+- **`tauri-specta` and TauRPC** for typed IPC — one has been at release-candidate for about three
+  years, the other is an all-or-nothing router rewrite. **Bits UI, Melt UI, floating-ui and TanStack
+  Table** — the usual argument for adopting headless primitives is a broken focus trap or ARIA, and
+  neither is broken here; TanStack has no supported Svelte 5 adapter at all. **Paraglide, Fluent and
+  ICU MessageFormat** — the frontend already uses native `Intl.PluralRules`, which is the same
+  correctness. **tokio-cron-scheduler and croner** — the scheduler polls the wall clock rather than
+  storing a next-run, so it structurally lacks the DST bug class they exist to fix.
+
 ## [0.7.2] — 2026-07-20
 
 A consolidation release: no new features, one behaviour fix on the paths that protect you from
