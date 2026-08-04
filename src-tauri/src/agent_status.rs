@@ -686,10 +686,18 @@ pub(crate) fn update_attention_surfaces(app: &tauri::AppHandle) {
     };
     // The custom chrome hides the native title bar, so this string is invisible IN the app — it
     // exists purely for the taskbar and Alt+Tab, which is exactly where it is needed.
-    let _ = w.set_title(&if blocked > 0 {
-        format!("({blocked}) Castellyn")
+    // The sandbox marks its window title so an iso instance is never mistaken for the real one
+    // (lib.rs setup). Overwriting it here erased that marker on the first transition — keep the
+    // suffix and put the count in front of it.
+    let base = if crate::iso_mode() {
+        "Castellyn [ISO SANDBOX]"
     } else {
-        "Castellyn".to_string()
+        "Castellyn"
+    };
+    let _ = w.set_title(&if blocked > 0 {
+        format!("({blocked}) {base}")
+    } else {
+        base.to_string()
     });
     // Flash only while unfocused: requesting attention on the window the user is already in is
     // noise. `None` clears a flash that a previous transition started.

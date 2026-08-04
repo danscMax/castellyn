@@ -1356,12 +1356,11 @@
       .filter((p) => displayStateById[p.key] === 'blocked' && p.key !== activeKey)
       .sort((a, b) => (blockedSince[a.key] ?? 0) - (blockedSince[b.key] ?? 0))
   );
-  const attention = $derived.by(() => {
-    const list = activePanes
-      .filter((p) => displayStateById[p.key] === 'blocked' && p.key !== activeKey)
-      .sort((a, b) => (blockedSince[a.key] ?? 0) - (blockedSince[b.key] ?? 0));
-    return list.length ? { first: list[0], more: list.length - 1 } : null;
-  });
+  // Derived from the same list the expandable view shows, so the strip and the list can never
+  // disagree about who is waiting or in what order.
+  const attention = $derived(
+    attnAll.length ? { first: attnAll[0], more: attnAll.length - 1 } : null
+  );
   function attnElapsed(key: string): string {
     const ms = nowTick - (blockedSince[key] ?? nowTick);
     return ms < 60000 ? `<1${t('sessions.unitMin')}` : humanizeMs(ms);
