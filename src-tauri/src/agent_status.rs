@@ -82,14 +82,7 @@ struct Track {
     hook_expected: bool,
     /// Human label for notifications ("claude · cc1", "codex").
     label: String,
-    /// The claude profile this pane runs, so a limit notice can look up when that profile's window
-    /// resets. Empty for tools that have no profile.
-    profile: String,
     spawned_at: u64,
-    /// When the COMPUTED state last changed (unix ms). `last_emitted` stored only the value, so
-    /// "how long has this been waiting" existed nowhere in the backend — and the frontend's copy
-    /// resets on every webview reload. Escalation, cooldown and the wait metric all need this.
-    state_since: u64,
     /// Unix ms of the last keystroke the USER sent into this pane. A turn that ends seconds after
     /// the user typed does not deserve a "finished" toast — they are sitting right there.
     last_user_input: AtomicU64,
@@ -165,9 +158,7 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
             } else {
                 tool.to_string()
             },
-            profile: profile.to_string(),
             spawned_at: now,
-            state_since: now,
             last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
@@ -411,12 +402,7 @@ struct StatusEvent {
     /// The interactive limit menu is up (`limitMenu`): the frontend picks "Stop and wait" to dismiss
     /// it before injecting "continue" after reset. Rides alongside `state` ("limited"). (item 21f)
     limit_menu: bool,
-    /// Backend-only, for the notification policy: which profile this pane runs (limit reset lookup),
-    /// when the state changed (escalation/cooldown), and whether the user typed here moments ago.
-    #[serde(skip)]
-    profile: String,
-    #[serde(skip)]
-    state_since: u64,
+    /// Backend-only: whether the user typed into this pane moments ago (item 33).
     #[serde(skip)]
     typed_recently: bool,
 }
@@ -497,7 +483,7 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
         crate::notify::notify(
             app,
             crate::notify::Notice {
-                kind: crate::notify::Kind::Blocked,
+                kind: crate::notify::Kind::BlockedMany,
                 title: crate::i18n::tr("status.blocked_title", lang).to_string(),
                 body: crate::i18n::trv("status.blocked_many", lang, &[("n", &waiting)]),
                 tag: Some("blocked-many".to_string()),
@@ -755,11 +741,6 @@ pub fn start(app: tauri::AppHandle) {
                 // while state stays "limited" must still reach the frontend. (item 21f)
                 if t.last_emitted.as_deref() != Some(state) || t.last_menu != menu {
                     let prev = t.last_emitted.take();
-                    // Only a real STATE change restarts the clock; the menu flag flipping does not
-                    // mean the pane started waiting again.
-                    if prev.as_deref() != Some(state) {
-                        t.state_since = now;
-                    }
                     t.last_emitted = Some(state.to_string());
                     t.last_menu = menu;
                     events.push(StatusEvent {
@@ -772,8 +753,6 @@ pub fn start(app: tauri::AppHandle) {
                         exited: t.exited,
                         hook_idle: t.hook_state.as_deref() == Some("idle"),
                         limit_menu: menu,
-                        profile: t.profile.clone(),
-                        state_since: t.state_since,
                         typed_recently: now.saturating_sub(t.last_user_input.load(Ordering::Relaxed))
                             < TYPED_RECENTLY_MS,
                     });
@@ -805,9 +784,7 @@ mod tests {
             // Default hookless (codex/opencode/remote-claude); the local-claude tests set it true.
             hook_expected: false,
             label: tool.into(),
-            profile: String::new(),
             spawned_at: now,
-            state_since: now,
             last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
@@ -1107,8 +1084,6 @@ mod tests {
             exited: t.exited,
             hook_idle: false,
             limit_menu: false,
-            profile: String::new(),
-            state_since: now,
             typed_recently: false,
         };
         assert_ne!(ev.spawned_at, 0);

@@ -25,6 +25,10 @@ use tauri::AppHandle;
 pub enum Kind {
     /// An agent stopped and needs a human answer.
     Blocked,
+    /// SEVERAL agents are waiting — one notice standing in for all of them. Sticky like `Blocked`,
+    /// but it must be free to update as the count moves, so it follows the plain cooldown instead
+    /// of the escalation window (which is about not re-nagging for ONE pane).
+    BlockedMany,
     /// An agent finished its turn.
     Done,
     /// A session is parked until its usage window resets.
@@ -37,12 +41,12 @@ impl Kind {
     /// A reminder-scenario toast stays on screen until dismissed. Reserved for the one state that
     /// actually blocks the user's work — everything else may fade on its own.
     fn sticky(self) -> bool {
-        self == Kind::Blocked
+        matches!(self, Kind::Blocked | Kind::BlockedMany)
     }
     /// Toasts are grouped per kind so a burst of "finished" notices cannot bury a "waiting" one.
     fn group(self) -> &'static str {
         match self {
-            Kind::Blocked => "blocked",
+            Kind::Blocked | Kind::BlockedMany => "blocked",
             Kind::Done => "done",
             Kind::Limited => "limited",
             Kind::Important => "important",
@@ -400,6 +404,8 @@ fn allow_send(kind: Kind, since_last_ms: Option<u64>) -> bool {
     match since_last_ms {
         None => true,
         Some(ms) => match kind {
+            // One pane: do not re-nag; only escalate. The aggregate is the opposite case — its whole
+            // job is to stay current, so it updates on the ordinary cooldown.
             Kind::Blocked => ms >= ESCALATE_MS,
             _ => ms >= COOLDOWN_MS,
         },
@@ -432,7 +438,7 @@ fn os_wants_quiet() -> bool {
 /// Per-kind switch on top of the master `status_notify`.
 fn kind_enabled(cfg: &crate::HubConfig, kind: Kind) -> bool {
     match kind {
-        Kind::Blocked => cfg.notify_blocked.unwrap_or(true),
+        Kind::Blocked | Kind::BlockedMany => cfg.notify_blocked.unwrap_or(true),
         Kind::Done => cfg.notify_done.unwrap_or(true),
         Kind::Limited => cfg.notify_limited.unwrap_or(true),
         // Maintenance follows the master switch only — it reports things the user cannot foresee.
@@ -583,6 +589,18 @@ mod tests {
         assert!(!allow_send(Kind::Blocked, Some(COOLDOWN_MS)));
         assert!(!allow_send(Kind::Blocked, Some(ESCALATE_MS - 1)));
         assert!(allow_send(Kind::Blocked, Some(ESCALATE_MS)));
+    }
+
+    #[test]
+    fn the_aggregate_stays_current_instead_of_waiting_for_the_escalation_window() {
+        // Regression: the "N agents are waiting" notice used to inherit Blocked's escalation rule,
+        // so 2→3→4 waiting was silently dropped for ten minutes while the toast claimed to track
+        // the count. It must refresh on the ordinary cooldown, and still be sticky + same group.
+        assert!(!allow_send(Kind::BlockedMany, Some(COOLDOWN_MS - 1)));
+        assert!(allow_send(Kind::BlockedMany, Some(COOLDOWN_MS)));
+        assert!(!allow_send(Kind::Blocked, Some(COOLDOWN_MS)), "one pane must NOT re-nag that fast");
+        assert!(Kind::BlockedMany.sticky());
+        assert_eq!(Kind::BlockedMany.group(), Kind::Blocked.group());
     }
 
     #[test]

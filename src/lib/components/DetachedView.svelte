@@ -7,7 +7,7 @@
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { t } from '$lib/i18n';
-  import { takeDetach, type DetachPane } from '$lib/ipc';
+  import { takeDetach, sessionSetFocus, type DetachPane } from '$lib/ipc';
   import { emit } from '@tauri-apps/api/event';
   import { markMoved } from '$lib/sessionMove';
   import TerminalPane from './TerminalPane.svelte';
@@ -119,6 +119,12 @@
               displayName={p.title}
               paneKey={p._key}
               onIdChange={setLiveId}
+              onFocus={(k) => {
+                // Without this a pane popped onto another monitor could never be "the one the user
+                // is looking at", so it kept toasting while they stared straight at it.
+                const id = liveIds[k] ?? p.sessionId;
+                if (id) void sessionSetFocus(id).catch(() => {});
+              }}
               onClose={() => closePane(p._key)}
               onReturnToMain={(liveIds[p._key] ?? p.sessionId) ? () => returnPane(p) : undefined}
             />
