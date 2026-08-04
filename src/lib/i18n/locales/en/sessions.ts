@@ -25,6 +25,23 @@ export default {
   resumeChoiceAsk: 'ask me (don\'t auto-pick)',
   autoContinueTextLabel: 'Continue text',
   autoContinueTextHint: 'Text Castellyn types to resume a session (after a limit reset or a menu). Empty = the default for your language.',
+  // Backlog 27: answer a recognised menu straight from the pane header.
+  answerMenus: 'Menu answer buttons',
+  answerMenusHint: 'Show answer buttons in the pane header when an agent is stuck on a recognised menu (usage limit or session resume). Every press is confirmed first. Permission prompts cannot be answered this way — they are deliberately never recognised.',
+  answerTip: 'Castellyn recognised this menu and can answer it for you — the press is confirmed first',
+  answerBtnTip: 'Send to the session: {option}',
+  answerLimitAsk: 'Limit:',
+  answerLimitWait: 'Stop and wait',
+  answerResumeAsk: 'Resume:',
+  answerResumeSummary: 'From summary',
+  answerResumeFull: 'Full session',
+  answerConfirmTitle: 'Answer the agent?',
+  answerConfirmBody: 'Send “{option}” to session {name}. This is a keystroke into a live agent.',
+  answerConfirmSend: 'Send',
+  // Refused at the last moment: the live pane no longer shows the menu that was clicked.
+  answerStaleTitle: 'Not sent — {name} moved on',
+  answerStaleDetail:
+    'The menu is no longer on screen, so nothing was sent. If the agent is asking something else now, answer it in the terminal.',
   switchedProfile: 'Limit: {name} moved to profile “{profile}”',
   sumBlocked: '{n} blocked',
   sumLimited: '{n} limited',

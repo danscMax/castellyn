@@ -383,6 +383,17 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     resume_choice: Option<String>,
+    // Backlog 27: show answer buttons in the pane header when a pane is stuck on one of the two
+    // unambiguously-recognised menus, so the user can reply without switching to the terminal. OFF by
+    // default (None = false, unlike every other switch here): it is the only feature that puts a
+    // keystroke into a live agent on a single click, so it must be asked for, not discovered.
+    // Frontend-only loop (SessionsTab); backend persists it.
+    #[serde(
+        rename = "answerMenus",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    answer_menus: Option<bool>,
     // #9: custom continuation text injected after a limit reset / menu dismissal. None or empty = the
     // localized default ("continue" / "продолжай"). Frontend-only; backend persists.
     #[serde(
@@ -16024,6 +16035,7 @@ pub fn run() {
             session_set_label,
             session_set_focus,
             agent_status::agent_status_log,
+            agent_status::menu_signal_in_text,
             notify::notify_enabled,
             notify::notify_test,
             notify::notify_diag,

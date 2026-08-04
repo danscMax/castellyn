@@ -334,6 +334,69 @@ fn is_resume_menu(s: &str) -> bool {
     l.contains("resume from summary") && l.contains("resume full session")
 }
 
+/// Literal markers of a permission/approval prompt's affirmative options. Anchored on the OPTION
+/// LABELS rather than the volatile question line ("What do you want to do?" — the LIMIT menu's own
+/// header — contains "do you want to").
+const PERMISSION_MARKERS: [&str; 5] = [
+    "1. yes",
+    "yes, allow",
+    "yes, and",
+    "no, and tell claude",
+    "do you trust the files",
+];
+
+/// Offset of the LAST permission/approval marker in an already-lowercased haystack. A POSITION, not
+/// a bool, because the veto is POSITIONAL: a prompt only outranks a menu when it sits BELOW it —
+/// i.e. when it is the thing currently on screen. Merely being present somewhere in the window means
+/// the user very likely already answered it and the menu underneath is the live thing; suppressing
+/// on presence alone made a real limit/resume menu unrecognisable for as long as the confound stayed
+/// in the window, which for a repainting TUI can be forever.
+fn permission_menu_at(l: &str) -> Option<usize> {
+    PERMISSION_MARKERS.iter().filter_map(|m| l.rfind(m)).max()
+}
+
+/// True when the text carries a permission/approval prompt at all. Used where only presence matters
+/// (retracting a standing menu flag), never for the positional veto itself.
+fn is_permission_menu(s: &str) -> bool {
+    permission_menu_at(&s.to_ascii_lowercase()).is_some()
+}
+
+/// Offset of the LAST occurrence of any needle. The needles are the detectors' own anchors, so the
+/// position returned is the bottom-most line of whatever the detector matched on.
+fn last_of(l: &str, needles: &[&str]) -> Option<usize> {
+    needles.iter().filter_map(|n| l.rfind(n)).max()
+}
+
+fn limit_menu_at(l: &str) -> Option<usize> {
+    if !is_limit_menu(l) {
+        return None;
+    }
+    last_of(l, &["stop and wait for limit"])
+}
+
+fn limit_line_at(l: &str) -> Option<usize> {
+    if !is_limit_line(l) {
+        return None;
+    }
+    // Mirrors `is_limit_line`'s alternatives; "hit your" stands in for its two-term branch.
+    last_of(
+        l,
+        &[
+            "usage limit reached",
+            "hour limit reached",
+            "out of extra usage",
+            "hit your",
+        ],
+    )
+}
+
+fn resume_menu_at(l: &str) -> Option<usize> {
+    if !is_resume_menu(l) {
+        return None;
+    }
+    last_of(l, &["resume from summary", "resume full session"])
+}
+
 /// Which usage-limit signal (if any) a fresh PTY chunk's bounded tail carries. The MENU is the more
 /// specific signal so it's checked first (and a menu implies a limit); the passive banner next; the
 /// resume menu last. Split out from `scan_limit` as a pure fn so the TAIL-window boundary is
@@ -346,18 +409,67 @@ enum LimitSignal {
     ResumeMenu,
 }
 
-fn limit_signal_in_tail(chunk: &[u8]) -> Option<LimitSignal> {
-    const TAIL: usize = 512;
-    let start = chunk.len().saturating_sub(TAIL);
-    let tail = String::from_utf8_lossy(&chunk[start..]);
-    if is_limit_menu(&tail) {
+/// The bounded window a PTY scan looks at — banners and prompt boxes are short, and a firehose must
+/// not cost a full-buffer regex. 512 bytes for the raw stream; the click-time check (which is handed
+/// a pane's rendered rows, box art and all, and runs once per click) gets a roomier window.
+const PTY_TAIL: usize = 512;
+const PANE_TAIL: usize = 4096;
+
+fn tail_of(chunk: &[u8], n: usize) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(&chunk[chunk.len().saturating_sub(n)..])
+}
+
+/// The one detector. Everything that decides "is an answerable menu on screen" — the PTY scanner and
+/// the click-time re-check alike — goes through here, so the wording exists in exactly one place.
+fn limit_signal_in(text: &str) -> Option<LimitSignal> {
+    let l = text.to_ascii_lowercase();
+    let perm = permission_menu_at(&l);
+    // POSITIONAL veto. A menu survives only when no approval prompt sits below it. Fail closed on a
+    // tie (`p < m`, not `<=`) and whenever the menu has no locatable anchor.
+    //
+    // ponytail: byte order is our only screen-order proxy in a raw PTY chunk — ANSI cursor moves can
+    // repaint out of order, so "below in the buffer" is a heuristic here, not a fact. That is
+    // survivable because it is not the last word: `menu_signal_in_text` re-runs this same detector
+    // over the pane's RENDERED rows immediately before any keystroke, and there the order IS the
+    // screen order. Upgrade path, if ever needed: feed the scanner a parsed screen instead of bytes.
+    let unvetoed = |at: Option<usize>| match (at, perm) {
+        (Some(m), Some(p)) => p < m,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    // Each candidate is tested on its own merits: a vetoed menu FALLS THROUGH to the next signal
+    // instead of blanking the whole chunk (a stray "1. Yes" fragment in the window used to hide a
+    // freshly printed limit banner entirely, and it stayed hidden for as long as it kept repainting).
+    if unvetoed(limit_menu_at(&l)) {
         Some(LimitSignal::LimitMenu)
-    } else if is_limit_line(&tail) {
+    } else if unvetoed(limit_line_at(&l)) {
         Some(LimitSignal::Limit)
-    } else if is_resume_menu(&tail) {
+    } else if unvetoed(resume_menu_at(&l)) {
         Some(LimitSignal::ResumeMenu)
     } else {
         None
+    }
+}
+
+/// Raw-chunk shorthand for the tests: they assert on the PTY path's exact window, which `scan_limit`
+/// applies inline (it needs the tail twice).
+#[cfg(test)]
+fn limit_signal_in_tail(chunk: &[u8]) -> Option<LimitSignal> {
+    limit_signal_in(&tail_of(chunk, PTY_TAIL))
+}
+
+/// Backlog 27 / TOCTOU: what is on the pane's screen RIGHT NOW, per the very same detector the PTY
+/// scanner uses. The frontend hands over the live terminal rows immediately before writing a
+/// keystroke, because the cached `limitMenu` flag is a scan-time verdict that can outlive its menu
+/// (the veto is an allowlist, and the byte-flood clear is 4 KiB coarse) — and a confirm dialog only
+/// widens that window. Returns the camelCase discriminant, or null for "nothing answerable here".
+#[tauri::command]
+pub fn menu_signal_in_text(text: String) -> Option<&'static str> {
+    match limit_signal_in(&tail_of(text.as_bytes(), PANE_TAIL)) {
+        Some(LimitSignal::LimitMenu) => Some("limitMenu"),
+        Some(LimitSignal::Limit) => Some("limit"),
+        Some(LimitSignal::ResumeMenu) => Some("resumeMenu"),
+        None => None,
     }
 }
 
@@ -365,11 +477,35 @@ fn limit_signal_in_tail(chunk: &[u8]) -> Option<LimitSignal> {
 /// reader passes the raw bytes; we inspect a bounded tail (banners are short lines) to keep it cheap
 /// under a firehose.
 pub fn scan_limit(id: &str, chunk: &[u8]) {
-    match limit_signal_in_tail(chunk) {
+    let tail = tail_of(chunk, PTY_TAIL);
+    match limit_signal_in(&tail) {
         Some(LimitSignal::LimitMenu) => on_limit_menu(id),
         Some(LimitSignal::Limit) => on_limit(id),
         Some(LimitSignal::ResumeMenu) => on_resume_menu(id),
-        None => {}
+        // An approval prompt now owns the screen: RETRACT a menu flag still standing, don't merely
+        // decline to set one. `on_output` only clears it after LIMIT_RESUME_BYTES of output, and a
+        // prompt box is an order of magnitude smaller than that — so a menu that a permission prompt
+        // replaced kept the flag up, aiming both auto-continue's "1" and the header answer buttons
+        // (backlog 27) at the prompt instead. This is the one moment we can tell, so we act on it.
+        // Presence (not position) is right here: nothing answerable was found anyway, so a prompt
+        // anywhere in the window is reason enough to stop claiming a menu is up.
+        None => {
+            if is_permission_menu(&tail) {
+                clear_menu(id);
+            }
+        }
+    }
+}
+
+/// Drop the "a menu is up" flag for this session. Leaves `limited` alone: the quota is still spent
+/// whatever is drawn over it — only the *answerable menu* claim is being retracted.
+fn clear_menu(id: &str) {
+    if let Some(t) = TRACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+    {
+        t.limit_menu.store(false, Ordering::Relaxed);
     }
 }
 
@@ -1097,6 +1233,8 @@ mod tests {
         // SAFETY: Claude Code's approval prompts also render numbered options ("1. Yes / 2. No"),
         // and auto-continue presses "1". None of the three detectors may match a permission/approval
         // menu, or Castellyn would silently approve an edit/command on the user's behalf. Lock it.
+        // The same contract now also covers the manual answer buttons (backlog 27): they are shown
+        // only where `limit_signal_in_tail` fired, so its verdict is what has to stay honest.
         let permission_menus = [
             "Do you want to make this edit to lib.rs?\n\u{276f} 1. Yes\n  2. Yes, allow all edits this session\n  3. No, and tell Claude what to do differently (esc)",
             "Do you want to proceed?\n\u{276f} 1. Yes\n  2. Yes, and don't ask again for pwsh commands\n  3. No, and tell Claude what to do differently (esc)",
@@ -1104,12 +1242,142 @@ mod tests {
             // Adversarial: an approval prompt that mentions "limit" must still not match — the
             // detectors anchor on "usage limit reached" / "hit your…limit" / the menu option labels.
             "Do you want to raise your usage limit?\n 1. Yes\n 2. No",
+            // Adversarial: an approval prompt whose FILE PATHS carry the menu words, without the
+            // full option labels — the detectors must still stay silent on their own merits.
+            "Do you want to read resume-from-summary.md and stop-and-wait-for-limit.md?\n 1. Yes\n 2. No",
+        ];
+        // Adversarial second family: an approval prompt sharing the tail with GENUINE menu wording
+        // that it is drawn OVER — a menu that had not yet scrolled away when the prompt appeared.
+        // Here the menu detectors legitimately match, and only the veto stands between "press 1" and
+        // an approved edit. These are the cases the answer buttons (backlog 27) made worth locking
+        // down. The prompt is LAST in every sample: that is what makes it the thing on screen.
+        let permission_menus_over_menu_text = [
+            "1. Resume from summary\n2. Resume full session as-is\n\nDo you want to proceed?\n\u{276f} 1. Yes\n  2. Yes, and don't ask again",
+            "What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan\n\nDo you want to make this edit?\n 1. Yes, allow all edits this session",
+            "You've hit your 5-hour limit · resets 3pm\n\nDo you want to make this edit to lib.rs?\n\u{276f} 1. Yes\n  2. No",
         ];
         for m in permission_menus {
             assert!(!is_limit_line(m), "is_limit_line matched a permission menu: {m:?}");
             assert!(!is_limit_menu(m), "is_limit_menu matched a permission menu: {m:?}");
             assert!(!is_resume_menu(m), "is_resume_menu matched a permission menu: {m:?}");
         }
+        for m in permission_menus.iter().chain(permission_menus_over_menu_text.iter()) {
+            assert!(is_permission_menu(m), "is_permission_menu missed a permission menu: {m:?}");
+            assert_eq!(
+                limit_signal_in_tail(m.as_bytes()),
+                None,
+                "a menu signal escaped from a permission menu: {m:?}"
+            );
+        }
+        // The veto must not swallow the REAL menus, or the whole feature silently dies.
+        assert!(!is_permission_menu("What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan"));
+        assert!(!is_permission_menu("1. Resume from summary\n2. Resume full session as-is\n3. Don't ask me again"));
+    }
+
+    #[test]
+    fn an_answered_prompt_above_a_menu_does_not_hide_it() {
+        // The regression a presence-based veto caused: the 512-byte window commonly still carries the
+        // tail of whatever was on screen a moment ago, so an approval prompt the user ALREADY answered
+        // suppressed the menu printed underneath it — and while the confound kept repainting, that
+        // menu was never recognised at all (permanently unanswered, the feature's worst outcome).
+        // Order is the whole signal: prompt ABOVE → the menu below it is what the user is looking at.
+        let cases = [
+            (
+                "Do you want to make this edit to lib.rs?\n\u{276f} 1. Yes\n  2. No\n\nEdit applied.\n\nWhat do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan",
+                Some(LimitSignal::LimitMenu),
+            ),
+            (
+                // The reviewer's exact confound: a just-answered prompt above a fresh limit BANNER.
+                "Do you want to proceed?\n\u{276f} 1. Yes\n  2. Yes, and don't ask again\n\nRunning…\n\nYou've hit your 5-hour limit \u{b7} resets 3pm",
+                Some(LimitSignal::Limit),
+            ),
+            (
+                "Do you trust the files in this folder?\n 1. Yes, proceed\n 2. No, exit\n\nopened.\n\n1. Resume from summary\n2. Resume full session as-is",
+                Some(LimitSignal::ResumeMenu),
+            ),
+            // Same three, prompt LAST → still vetoed. The rule is positional, not disabled.
+            (
+                "What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan\n\nDo you want to make this edit?\n\u{276f} 1. Yes",
+                None,
+            ),
+        ];
+        for (text, want) in cases {
+            assert_eq!(limit_signal_in_tail(text.as_bytes()), want, "positional veto: {text:?}");
+        }
+        // A vetoed candidate FALLS THROUGH to the next one instead of blanking the whole chunk: the
+        // limit menu at the top is buried under a prompt (vetoed), but the resume menu printed BELOW
+        // that prompt is the live thing and must still be reported. The old code returned None here.
+        assert_eq!(
+            limit_signal_in_tail(
+                "What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan\n\nDo you want to proceed?\n\u{276f} 1. Yes\n\n1. Resume from summary\n2. Resume full session as-is".as_bytes()
+            ),
+            Some(LimitSignal::ResumeMenu)
+        );
+    }
+
+    #[test]
+    fn a_prompt_the_allowlist_misses_leaves_the_flag_stale() {
+        // Pinned as a FACT, not a hope. `limit_menu` is retracted only by a permission prompt the
+        // 5-pattern allowlist recognises, or by LIMIT_RESUME_BYTES of output — so a menu answered
+        // outside Castellyn, followed by a differently-worded approval prompt under 4 KiB, leaves the
+        // header button live and clickable over a prompt. The allowlist cannot be made complete, so
+        // the keystroke path does NOT trust this flag: `menu_signal_in_text` re-reads the pane's live
+        // rows first, and it correctly finds nothing answerable on that screen (asserted below).
+        let id = "tstaleflag1";
+        on_spawn(id, "claude", "cc1", true);
+        let menu_up = |id: &str| {
+            TRACKS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .map(|t| t.limit_menu.load(Ordering::Relaxed))
+        };
+        scan_limit(id, b"What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan");
+        assert_eq!(menu_up(id), Some(true));
+        // The user answers it in the terminal; the agent's NEXT question is a genuine approval prompt
+        // worded in a way the allowlist does not carry, and it is far smaller than the byte-flood clear.
+        let unknown_prompt = "Allow the agent to run `rm -rf build`? (y/n)";
+        scan_limit(id, unknown_prompt.as_bytes());
+        assert_eq!(menu_up(id), Some(true), "the stale flag is the known hole this test pins");
+        // …and this is the guard that actually holds: nothing answerable is on that screen.
+        assert_eq!(menu_signal_in_text(unknown_prompt.to_string()), None);
+        // Sanity: the same call says "limitMenu" when the menu really IS on screen, so a refusal
+        // means "moved on", never "the check is broken".
+        assert_eq!(
+            menu_signal_in_text(
+                "\u{2502} What do you want to do?\n\u{2502} \u{276f} 1. Stop and wait for limit to reset\n\u{2502}   2. Upgrade your plan".into()
+            ),
+            Some("limitMenu")
+        );
+        TRACKS.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    }
+
+    #[test]
+    fn a_permission_prompt_retracts_a_standing_menu_flag() {
+        // The flag outliving its menu is the real-world version of the hazard above: the menu is
+        // detected, THEN an approval prompt replaces it, and the byte-flood clear (LIMIT_RESUME_BYTES)
+        // is far too coarse to notice a prompt box. Both the auto-keypress and the answer buttons key
+        // off this flag, so the prompt itself has to retract it.
+        let id = "tpermretract1";
+        on_spawn(id, "claude", "cc1", true);
+        let menu_up = |id: &str| {
+            TRACKS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .map(|t| t.limit_menu.load(Ordering::Relaxed))
+        };
+        scan_limit(id, b"What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan");
+        assert_eq!(menu_up(id), Some(true));
+        // Ordinary output does NOT retract it — only a permission prompt does (the menu can still be
+        // on screen behind a spinner repaint).
+        scan_limit(id, b"waiting for the window to reset...");
+        assert_eq!(menu_up(id), Some(true));
+        scan_limit(id, "Do you want to make this edit to lib.rs?\n\u{276f} 1. Yes\n  2. No".as_bytes());
+        assert_eq!(menu_up(id), Some(false));
+        // An unknown id is a no-op, not a panic (the track is dropped as soon as the pane exits).
+        scan_limit("tpermretractgone", b"Do you want to proceed?\n 1. Yes\n 2. No");
+        TRACKS.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
 
     #[test]

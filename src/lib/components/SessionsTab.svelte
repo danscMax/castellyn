@@ -18,6 +18,7 @@
   import { t } from '$lib/i18n';
   import {
     sessionWrite,
+    menuSignalInText,
     sessionList,
     sessionSetLabel,
     sessionSetFocus,
@@ -66,7 +67,9 @@
   } from '$lib/ipc';
   import { pickResumeCandidate, isProfileExhausted } from '$lib/limitSwitch';
   import { decideMenuContinue, pickBindingResetMs } from '$lib/menuContinue';
+  import { askPreview } from '$lib/askPreview';
   import { guardedSend } from '$lib/guardedSend';
+  import { menuStillUp } from '$lib/menuGuard';
   import { launchAdvisor, type LaunchTaskClass } from '$lib/launchAdvisor';
   import { composeLaunchArgs } from '$lib/launchArgs';
   import { hookHealth } from '$lib/hookHealth';
@@ -352,6 +355,9 @@
   // Session spawn times (unix ms) from the backend StatusEvent — static; "active for N" is
   // derived from `Date.now() - spawnedAt[id]` on render.
   let spawnedAt = $state<Record<string, number>>({});
+  // Backlog 28: per PANE key, one line of "what is it asking" captured when the pane blocked.
+  // Shown on the rail row and the attention strip — "waits" alone never said what for.
+  let askById = $state<Record<string, string>>({});
   onMount(() => {
     // L118: route through track()/disposed (like the main onMount) so a pre-resolution unmount
     // still unregisters this listener instead of leaking it.
@@ -360,7 +366,10 @@
         const { id, state } = e.payload;
         if (e.payload.claudeSessionId) claudeSids = { ...claudeSids, [id]: e.payload.claudeSessionId };
         if (e.payload.spawnedAt && !spawnedAt[id]) spawnedAt = { ...spawnedAt, [id]: e.payload.spawnedAt };
+        const wasMenu = limitMenuById[id];
         limitMenuById[id] = e.payload.limitMenu ?? false; // #21f: track whether the limit menu is up
+        // Backlog 27: the menu genuinely went away → re-arm the answer buttons for the next one.
+        if (wasMenu && !limitMenuById[id]) menuAnswered = { ...menuAnswered, [id]: false };
         // #21f: latch the sticky rate-limit flag the instant a limit is seen — drives the "will
         // auto-resume" header badge and survives the flickering live flag. Cleared when maybeAutoContinue
         // re-arms the episode.
@@ -388,6 +397,18 @@
         // vanish faster than a tick, so press option 1 the instant a limit/menu is detected (phase 2
         // still waits for the endpoint reset). Idempotent: maybeAutoContinue is fully guarded per pane.
         if (state === 'limited' || e.payload.limitMenu) maybeAutoContinue();
+        // Backlog 28: snapshot WHAT the agent is asking, from the pane's own buffer, at the moment
+        // it blocks — a blocked agent has stopped repainting, so one read holds until it moves.
+        // Frontend-only by design: the hook that would report the real prompt text is deferred.
+        if (paneKey && prev !== state) {
+          if (state === 'blocked') {
+            const ask = askPreview(paneApi(paneKey)?.lastLines?.() ?? []);
+            if (ask) askById = { ...askById, [paneKey]: ask };
+          } else if (askById[paneKey]) {
+            const { [paneKey]: _gone, ...rest } = askById;
+            askById = rest;
+          }
+        }
         // Mirror what the OS was told into the in-app notification centre. Windows already showed
         // it; this is so "what did I miss while I was away" has an answer inside the app, where
         // previously native agent notifications left no trace at all.
@@ -430,7 +451,9 @@
   const switchAttempted = new Set<string>(); // #21e: switch tried once per episode (else fall to wait)
   // #21f: the interactive limit MENU is up for this session id (from agent-status.limitMenu). Newer
   // Claude Code shows "What do you want to do? / 1. Stop and wait…" instead of a passive banner.
-  const limitMenuById: Record<string, boolean> = {};
+  // $state (backlog 27): the pane header's answer buttons key off this, so the flag flipping has to
+  // re-render. Still mutated in place — the proxy makes assignment and `delete` both reactive.
+  const limitMenuById: Record<string, boolean> = $state({});
   const menuDismissed = new Set<string>(); // #21f: option-1 keystroke sent once per episode
   const menuDismissedAt: Record<string, number> = {}; // #21f: when it was sent (resume-menu settle)
   // #21f: STICKY — a real rate limit was seen this episode (agent-status 'limited'). Survives the
@@ -528,6 +551,72 @@
     return m;
   });
 
+  // ── Backlog 27: answer a menu-blocked pane from its header ───────────────────────────────────
+  // The gate is the BACKEND's menu detector (`limitMenu`), never anything derived here: the two
+  // menus it recognises are the only ones proven not to overlap a permission/approval prompt
+  // (agent_status.rs `permission_menus_never_trigger_an_auto_keypress`). No frontend detection is
+  // added, so this feature cannot widen what counts as "answerable".
+  //
+  // Answered once → hidden until the menu actually clears (the backend flag only drops on an output
+  // flood, and a "stop and wait" answer barely produces one). Without this the buttons stayed up
+  // after a click, and a second press would land in the prompt box as a chat message reading "1".
+  let menuAnswered = $state<Record<string, boolean>>({});
+  const menuAnswerById = $derived.by(() => {
+    const m: Record<string, { prompt: string; opts: { key: string; label: string }[] }> = {};
+    if (!answerMenus) return m; // off by default
+    for (const p of panes) {
+      const id = sessionIds[p.key];
+      if (!id || !limitMenuById[id] || menuAnswered[id]) continue;
+      // Same limit-vs-resume split maybeAutoContinue uses: the backend sets `limited` for the limit
+      // menu and never for a bare resume menu, so a latched rate limit identifies which one is up.
+      m[p.key] = sawRateLimit.has(p.key)
+        ? {
+            prompt: t('sessions.answerLimitAsk'),
+            // Only "stop and wait" is offered. The menu's other option is "Upgrade your plan", and
+            // one click must not put the user in front of a purchase flow.
+            opts: [{ key: '1', label: t('sessions.answerLimitWait') }]
+          }
+        : {
+            prompt: t('sessions.answerResumeAsk'),
+            // "3. Don't ask me again" is a persistent setting change, not an answer — left out.
+            opts: [
+              { key: '1', label: t('sessions.answerResumeSummary') },
+              { key: '2', label: t('sessions.answerResumeFull') }
+            ]
+          };
+    }
+    return m;
+  });
+  // A click never sends on its own: it opens the shared confirm gate, and only its action writes.
+  // (With "confirm destructive actions" off the gate runs the action straight away — the deliberate
+  // #120 behaviour — but the user still had to click the labelled button to get here.)
+  function answerMenu(paneKey: string, opt: string, label: string) {
+    const id = sessionIds[paneKey];
+    if (!id) return;
+    const pane = panes.find((x) => x.key === paneKey);
+    const kind = sawRateLimit.has(paneKey) ? 'limit' : 'resume';
+    askConfirm({
+      title: t('sessions.answerConfirmTitle'),
+      message: t('sessions.answerConfirmBody', { name: pane ? plabel(pane) : paneKey, option: label }),
+      confirmLabel: t('sessions.answerConfirmSend'),
+      details: [`${opt} — ${label}`],
+      action: async () => {
+        // The dialog is a decision delay, so the live re-check inside pressMenuOption runs AFTER it —
+        // that is the point. A refusal means the pane is showing something else now (very possibly a
+        // permission prompt), so say so instead of silently doing nothing.
+        if (await pressMenuOption(paneKey, id, opt, kind)) {
+          menuAnswered = { ...menuAnswered, [id]: true };
+        } else {
+          pushToast({
+            kind: 'error',
+            title: t('sessions.answerStaleTitle', { name: pane ? plabel(pane) : paneKey }),
+            detail: t('sessions.answerStaleDetail')
+          });
+        }
+      }
+    });
+  }
+
   // ── W6: inter-session message bus badge ──────────────────────────────────────────────────────
   // Poll each live pane's mailbox (30s, only while the tab is visible). A pane's is_idle comes from
   // its displayState so `@idle`-addressed mail reaches only free panes. New messages toast once (with
@@ -581,6 +670,42 @@
   $effect(() => {
     if (visible) untrack(() => void pollBus());
   });
+
+  // The ONE place a menu keystroke reaches a pane. Both drivers land here — the unattended
+  // auto-continue above and the manual header buttons (backlog 27) — so the per-episode guards can
+  // never disagree, and there is exactly one line in this file that answers a menu.
+  //
+  // Which is exactly why the time-of-check/time-of-use guard belongs HERE and not in the click
+  // handler: `limitMenuById` is a scan-time verdict that can outlive its menu (see menuGuard.ts), and
+  // both drivers were trusting it. Re-reading the pane's live rows immediately before the write is
+  // the last honest moment, and putting it in the shared function fixes both callers at once.
+  const menuPressing = new Set<string>(); // the await below is a window; don't let a tick double-fire
+  async function pressMenuOption(
+    paneKey: string,
+    id: string,
+    opt: string,
+    kind: 'limit' | 'resume'
+  ): Promise<boolean> {
+    if (menuPressing.has(paneKey)) return false;
+    menuPressing.add(paneKey);
+    try {
+      // 24 rows: comfortably more than the tallest menu box, so a prompt drawn under the menu is
+      // inside the window that decides. A pane we cannot read at all yields [] → refusal.
+      const ok = await menuStillUp(kind, () => paneApi(paneKey)?.lastLines?.(24) ?? [], menuSignalInText);
+      if (!ok) {
+        console.debug(`[menu] refused ${opt} (${kind}): pane moved on`, paneKey); // #15
+        return false;
+      }
+      menuDismissed.add(paneKey);
+      menuDismissedAt[paneKey] = Date.now();
+      await sessionWrite(id, opt + '\r');
+      // #15: permanent debug channel — "what pressed what, and when" (devtools console).
+      console.debug(`[menu] press ${opt} (${kind} menu)`, paneKey);
+      return true;
+    } finally {
+      menuPressing.delete(paneKey);
+    }
+  }
 
   function maybeAutoContinue() {
     if (!autoContinueOn) return; // master escape hatch for ALL unattended limit handling (21c + 21e)
@@ -653,15 +778,16 @@
       } else if (action === 'press1') {
         // Pick the menu option: limit menu → always "1. Stop and wait"; resume menu → the #8 choice
         // (summary="1" / full="2"). Mirrors a manual keypress.
-        menuDismissed.add(p.key);
-        menuDismissedAt[p.key] = Date.now();
         const opt = isResumeMenu && resumeChoice === 'full' ? '2' : '1';
-        sessionWrite(id, opt + '\r');
-        // #15: permanent debug channel — "what did the automation decide, and when" (devtools console).
-        console.debug(`[auto-continue] press ${opt} (${isResumeMenu ? 'resume' : 'limit'} menu)`, p.key);
         // #11: surface phase 1 too (not just the later "continue") so every autonomous step is visible.
         // Once per episode — menuDismissed now guards press1, so this can't re-fire on the next tick.
-        pushToast({ kind: 'info', title: t('sessions.autoContinuePress1', { name: p.name ?? p.profile }) });
+        // Only announce what was actually sent: the press can now be refused (the pane moved on), and
+        // an unattended refusal must not claim otherwise. It stays silent — this loop runs on a timer
+        // and would otherwise toast on every tick; the console line in pressMenuOption is the record.
+        void pressMenuOption(p.key, id, opt, isResumeMenu ? 'resume' : 'limit').then((sent) => {
+          if (sent)
+            pushToast({ kind: 'info', title: t('sessions.autoContinuePress1', { name: p.name ?? p.profile }) });
+        });
       } else if (action === 'continue') {
         autoContinued.add(p.key);
         // W5b: two-phase guarded delivery — bracketed-paste the continuation (multiline-safe), let the
@@ -784,6 +910,8 @@
   let resumeChoice = $state<'summary' | 'full' | 'ask'>('summary');
   // #9: custom continuation text; empty = the localized default ('continue'/'продолжай').
   let autoContinueText = $state('');
+  // Backlog 27: show answer buttons on a menu-blocked pane's header. OFF unless asked for.
+  let answerMenus = $state(false);
   // #9: the text actually sent — the user's override (trimmed) or the localized default.
   const continuationText = () => autoContinueText.trim() || t('sessions.autoContinueText');
   onMount(async () => {
@@ -795,6 +923,7 @@
       limitMode = c.limitMode === 'switchProfile' ? 'switchProfile' : 'wait';
       resumeChoice = c.resumeChoice === 'full' || c.resumeChoice === 'ask' ? c.resumeChoice : 'summary';
       autoContinueText = c.autoContinueText ?? '';
+      answerMenus = c.answerMenus ?? false;
     } catch {
       /* defaults stand */
     }
@@ -852,6 +981,8 @@
         const { [oldId]: _s, ...restS } = spawnedAt;
         spawnedAt = restS;
         delete limitMenuById[oldId]; // #21f: id-keyed menu-up flag — prune with the rest
+        const { [oldId]: _m, ...restM } = menuAnswered; // backlog 27: same id-keyed pruning
+        menuAnswered = restM;
         delete sentLabels[oldId]; // last-pushed toast label — same id-keyed pruning
       }
     }
@@ -1196,6 +1327,10 @@
     if (key in unread) {
       const { [key]: _u, ...rest } = unread;
       unread = rest;
+    }
+    if (key in askById) {
+      const { [key]: _a, ...rest } = askById;
+      askById = rest;
     }
   }
   // W3: a closed session's isolated worktree is removed if clean (branch preserved when it holds
@@ -2511,10 +2646,18 @@
     focusTerminal: () => void;
     runExternalSearch: (q: string, next?: boolean) => void;
     setFontSize: (px: number) => void;
+    /** Backlog 28: tail of the visible buffer, for the "what is it asking" preview. */
+    lastLines: (n?: number) => string[];
   };
   // Clicker-audit #3: `bind:this={paneRefs[key]}` on a plain object fires Svelte's
   // binding_property_non_reactive warning on every spawn — $state makes the binding legal.
   const paneRefs: Record<string, PaneApi | undefined> = $state({});
+  // A backgrounded pane is mounted by a SECOND each-block (hidden, keeps the PTY alive) — and those
+  // are precisely the panes auto-continue drives unattended, so the menu guard has to be able to read
+  // their live rows too. Its own map, not a shared slot: during a background toggle the two mounts
+  // would otherwise race to null/set the same key.
+  const bgPaneRefs: Record<string, PaneApi | undefined> = $state({});
+  const paneApi = (key: string) => paneRefs[key] ?? bgPaneRefs[key];
   let focusIdx = 0;
 
   // Search every pane at once (#52). Each pane runs the query through its own SearchAddon;
@@ -3325,7 +3468,7 @@
       <span class="attn-dot"></span>
       <span class="text-sw-xs attn-msg">
         <b>{plabel(attention.first)}</b>{#if spaces.length > 1}&nbsp;· {spaces.find((s) => s.id === paneSpace(attention.first))?.name}{/if}
-        — {t('sessions.attnWaiting', { d: attnElapsed(attention.first.key) })}{#if attention.more}&nbsp;·
+        — {t('sessions.attnWaiting', { d: attnElapsed(attention.first.key) })}{#if askById[attention.first.key]}&nbsp;· <i class="attn-ask">{askById[attention.first.key]}</i>{/if}{#if attention.more}&nbsp;·
           <!-- "and 1 more" was a dead end: the other waiting panes had no clock and no way to reach
                them without hunting. The count now opens the full list, each row jumping to its pane. -->
           <button type="button" class="attn-more" onclick={() => (attnListOpen = !attnListOpen)}
@@ -3339,6 +3482,7 @@
           <button type="button" class="attn-row" onclick={() => { attnListOpen = false; railFocus(p.key); }}>
             <span class="attn-dot"></span>
             <span class="attn-row-name">{plabel(p)}</span>
+            {#if askById[p.key]}<i class="attn-ask">{askById[p.key]}</i>{/if}
             <span class="attn-row-age">{t('sessions.attnWaiting', { d: attnElapsed(p.key) })}</span>
           </button>
         {/each}
@@ -3463,7 +3607,11 @@
               {/if}
               {#each spPanes as pane (pane.key)}
                 {@const st = displayStateById[pane.key]}
+                <!-- Backlog 28: `ask` is the captured prompt line; it only renders while the pane is
+                     actually waiting, so a stale capture can never be shown as current. -->
+                {@const ask = st === 'blocked' ? askById[pane.key] : ''}
                 <button type="button" class="rail-item" class:active={activeKey === pane.key}
+                  class:asking={!!ask}
                   class:offspace={sp.id !== activeSpace}
                   onclick={() => railFocus(pane.key)}
                   oncontextmenu={(e) => openRailMenu(e, pane.key)}
@@ -3485,6 +3633,7 @@
                       class:limited={st === 'limited'}>{t(`sessions.${RAIL_WORDS[st]}`)}</span>
                   {/if}
                   {#if pane.tool === 'claude' && pane.profile}<ProfileUsageBadge profile={pane.profile} compact />{/if}
+                  {#if ask}<span class="rail-ask" title={ask}>{ask}</span>{/if}
                 </button>
               {/each}
             {/if}
@@ -3545,6 +3694,8 @@
             agentState={displayStateById[pane.key]}
             waitingFor={displayStateById[pane.key] === 'blocked' ? attnElapsed(pane.key) : null}
             autoResumeLabel={autoResumeById[pane.key] ?? null}
+            menuAnswer={menuAnswerById[pane.key] ?? null}
+            onMenuAnswer={(opt, label) => answerMenu(pane.key, opt, label)}
             visible={visible && paneSpace(pane) === activeSpace && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
             scrollbackSlot={scrollbackSlots[pane.key] ?? 0}
@@ -3616,6 +3767,7 @@
   <div class="bg-hidden" aria-hidden="true">
     {#each bgPanes as pane (pane.key)}
       <TerminalPane
+        bind:this={bgPaneRefs[pane.key]}
         profile={pane.profile}
         tool={pane.tool}
         args={pane.args}
@@ -3749,6 +3901,15 @@
   }
   .attn-row-age {
     margin-left: auto;
+    color: var(--sw-text-muted);
+  }
+  /* Backlog 28: the agent's own question. Italic + muted so it reads as a quote from the terminal
+     rather than as Castellyn's own words — the text is a heuristic pick, not a parsed field. */
+  .attn-ask {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--sw-text-muted);
   }
 
@@ -4967,6 +5128,22 @@
     display: inline-flex;
     opacity: 0.85;
     flex-shrink: 0;
+  }
+  /* Backlog 28: the question gets its own line, so it never squeezes the label/badges. Wrapping is
+     switched on ONLY for a row that has one — every other row keeps its single-line layout. */
+  .rail-item.asking {
+    flex-wrap: wrap;
+  }
+  .rail-ask {
+    flex: 0 0 100%;
+    min-width: 0;
+    padding-left: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9.5px;
+    font-style: italic;
+    color: var(--sw-text-muted);
   }
   .rail-label {
     flex: 1;

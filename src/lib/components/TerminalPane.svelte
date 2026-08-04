@@ -79,6 +79,8 @@
     onActivity,
     onFocus,
     autoResumeLabel = null,
+    menuAnswer = null,
+    onMenuAnswer,
     displayName = '',
     onRename,
     showUsage = true,
@@ -102,6 +104,12 @@
     waitingFor?: string | null;
     /** #21f: "Castellyn will auto-resume this pane" text (e.g. "auto-resume at 11:00"), or null. */
     autoResumeLabel?: string | null;
+    /** Backlog 27: the answerable menu this pane is stuck on, or null (the default — the feature is
+     *  opt-in). SessionsTab decides this SOLELY from the backend's vetted menu detector, so nothing
+     *  here may ever render over a permission prompt. This component only draws the buttons. */
+    menuAnswer?: { prompt: string; opts: { key: string; label: string }[] } | null;
+    /** Clicked an answer button. The tab confirms and sends — this never touches the PTY itself. */
+    onMenuAnswer?: (optKey: string, label: string) => void;
     displayName?: string;
     onRename?: (key: string, name: string) => void;
     /** Redesign 2026-07: hide the header usage badge when the rail already shows it (dedup). */
@@ -328,6 +336,20 @@
     searchOpen = true;
     if (next) search?.findNext(q);
     else search?.findPrevious(q);
+  }
+  // Backlog 28: the tail of what is currently on screen, so the tab can preview what a blocked agent
+  // is asking on its rail row. Reads the live xterm buffer — the data is already here, which is why
+  // this needs no backend hook (that work is deferred). Bounded scan: the visible rows only.
+  export function lastLines(n = 12): string[] {
+    if (!term) return [];
+    const buf = term.buffer.active;
+    const bottom = buf.baseY + buf.cursorY;
+    const out: string[] = [];
+    for (let i = Math.max(0, bottom - n + 1); i <= bottom; i++) {
+      const s = buf.getLine(i)?.translateToString(true);
+      if (s) out.push(s);
+    }
+    return out;
   }
   // Set an absolute font size pushed from the tab's synced-zoom control (#60).
   export function setFontSize(px: number) {
@@ -868,6 +890,18 @@
     {#if tool === 'claude' && profile && showUsage}<ProfileUsageBadge {profile} compact />{/if}
     <!-- #21f: Castellyn will auto-resume this pane once the limit resets — surfaced so the user knows -->
     {#if autoResumeLabel}<span class="autoresume" title={t('sessions.autoResumeTip')}><RotateCw size={12} /> {autoResumeLabel}</span>{/if}
+    <!-- Backlog 27: answer the menu this pane is parked on without switching to the terminal. Only
+         ever shown for a menu the backend positively identified (never a permission prompt), and
+         every click still goes through the tab's confirm gate. -->
+    {#if menuAnswer && !exited && !error}
+      <span class="menuans" title={t('sessions.answerTip')}>
+        <span class="menuans-q">{menuAnswer.prompt}</span>
+        {#each menuAnswer.opts as opt (opt.key)}
+          <button class="menuans-btn" onclick={() => onMenuAnswer?.(opt.key, opt.label)}
+            title={t('sessions.answerBtnTip', { option: opt.label })}>{opt.label}</button>
+        {/each}
+      </span>
+    {/if}
     <span class="spacer"></span>
     {#if exited || error}
       <button class="x relaunch" onclick={askRelaunch} title={t('sessions.relaunch')}><RotateCw size={14} /> {t('sessions.relaunch')}</button>
@@ -1074,6 +1108,33 @@
     border: 1px solid color-mix(in srgb, var(--sw-accent-text) 40%, transparent);
     white-space: nowrap;
     flex-shrink: 0;
+  }
+  /* Backlog 27: the answer strip. Accent-outlined like .autoresume — both say "Castellyn can drive
+     this pane" — but the buttons are filled so they read as actions, not as status. */
+  .menuans {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .menuans-q {
+    color: var(--sw-text-muted);
+    white-space: nowrap;
+  }
+  .menuans-btn {
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--sw-accent-text) 45%, transparent);
+    background: var(--sw-accent-glow);
+    color: var(--sw-accent-text);
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .menuans-btn:hover {
+    background: var(--sw-accent-text);
+    color: var(--sw-bg);
   }
   /* The pane's whole header breathes while it waits. The 8px dot is invisible peripherally; a
      moving header is what actually catches the eye across a wall of terminals. Slow and low

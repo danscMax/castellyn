@@ -408,6 +408,11 @@ export const sessionSpawn = (
   sshTarget?: string
 ) => invoke<string>('session_spawn', { profile, tool, args, cwd, remoteDir, sshTarget, cols, rows, onData });
 export const sessionWrite = (id: string, data: string) => invoke('session_write', { id, data });
+// Backlog 27: ask the backend's menu detector what a pane's LIVE rows currently show, so a menu
+// keystroke is checked against the screen at the moment it is sent instead of a cached scan-time
+// flag. 'limitMenu' | 'limit' | 'resumeMenu' | null. See `menuGuard.ts`.
+export const menuSignalInText = (text: string) =>
+  invoke<string | null>('menu_signal_in_text', { text });
 export const sessionResize = (id: string, cols: number, rows: number) =>
   invoke('session_resize', { id, cols, rows });
 export const sessionKill = (id: string) => invoke('session_kill', { id });
@@ -1230,6 +1235,8 @@ export type HubConfig = {
   resumeChoice?: string | null;
   // #9: custom continuation text; absent/empty = the localized default ('continue'/'продолжай').
   autoContinueText?: string | null;
+  // Backlog 27: answer buttons in the pane header for a recognised menu. Absent = OFF (opt-in).
+  answerMenus?: boolean | null;
   // Wave C-5: show the native session-status strip in the title bar. Absent = default (on).
   showSessionStatusBar?: boolean | null;
   // R7: optimistic-concurrency version (bumped by every write). Pass the value you read back as

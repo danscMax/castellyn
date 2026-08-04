@@ -107,6 +107,9 @@
   let notifyBlocked = $state(true);
   let notifyDone = $state(true);
   let notifyLimited = $state(true);
+  // Backlog 27: answer buttons on a menu-blocked pane. Defaults to FALSE — the one switch here that
+  // arms a click-to-keystroke path into a live agent, so it is opt-in.
+  let answerMenus = $state(false);
   async function toggleNotifyKind(kind: 'Blocked' | 'Done' | 'Limited', v: boolean) {
     if (kind === 'Blocked') notifyBlocked = v;
     else if (kind === 'Done') notifyDone = v;
@@ -222,6 +225,7 @@
     notifyBlocked = c.notifyBlocked ?? true;
     notifyDone = c.notifyDone ?? true;
     notifyLimited = c.notifyLimited ?? true;
+    answerMenus = c.answerMenus ?? false;
     limitMode = c.limitMode ?? 'wait';
     toggleHotkey = c.toggleHotkey ?? '';
   }
@@ -398,6 +402,11 @@
   async function toggleStatusNotify(v: boolean) {
     statusNotify = v;
     if (!(await persist({ statusNotify: v }))) { statusNotify = !v; return; }
+    flash(t('settings.saved'));
+  }
+  async function toggleAnswerMenus(v: boolean) {
+    answerMenus = v;
+    if (!(await persist({ answerMenus: v }))) { answerMenus = !v; return; }
     flash(t('settings.saved'));
   }
   async function setLimitMode(v: string) {
@@ -619,7 +628,7 @@
     {/if}
 
     <!-- U11: Sessions notification/limit settings mirrored from the Sessions popover -->
-    {#if show(t('settings.sessionsSection'), t('sessions.statusSound'), t('sessions.statusToast'), t('sessions.limitMode'))}
+    {#if show(t('settings.sessionsSection'), t('sessions.statusSound'), t('sessions.statusToast'), t('sessions.answerMenus'), t('sessions.limitMode'))}
     <div class="sw-card flex flex-col gap-sw-3" data-highlight-id="settings:sessions">
       <div class="font-medium">{t('settings.sessionsSection')}</div>
       <div class="text-sw-sm text-sw-text-secondary">{t('settings.sessionsSectionDesc')}</div>
@@ -664,6 +673,12 @@
         </span>
         <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={runNotifyTest}>{t('sessions.notifySelfTestRun')}</button>
       </div>
+      <label class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('sessions.answerMenus')}
+          <span class="block text-sw-xs text-sw-text-muted">{t('sessions.answerMenusHint')}</span>
+        </span>
+        <Toggle checked={answerMenus} onCheckedChange={toggleAnswerMenus} title={t('sessions.answerMenus')} />
+      </label>
       <label class="flex items-center justify-between gap-sw-4">
         <span class="text-sw-sm">{t('sessions.limitMode')}
           <span class="block text-sw-xs text-sw-text-muted">{t('sessions.limitModeHint')}</span>
