@@ -70,6 +70,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("notify.schedule_failed_body", ["{name}: последний запуск завершился ошибкой", "{name}: the last run failed", "{name}: 上次运行失败"]),
     ("notify.limited_title",        ["Агент упёрся в лимит", "Agent hit its usage limit", "代理已达用量上限"]),
     ("notify.limited_body",         ["{label}: сессия остановлена до сброса окна лимита", "{label}: the session is paused until the limit window resets", "{label}: 会话已暂停，直至限额窗口重置"]),
+    ("notify.limited_body_until",   ["{label}: сессия остановлена до сброса лимита ({at})", "{label}: paused until the limit resets ({at})", "{label}: 会话已暂停，直至限额重置（{at}）"]),
     ("tray.tooltip_attention",      ["Внимание — ждут: {blocked}, лимит: {limited}, упало: {down}", "Attention — waiting: {blocked}, limited: {limited}, down: {down}", "注意 — 等待: {blocked}, 限额: {limited}, 宕机: {down}"]),
     // Toast action button + the self-test notification fired from Settings.
     ("notify.action_goto",          ["Перейти", "Jump to it", "前往"]),

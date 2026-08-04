@@ -82,6 +82,10 @@ struct Track {
     hook_expected: bool,
     /// Human label for notifications ("claude · cc1", "codex").
     label: String,
+    /// The claude profile behind this pane. Read when the pane hits its usage limit, to say WHEN the
+    /// window resets instead of just that it is exhausted — the only number the user actually needs
+    /// at that moment.
+    profile: String,
     spawned_at: u64,
     /// Unix ms of the last keystroke the USER sent into this pane. A turn that ends seconds after
     /// the user typed does not deserve a "finished" toast — they are sitting right there.
@@ -158,6 +162,7 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
             } else {
                 tool.to_string()
             },
+            profile: profile.to_string(),
             spawned_at: now,
             last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
@@ -405,6 +410,8 @@ struct StatusEvent {
     /// Backend-only: whether the user typed into this pane moments ago (item 33).
     #[serde(skip)]
     typed_recently: bool,
+    #[serde(skip)]
+    profile: String,
 }
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
@@ -432,6 +439,18 @@ fn beep(kind: crate::notify::Kind) {
 /// Popup + sound policy (herdr-style): →blocked = attention; working/blocked→idle =
 /// background completion. Suppressed while any Castellyn window is focused — the user
 /// is already looking at the app.
+/// When this profile's 5-hour window resets, if that is known. Reuses the shared usage cache, so a
+/// warm entry costs nothing and a cold one is a single 5-second-timeout request.
+fn limit_reset_for(profile: &str) -> Option<String> {
+    if profile.is_empty() {
+        return None;
+    }
+    let home = std::env::var("USERPROFILE").ok()?;
+    let creds = format!(r"{home}\.claude-{profile}\.credentials.json");
+    let resp = crate::limits::usage_cached(&creds)?.ok()?;
+    crate::limits::util_of(&resp, "five_hour").1
+}
+
 fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     // A closed/exited pane also lands on idle — that's teardown, not a completion worth
     // a "finished" toast (closing a working pane must stay silent).
@@ -512,12 +531,27 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     } else {
         (crate::notify::Kind::Done, "status.done_title", "status.done_body")
     };
+    // "Parked until the window resets" is only actionable with the WHEN. The number is already
+    // cached per profile (limits::usage_cached, 5-minute TTL shared with the badge), so this costs
+    // no extra request in the common case.
+    let body = if to_limited {
+        match limit_reset_for(&ev.profile) {
+            Some(at) => crate::i18n::trv(
+                "notify.limited_body_until",
+                lang,
+                &[("label", &ev.label), ("at", &at)],
+            ),
+            None => crate::i18n::trv(bk, lang, &[("label", &ev.label)]),
+        }
+    } else {
+        crate::i18n::trv(bk, lang, &[("label", &ev.label)])
+    };
     crate::notify::notify(
         app,
         crate::notify::Notice {
             kind,
             title: crate::i18n::tr(tk, lang).to_string(),
-            body: crate::i18n::trv(bk, lang, &[("label", &ev.label)]),
+            body,
             // Same subject = same session, so a later notice about this pane replaces the
             // earlier one instead of stacking.
             tag: Some(ev.id.clone()),
@@ -870,6 +904,7 @@ pub fn start(app: tauri::AppHandle) {
                         limit_menu: menu,
                         typed_recently: now.saturating_sub(t.last_user_input.load(Ordering::Relaxed))
                             < TYPED_RECENTLY_MS,
+                        profile: t.profile.clone(),
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop
@@ -900,6 +935,7 @@ mod tests {
             // Default hookless (codex/opencode/remote-claude); the local-claude tests set it true.
             hook_expected: false,
             label: tool.into(),
+            profile: String::new(),
             spawned_at: now,
             last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
@@ -1201,6 +1237,7 @@ mod tests {
             hook_idle: false,
             limit_menu: false,
             typed_recently: false,
+            profile: String::new(),
         };
         assert_ne!(ev.spawned_at, 0);
         assert_eq!(ev.spawned_at, now);
