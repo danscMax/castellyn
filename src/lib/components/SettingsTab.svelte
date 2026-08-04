@@ -18,6 +18,9 @@
     readShortcuts,
     setShortcuts,
     setLanguage,
+    notifyEnabled,
+    notifyTest,
+    notifyDiag,
     type HubConfig,
     type AppPaths
   } from '$lib/ipc';
@@ -99,6 +102,22 @@
   // U11: the Sessions notification/limit settings, surfaced here too (same config fields).
   let statusSounds = $state(true);
   let statusNotify = $state(true);
+  // Windows can mute the app entirely; asked once on mount so the hint can say so instead of
+  // leaving the user to guess why nothing pops up (see docs/adr/0004).
+  let notifyBlockedByOs = $state(false);
+  // Registration status in plain words, shown under the button after a test. A toast that never
+  // arrives is otherwise indistinguishable from a broken feature.
+  let notifyDiagText = $state('');
+  async function runNotifyTest() {
+    try {
+      notifyBlockedByOs = !(await notifyEnabled());
+      notifyDiagText = await notifyDiag();
+      await notifyTest();
+      flash(notifyBlockedByOs ? t('sessions.notifyBlockedByOs') : t('sessions.notifySelfTestSent'));
+    } catch (e) {
+      errMsg = String(e);
+    }
+  }
   let limitMode = $state('wait');
   // #123: OS-global show/hide accelerator (empty = off).
   let toggleHotkey = $state('');
@@ -586,6 +605,17 @@
         </span>
         <Toggle checked={statusNotify} onCheckedChange={toggleStatusNotify} title={t('sessions.statusToast')} />
       </label>
+      <!-- A toast that never arrives is indistinguishable from a feature that does not work. Windows
+           can mute an app entirely (Focus assist / per-app switch), and nothing in the app could say
+           so — now the platform is asked directly, and the test button proves the whole path. -->
+      <div class="flex items-center justify-between gap-sw-4">
+        <span class="text-sw-sm">{t('sessions.notifySelfTest')}
+          <span class="block text-sw-xs text-sw-text-muted">
+            {#if notifyBlockedByOs}{t('sessions.notifyBlockedByOs')}{:else if notifyDiagText}{notifyDiagText}{:else}{t('sessions.notifySelfTestHint')}{/if}
+          </span>
+        </span>
+        <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={runNotifyTest}>{t('sessions.notifySelfTestRun')}</button>
+      </div>
       <label class="flex items-center justify-between gap-sw-4">
         <span class="text-sw-sm">{t('sessions.limitMode')}
           <span class="block text-sw-xs text-sw-text-muted">{t('sessions.limitModeHint')}</span>

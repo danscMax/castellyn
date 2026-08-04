@@ -366,21 +366,23 @@ fn fire_alert(app: &AppHandle, profile: &str, window: &str, level: u8, util: f64
     if cfg.status_sounds.unwrap_or(true) {
         beep_crit();
     }
-    if cfg.status_notify.unwrap_or(true) {
-        use tauri_plugin_notification::NotificationExt;
-        let lang = crate::cur_lang();
-        let pct = format!("{}", util.round() as i64);
-        let _ = app
-            .notification()
-            .builder()
-            .title(crate::i18n::tr("limits.crit_title", lang))
-            .body(crate::i18n::trv(
+    // Through the one channel (crate::notify). Tagged by profile, so a profile that crosses the
+    // threshold again replaces its own earlier notice rather than adding another to the pile.
+    let lang = crate::cur_lang();
+    let pct = format!("{}", util.round() as i64);
+    crate::notify::notify(
+        app,
+        crate::notify::Notice {
+            kind: crate::notify::Kind::Limited,
+            title: crate::i18n::tr("limits.crit_title", lang).to_string(),
+            body: crate::i18n::trv(
                 "limits.crit_body",
                 lang,
                 &[("profile", &profile), ("window", &window), ("pct", &pct)],
-            ))
-            .show();
-    }
+            ),
+            session: None,
+        },
+    );
 }
 
 /// Poll one profile once: read its token, fetch usage, emit status, and fire any newly-crossed

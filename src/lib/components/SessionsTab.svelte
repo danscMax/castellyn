@@ -389,6 +389,15 @@
         if (state === 'limited' || e.payload.limitMenu) maybeAutoContinue();
       })
     );
+    // Clicking an OS toast (or its "Jump to it" button) sends the session id back here. The point of
+    // the notification is to end with the user looking at the pane that is waiting — so switch to
+    // its project space and focus it, exactly like the attention strip's button does.
+    track(
+      listen<string>('notify-activate', (e) => {
+        const paneKey = Object.keys(sessionIds).find((k) => sessionIds[k] === e.payload);
+        if (paneKey) railFocus(paneKey);
+      })
+    );
   });
   // Looking at a pane acknowledges its "done".
   $effect(() => {

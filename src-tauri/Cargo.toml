@@ -81,6 +81,22 @@ windows = { version = "0.62", features = [
   # GetUserDefaultLocaleName: pick the tray language before the frontend reports its locale, so
   # the first tray paint is not Russian on an English machine.
   "Win32_Globalization",
+  # Toast notifications built here rather than through tauri-plugin-notification: the plugin
+  # exposes only title/body, and the crate under it (tauri-winrt-notification) cannot set a
+  # notification's TAG or GROUP at all — so a second notice for the same session stacks up
+  # instead of replacing the first. Going at WinRT directly also buys the click callback,
+  # action buttons and the reminder scenario. See docs/adr/0004.
+  "UI_Notifications",
+  "Data_Xml_Dom",
+  "Foundation",
+  # Registering the AppUserModelID: Windows shows a toast only for an identity it knows, and it
+  # learns one from a Start Menu shortcut carrying PKEY_AppUserModel_ID. Without this the whole
+  # channel returns ERROR_NOT_FOUND (0x80070490) and every notification falls back to the plugin.
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_Storage_EnhancedStorage",
   # Junctions for profile folder links (links.rs): CreateFileW + DeviceIoControl with
   # FSCTL_SET_REPARSE_POINT. A junction needs no admin rights, unlike a directory symlink —
   # this is what removes the elevated repair path. See docs/adr/0003.

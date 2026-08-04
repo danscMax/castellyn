@@ -417,6 +417,18 @@ export const sessionKill = (id: string) => invoke('session_kill', { id });
 export const sessionSetLabel = (id: string, label: string) =>
   invoke('session_set_label', { id, label });
 
+// --- OS notifications (see docs/adr/0004) ---
+// Whether Windows currently allows this app to show toasts. `false` means the user muted Castellyn
+// in Windows settings — worth saying out loud, since a muted app looks exactly like a broken one.
+export const notifyEnabled = () => invoke<boolean>('notify_enabled');
+// Fire a harmless test toast: the only way to check identity + permission + "does anything show up"
+// end to end, which no automated gate can do.
+export const notifyTest = () => invoke('notify_test');
+// Why notifications may be going nowhere, in words: whether this app's notification identity is
+// registered with Windows. A release build has no console, so this is the only place that answer
+// can be read — see docs/adr/0004.
+export const notifyDiag = () => invoke<string>('notify_diag');
+
 // --- Worktree-per-session (W3): run a session in an isolated git worktree/branch ---
 export type WorktreeInfo = { path: string; branch: string };
 // Create an isolated worktree off the repo's current HEAD; name collisions bump a suffix (feat-2…).

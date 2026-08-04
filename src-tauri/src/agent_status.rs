@@ -426,22 +426,25 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     if cfg.status_sounds.unwrap_or(true) {
         beep(to_blocked || to_limited);
     }
-    if cfg.status_notify.unwrap_or(true) {
-        use tauri_plugin_notification::NotificationExt;
-        let (tk, bk) = if to_blocked {
-            ("status.blocked_title", "status.blocked_body")
-        } else if to_limited {
-            ("notify.limited_title", "notify.limited_body")
-        } else {
-            ("status.done_title", "status.done_body")
-        };
-        let _ = app
-            .notification()
-            .builder()
-            .title(crate::i18n::tr(tk, lang))
-            .body(crate::i18n::trv(bk, lang, &[("label", &ev.label)]))
-            .show();
-    }
+    // Everything OS-facing goes through the one channel (crate::notify): it owns the app identity,
+    // replaces a previous notice about the SAME session instead of stacking, and gives the waiting
+    // toast a click that jumps to that pane. The `status_notify` switch is checked in there.
+    let (kind, tk, bk) = if to_blocked {
+        (crate::notify::Kind::Blocked, "status.blocked_title", "status.blocked_body")
+    } else if to_limited {
+        (crate::notify::Kind::Limited, "notify.limited_title", "notify.limited_body")
+    } else {
+        (crate::notify::Kind::Done, "status.done_title", "status.done_body")
+    };
+    crate::notify::notify(
+        app,
+        crate::notify::Notice {
+            kind,
+            title: crate::i18n::tr(tk, lang).to_string(),
+            body: crate::i18n::trv(bk, lang, &[("label", &ev.label)]),
+            session: Some(ev.id.clone()),
+        },
+    );
 }
 
 /// Has a one-shot end-of-turn ping been overtaken by fresh output, i.e. did a new turn start?

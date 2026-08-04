@@ -68,6 +68,10 @@ const TABLE: &[(&str, [&str; 3])] = &[
     ("notify.limited_title",        ["Агент упёрся в лимит", "Agent hit its usage limit", "代理已达用量上限"]),
     ("notify.limited_body",         ["{label}: сессия остановлена до сброса окна лимита", "{label}: the session is paused until the limit window resets", "{label}: 会话已暂停，直至限额窗口重置"]),
     ("tray.tooltip_attention",      ["Внимание — ждут: {blocked}, лимит: {limited}, упало: {down}", "Attention — waiting: {blocked}, limited: {limited}, down: {down}", "注意 — 等待: {blocked}, 限额: {limited}, 宕机: {down}"]),
+    // Toast action button + the self-test notification fired from Settings.
+    ("notify.action_goto",          ["Перейти", "Jump to it", "前往"]),
+    ("notify.test_title",           ["Проверка уведомлений", "Notification test", "通知测试"]),
+    ("notify.test_body",            ["Если вы это видите — уведомления работают", "If you can see this, notifications work", "如果你能看到这条消息，说明通知正常"]),
 
     // ── config write (touched by language-preserving write_config) ───────────
     ("err.no_appdata",    ["APPDATA не найден", "APPDATA not found", "未找到 APPDATA"]),

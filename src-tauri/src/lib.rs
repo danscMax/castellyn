@@ -36,6 +36,7 @@ mod i18n;
 mod links;
 mod mcp_probe;
 mod monitors;
+mod notify;
 mod profiles_status;
 mod ssh_hosts;
 use i18n::{tr, trv, Lang};
@@ -14899,7 +14900,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn reveal(app: &AppHandle) {
+pub(crate) fn reveal(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -14964,13 +14965,17 @@ pub(crate) fn expected_down_at(id: &str) -> Option<std::time::Instant> {
 /// down, run failed, schedule failed). No-op unless status_notify is on (default true). A failed
 /// `.show()` is logged, never propagated — a monitor thread must not die on a toast error.
 pub(crate) fn notify_important(app: &AppHandle, title: &str, body: &str) {
-    if !read_config_file().status_notify.unwrap_or(true) {
-        return;
-    }
-    use tauri_plugin_notification::NotificationExt;
-    if let Err(e) = app.notification().builder().title(title).body(body).show() {
-        eprintln!("notify_important: {e}");
-    }
+    // Through the one channel (crate::notify), which owns the gate, the app identity and the
+    // fallback. No session to point at, so these carry no jump button.
+    notify::notify(
+        app,
+        notify::Notice {
+            kind: notify::Kind::Important,
+            title: title.to_string(),
+            body: body.to_string(),
+            session: None,
+        },
+    );
 }
 
 /// Reflect open session panes + any aggregate attention (agents waiting / limited, stack down) in
@@ -15974,6 +15979,9 @@ pub fn run() {
             session_detach,
             session_list,
             session_set_label,
+            notify::notify_enabled,
+            notify::notify_test,
+            notify::notify_diag,
             worktree::worktree_create,
             worktree::worktree_remove,
             worktree::worktree_is_clean,
@@ -16115,6 +16123,9 @@ read_opencode_models,
             }
             build_tray(app.handle())?;
             // Agent-status engine for Sessions panes (hook files + PTY activity → events).
+            // Teach Windows our notification identity before anything can want to notify. Cheap,
+            // idempotent (skips when the shortcut already exists) and best-effort — see notify.rs.
+            notify::ensure_registered();
             agent_status::start(app.handle().clone());
             // Anthropic OAuth usage-limit monitor (per profile; 85%/99% alerts). No-op for profiles
             // without OAuth creds; disableable via the `limitsMonitor` config toggle.

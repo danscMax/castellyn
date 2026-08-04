@@ -1993,6 +1993,13 @@
         if (e.payload) active = e.payload;
       })
     );
+    // A clicked toast must land on the waiting pane, which lives in the Sessions tab — switch to it
+    // here; SessionsTab's own listener focuses the individual pane.
+    unlisten.push(
+      await listen<string>('notify-activate', () => {
+        active = 'sessions';
+      })
+    );
 
     // Refresh statuses when the window regains focus.
     const onFocus = () => {
