@@ -76,6 +76,10 @@ jobs:
       - run: npm run build
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # The lifecycle hook is Python and runs inside every live agent session, so a break there is
+      # invisible to every other gate here. verify.ps1 runs this too; CI lists its gates by hand,
+      # which is exactly how a test ends up green locally and absent in CI.
+      - run: python -X utf8 tools/test_status_hook.py
 
   # The dependency gate: RustSec advisories + a permissive-license allow-list, config in
   # src-tauri/deny.toml. On its first run it caught RUSTSEC-2026-0194/0195 in quick-xml —
