@@ -156,6 +156,17 @@ export function dismissAll(): void {
   toastStore.items = [];
 }
 
+/** Record something in the notification centre WITHOUT showing a toast.
+ *
+ * The history could only ever be written by dismissing a visible toast, so everything the backend
+ * notified about natively — an agent waiting, a session parked on its quota — appeared on screen as
+ * an OS notification and then existed nowhere in the app. This is the entry point for those: they
+ * were already announced by Windows, showing a second in-app toast would be duplicate noise.
+ */
+export function recordNotification(kind: ToastKind, title: string, detail?: string): void {
+  pushToHistory({ id: ++seq, kind, title, detail });
+}
+
 export function markNotifRead(): void {
   toastStore.history.unread = 0;
 }

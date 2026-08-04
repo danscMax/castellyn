@@ -81,7 +81,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { currentMonitor } from '@tauri-apps/api/window';
   import { ARG_PRESETS, isRiskyFlag, stripFlags, toggleFlag } from '$lib/sessionPresets';
-  import { pushToast } from '$lib/toast.svelte';
+  import { recordNotification, pushToast } from '$lib/toast.svelte';
 
   const MAX_PANES = 12; // each pane is a pwsh+tool process — cap to keep the machine responsive
   // F16: per-window MAX_PANES isn't enough — detached monitor windows + restore share one global
@@ -388,6 +388,17 @@
         // vanish faster than a tick, so press option 1 the instant a limit/menu is detected (phase 2
         // still waits for the endpoint reset). Idempotent: maybeAutoContinue is fully guarded per pane.
         if (state === 'limited' || e.payload.limitMenu) maybeAutoContinue();
+        // Mirror what the OS was told into the in-app notification centre. Windows already showed
+        // it; this is so "what did I miss while I was away" has an answer inside the app, where
+        // previously native agent notifications left no trace at all.
+        if (prev !== state && (state === 'blocked' || state === 'limited')) {
+          const pane = paneKey ? panes.find((p) => p.key === paneKey) : undefined;
+          recordNotification(
+            state === 'blocked' ? 'warn' : 'error',
+            t(state === 'blocked' ? 'sessions.state_blocked' : 'sessions.state_limited'),
+            pane ? plabel(pane) : undefined
+          );
+        }
       })
     );
     // Clicking an OS toast (or its "Jump to it" button) sends the session id back here. The point of
