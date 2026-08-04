@@ -19,6 +19,7 @@
   import {
     sessionWrite,
     sessionList,
+    sessionSetLabel,
     type SessionTool,
     type DetachPane,
     type SshHost,
@@ -830,6 +831,7 @@
         const { [oldId]: _s, ...restS } = spawnedAt;
         spawnedAt = restS;
         delete limitMenuById[oldId]; // #21f: id-keyed menu-up flag — prune with the rest
+        delete sentLabels[oldId]; // last-pushed toast label — same id-keyed pruning
       }
     }
     refreshGlobalCount(); // F16: a spawn/exit here moved the global tally — re-read it
@@ -1634,6 +1636,34 @@
     return out;
   });
   const plabel = (p: Pane) => paneLabels[p.key] ?? paneLabel(p);
+  // The agent-status toast is fired from Rust, which only learns `tool · profile` at spawn — so a
+  // notification used to read "claude · cc5" with no hint of WHICH project is waiting. The pane's
+  // name and its project space live only here (and can be renamed mid-session), so push the composed
+  // label to the backend. Same composition as the attention strip below, deliberately: the toast and
+  // the in-app banner should name a session identically.
+  const notifyLabel = (p: Pane): string => {
+    const sp = spaces.length > 1 ? spaces.find((s) => s.id === paneSpace(p))?.name : undefined;
+    return sp ? `${plabel(p)} · ${sp}` : plabel(p);
+  };
+  // Last label pushed per session id — this effect re-runs on any pane/space change, but the IPC
+  // call must only fire when the STRING actually changed.
+  const sentLabels: Record<string, string> = {};
+  $effect(() => {
+    for (const p of panes) {
+      const id = sessionIds[p.key];
+      if (!id) continue;
+      const label = notifyLabel(p);
+      if (sentLabels[id] === label) continue;
+      sentLabels[id] = label;
+      // Fire-and-forget: a failed push must never break the pane. An unknown id is a backend no-op.
+      // But it is NOT swallowed silently: if the command ever goes missing (dropped from
+      // generate_handler!) every toast quietly falls back to "claude · cc5" with nothing to explain
+      // why — no gate catches that, so leave a console trace for the one person debugging it.
+      void sessionSetLabel(id, label).catch((e) =>
+        console.warn('[castellyn] session_set_label failed:', e)
+      );
+    }
+  });
   // Pane hover title with the session's elapsed time appended (when the backend reported a spawn).
   function paneTitleElapsed(p: Pane): string {
     const id = sessionIds[p.key];
@@ -3445,7 +3475,8 @@
            hidden, so the maximized pane fills the single column. -->
       {#each activePanes as pane (pane.key)}
         <div class="cell" class:hidden={paneSpace(pane) !== activeSpace || (maximized != null && maximized !== pane.key)}
-          class:active={activeKey === pane.key && !maximized && panes.length > 1}>
+          class:active={activeKey === pane.key && !maximized && panes.length > 1}
+          class:needs={displayStateById[pane.key] === 'blocked'}>
           <TerminalPane
             bind:this={paneRefs[pane.key]}
             profile={pane.profile}
@@ -3458,6 +3489,7 @@
             ownsSession={pane.ownsSession ?? false}
             paneKey={pane.key}
             agentState={displayStateById[pane.key]}
+            waitingFor={displayStateById[pane.key] === 'blocked' ? attnElapsed(pane.key) : null}
             autoResumeLabel={autoResumeById[pane.key] ?? null}
             visible={visible && paneSpace(pane) === activeSpace && (maximized == null || maximized === pane.key)}
             maximized={maximized === pane.key}
@@ -4581,6 +4613,15 @@
     /* Fully INSIDE the cell (-2px): with -1px the outer 1px of the ring leaked past the cell edge
        and .grid { overflow: hidden } clipped it on edge cells — the ring looked cut in places. */
     outline: 2px solid var(--sw-accent);
+    outline-offset: -2px;
+    border-radius: var(--sw-radius-md);
+  }
+  /* A pane WAITING on a human was findable only by an 8px dot in its bar — invisible across a
+     two-pane grid. Ring the whole cell in danger. Declared after .cell.active and repeated with
+     .active so it wins at equal specificity: "someone is waiting on you" outranks "you are here". */
+  .cell.needs,
+  .cell.needs.active {
+    outline: 2px solid var(--sw-danger, #f85149);
     outline-offset: -2px;
     border-radius: var(--sw-radius-md);
   }

@@ -60,6 +60,7 @@
     ownsSession = false,
     paneKey = '',
     agentState = null,
+    waitingFor = null,
     visible = true,
     maximized = false,
     broadcast = false,
@@ -95,6 +96,10 @@
     paneKey?: string;
     /** Semantic agent state from SessionsTab (working|blocked|done|idle|unknown) or null. */
     agentState?: string | null;
+    /** How long this pane has been `blocked` ("6м"), from SessionsTab's blockedSince clock; null
+     *  when it isn't waiting. Shown in the bar so the wait is readable per-pane, not only for the
+     *  single oldest pane in the attention strip. */
+    waitingFor?: string | null;
     /** #21f: "Castellyn will auto-resume this pane" text (e.g. "auto-resume at 11:00"), or null. */
     autoResumeLabel?: string | null;
     displayName?: string;
@@ -853,6 +858,11 @@
       <button class="x" onclick={() => openPath(cwd).catch((e) => pushToast({ kind: 'error', title: String(e) }))}
         title={t('sessions.openCwd')} aria-label={t('sessions.openCwd')}><FolderOpen size={14} /></button>
     {/if}
+    <!-- How long THIS pane has been waiting. The attention strip only ever names the oldest
+         blocked pane, so with several waiting the rest carried no clock at all. -->
+    {#if waitingFor && !exited && !error}
+      <span class="waiting">⏱ {t('sessions.attnWaiting', { d: waitingFor })}</span>
+    {/if}
     {#if args}<span class="argbadge" title={args}>⚑</span>{/if}
     {#if tool === 'claude' && profile && showUsage}<ProfileUsageBadge {profile} compact />{/if}
     <!-- #21f: Castellyn will auto-resume this pane once the limit resets — surfaced so the user knows -->
@@ -1061,6 +1071,19 @@
     border-radius: 999px;
     color: var(--sw-accent-text);
     border: 1px solid color-mix(in srgb, var(--sw-accent-text) 40%, transparent);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  /* Same pill as .autoresume, in danger colours — this one means "a human is needed here". */
+  .waiting {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: var(--sw-danger, #f85149);
+    border: 1px solid color-mix(in srgb, var(--sw-danger, #f85149) 45%, transparent);
     white-space: nowrap;
     flex-shrink: 0;
   }

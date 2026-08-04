@@ -411,6 +411,11 @@ export const sessionWrite = (id: string, data: string) => invoke('session_write'
 export const sessionResize = (id: string, cols: number, rows: number) =>
   invoke('session_resize', { id, cols, rows });
 export const sessionKill = (id: string) => invoke('session_kill', { id });
+// Name a session for the agent-status toasts the way the user sees it here (pane name + project
+// space). The backend only knows `tool · profile` from the spawn call, so without this the OS
+// notification can't say WHICH project is waiting.
+export const sessionSetLabel = (id: string, label: string) =>
+  invoke('session_set_label', { id, label });
 
 // --- Worktree-per-session (W3): run a session in an isolated git worktree/branch ---
 export type WorktreeInfo = { path: string; branch: string };

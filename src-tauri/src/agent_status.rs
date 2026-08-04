@@ -158,6 +158,28 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
     );
 }
 
+/// Replace the human label used in notifications. The backend only knows `tool · profile` at spawn
+/// (that is all `session_spawn` hands it), but the toast should name the PROJECT and the session the
+/// way the user sees them — and the pane name / project space live only on the frontend, where they
+/// can also be renamed mid-session. So the frontend owns this string and pushes it here whenever it
+/// changes, keeping the toast identical to the attention strip.
+/// An empty label is ignored: it would blank the notification body, and the spawn-time
+/// `tool · profile` is a better fallback than nothing.
+/// ponytail: no cwd-derived fallback on the backend — the frontend pushes a label within a frame of
+/// the spawn, and a toast can only fire once the agent has actually blocked (seconds later).
+pub fn set_label(id: &str, label: &str) {
+    if label.is_empty() {
+        return;
+    }
+    if let Some(t) = TRACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(id)
+    {
+        t.label = label.to_string();
+    }
+}
+
 /// PTY reader thread: `bytes` arrived for this session. Shared borrow (atomic fields) so it
 /// needs no exclusive access, though it still takes the TRACKS lock to find the entry.
 pub fn on_output(id: &str, bytes: usize) {
@@ -704,6 +726,39 @@ mod tests {
             last_emitted: None,
             last_menu: false,
         }
+    }
+
+    #[test]
+    fn set_label_overrides_the_spawn_label_but_never_blanks_it() {
+        // The toast body is built from `label`, so this is the whole point of the frontend push:
+        // "claude · cc5" must become the project-aware string the attention strip shows.
+        // Unique id — TRACKS is global and other tests run in parallel.
+        let id = "tsetlabel1";
+        on_spawn(id, "claude", "cc5", true);
+        let label_of = |id: &str| {
+            TRACKS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .map(|t| t.label.clone())
+        };
+        assert_eq!(label_of(id).as_deref(), Some("claude · cc5"));
+        set_label(id, "cc5 · Docx и pdf обработка · Docx");
+        assert_eq!(
+            label_of(id).as_deref(),
+            Some("cc5 · Docx и pdf обработка · Docx")
+        );
+        // An empty push must not blank the body — keep whatever was there.
+        set_label(id, "");
+        assert_eq!(
+            label_of(id).as_deref(),
+            Some("cc5 · Docx и pdf обработка · Docx")
+        );
+        // An unknown id is a no-op, not a panic: a detached window can push for a session that
+        // already exited (the poll loop drops the track on exit).
+        set_label("tsetlabelgone", "whatever");
+        assert!(label_of("tsetlabelgone").is_none());
+        TRACKS.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
 
     #[test]

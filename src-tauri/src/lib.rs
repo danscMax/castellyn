@@ -15728,6 +15728,15 @@ fn session_list(state: State<'_, SessionState>) -> Vec<String> {
         .collect()
 }
 
+/// Name a session the way the user sees it, for the agent-status toasts. `session_spawn` only knows
+/// `tool · profile`; the pane's custom name and its project space live on the frontend and can change
+/// mid-session, so the frontend pushes the composed label here whenever it changes. Unknown ids are a
+/// no-op (see `agent_status::set_label`), so a stale push after a session ended is harmless.
+#[tauri::command]
+fn session_set_label(id: String, label: String) {
+    agent_status::set_label(&id, &label);
+}
+
 /// Open a source location in the user's editor (#13), triggered by clicking a `path:line` link in a
 /// terminal. The path comes from (untrusted) terminal output, so it is treated as hostile: NEVER
 /// shelled out through `cmd /c` with interpolation. Instead it is (1) canonicalized — which also
@@ -15964,6 +15973,7 @@ pub fn run() {
             session_attach,
             session_detach,
             session_list,
+            session_set_label,
             worktree::worktree_create,
             worktree::worktree_remove,
             worktree::worktree_is_clean,
