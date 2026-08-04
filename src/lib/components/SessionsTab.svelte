@@ -397,12 +397,13 @@
         // vanish faster than a tick, so press option 1 the instant a limit/menu is detected (phase 2
         // still waits for the endpoint reset). Idempotent: maybeAutoContinue is fully guarded per pane.
         if (state === 'limited' || e.payload.limitMenu) maybeAutoContinue();
-        // Backlog 28: snapshot WHAT the agent is asking, from the pane's own buffer, at the moment
-        // it blocks — a blocked agent has stopped repainting, so one read holds until it moves.
-        // Frontend-only by design: the hook that would report the real prompt text is deferred.
+        // Backlog 28: snapshot WHAT the agent is asking, at the moment it blocks — a blocked agent
+        // has stopped repainting, so one read holds until it moves. The lifecycle hook now reports
+        // the real prompt text (`ask`), so prefer it; the buffer heuristic stays as the fallback
+        // for panes that have no hook at all (remote claude, codex, opencode).
         if (paneKey && prev !== state) {
           if (state === 'blocked') {
-            const ask = askPreview(paneApi(paneKey)?.lastLines?.() ?? []);
+            const ask = e.payload.ask || askPreview(paneApi(paneKey)?.lastLines?.() ?? []);
             if (ask) askById = { ...askById, [paneKey]: ask };
           } else if (askById[paneKey]) {
             const { [paneKey]: _gone, ...rest } = askById;

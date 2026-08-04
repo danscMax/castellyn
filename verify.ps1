@@ -60,6 +60,7 @@ Step 'PSScriptAnalyzer'          {
 }
 Step 'svelte-check (types+i18n)' { npm run check }
 Step 'vitest'                    { npm test }
+Step 'status-hook self-test'     { py -X utf8 tools/test_status_hook.py }
 Step 'frontend build'            { npm run build }
 Step 'cargo clippy'              { & $cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings }
 Step 'cargo test'                {

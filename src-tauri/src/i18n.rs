@@ -53,6 +53,9 @@ const TABLE: &[(&str, [&str; 3])] = &[
     // ── agent-status notifications (Sessions) ────────────────────────────────
     ("status.blocked_title", ["Агент ждёт решения", "Agent needs a decision", "代理等待决定"]),
     ("status.blocked_body",  ["{label}: нужен ваш ответ в терминале", "{label}: your input is needed in the terminal", "{label}: 终端中需要你的确认"]),
+    // The richer pair: used only when the hook actually told us WHAT is being waited on.
+    ("status.blocked_perm",  ["{label}: нужен доступ — {ask}", "{label}: needs permission — {ask}", "{label}: 需要授权 — {ask}"]),
+    ("status.blocked_ask",   ["{label}: спрашивает — {ask}", "{label}: is asking — {ask}", "{label}: 正在询问 — {ask}"]),
     ("status.blocked_many",  ["{n} агентов ждут вашего ответа", "{n} agents are waiting for you", "{n} 个代理在等待你的回复"]),
     ("status.done_title",    ["Агент закончил", "Agent finished", "代理已完成"]),
     ("status.done_body",     ["{label}: ход завершён — можно смотреть результат", "{label}: the turn finished — ready for review", "{label}: 本轮已结束 — 可以查看结果"]),

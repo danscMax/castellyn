@@ -118,10 +118,26 @@ struct Track {
     /// hasn't changed (item 8 mtime gate).
     hook_mtime: u64,
     claude_session_id: Option<String>,
+    /// What the pane is waiting FOR, from the hook: `reason` is the kind of prompt
+    /// ("permission" | "question" | "notification"), `ask` a short sanitised excerpt of it.
+    /// Both live only for as long as the pane is blocked — cleared by the next non-blocked report,
+    /// so yesterday's question can never ride along into the next turn.
+    ask: Option<String>,
+    ask_reason: Option<String>,
     last_emitted: Option<String>,
     /// Last-emitted `limit_menu`, so the menu appearing/clearing re-emits even when `state` stays
     /// "limited" (the change-gated emit keys on `state` alone otherwise). (item 21f)
     last_menu: bool,
+}
+
+/// The label a pane gets at spawn, before the frontend pushes the project-aware one.
+/// Shared with `apply_hook_report`, which must recognise it to know the label is still a default.
+fn spawn_label(tool: &str, profile: &str) -> String {
+    if tool == "claude" && !profile.is_empty() {
+        format!("{tool} · {profile}")
+    } else {
+        tool.to_string()
+    }
 }
 
 static TRACKS: LazyLock<Mutex<HashMap<String, Track>>> = LazyLock::new(Default::default);
@@ -157,11 +173,7 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
         Track {
             tool: tool.to_string(),
             hook_expected,
-            label: if tool == "claude" && !profile.is_empty() {
-                format!("{tool} · {profile}")
-            } else {
-                tool.to_string()
-            },
+            label: spawn_label(tool, profile),
             profile: profile.to_string(),
             spawned_at: now,
             last_user_input: AtomicU64::new(0),
@@ -176,6 +188,8 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
             hook_ts: 0,
             hook_mtime: 0,
             claude_session_id: None,
+            ask: None,
+            ask_reason: None,
             last_emitted: None,
             last_menu: false,
         },
@@ -189,8 +203,9 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
 /// changes, keeping the toast identical to the attention strip.
 /// An empty label is ignored: it would blank the notification body, and the spawn-time
 /// `tool · profile` is a better fallback than nothing.
-/// ponytail: no cwd-derived fallback on the backend — the frontend pushes a label within a frame of
-/// the spawn, and a toast can only fire once the agent has actually blocked (seconds later).
+/// A push always outranks the cwd-derived name `apply_hook_report` appends: that one only fills in
+/// while the label is still the spawn-time default, for the panes the frontend never labels at all
+/// (a detached window, a restored pane).
 pub fn set_label(id: &str, label: &str) {
     if label.is_empty() {
         return;
@@ -543,6 +558,14 @@ struct StatusEvent {
     /// The interactive limit menu is up (`limitMenu`): the frontend picks "Stop and wait" to dismiss
     /// it before injecting "continue" after reset. Rides alongside `state` ("limited"). (item 21f)
     limit_menu: bool,
+    /// What the blocked pane is asking, straight from the hook (`ask`). Authoritative, so the
+    /// frontend prefers it over its own buffer heuristic; absent for hookless panes, which keep
+    /// using `askPreview`. `None` on every non-blocked state.
+    ask: Option<String>,
+    /// Backend-only: which kind of prompt is up — picks the notification wording. Not serialized:
+    /// the UI shows the question itself, and a bare "permission"/"question" label adds nothing.
+    #[serde(skip)]
+    ask_reason: Option<String>,
     /// Backend-only: whether the user typed into this pane moments ago (item 33).
     #[serde(skip)]
     typed_recently: bool,
@@ -585,6 +608,17 @@ fn limit_reset_for(profile: &str) -> Option<String> {
     let creds = format!(r"{home}\.claude-{profile}\.credentials.json");
     let resp = crate::limits::usage_cached(&creds)?.ok()?;
     crate::limits::util_of(&resp, "five_hour").1
+}
+
+/// Which "input needed" wording to use. Both halves must be known: the richer keys interpolate
+/// `{ask}`, so a reason without a question would render a dangling dash. Any unknown reason (an
+/// older or newer hook) falls back to the plain body rather than dropping the notification.
+fn blocked_body_key(ask: Option<&str>, reason: Option<&str>) -> &'static str {
+    match (ask, reason) {
+        (Some(_), Some("permission")) => "status.blocked_perm",
+        (Some(_), Some("question")) => "status.blocked_ask",
+        _ => "status.blocked_body",
+    }
 }
 
 fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
@@ -660,8 +694,16 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
         );
         return;
     }
+    // "Your input is needed" made the user open the pane to find out WHAT for. When the hook told
+    // us, say it in the toast — same shape as notify.limited_body/_body_until below: a richer key
+    // when the extra fact is known, the plain one otherwise.
+    let asked = ev.ask.as_deref().filter(|s| !s.is_empty());
     let (kind, tk, bk) = if to_blocked {
-        (crate::notify::Kind::Blocked, "status.blocked_title", "status.blocked_body")
+        (
+            crate::notify::Kind::Blocked,
+            "status.blocked_title",
+            blocked_body_key(asked, ev.ask_reason.as_deref()),
+        )
     } else if to_limited {
         (crate::notify::Kind::Limited, "notify.limited_title", "notify.limited_body")
     } else {
@@ -679,6 +721,8 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
             ),
             None => crate::i18n::trv(bk, lang, &[("label", &ev.label)]),
         }
+    } else if to_blocked && bk != "status.blocked_body" {
+        crate::i18n::trv(bk, lang, &[("label", &ev.label), ("ask", &asked.unwrap_or(""))])
     } else {
         crate::i18n::trv(bk, lang, &[("label", &ev.label)])
     };
@@ -799,12 +843,36 @@ fn apply_hook_report(v: &serde_json::Value, t: &mut Track) {
     if t.hook_state.as_deref() == Some("blocked") {
         t.bytes_since_block.store(0, Ordering::Relaxed);
     }
+    // "Waiting" without "for what" is what this pair fixes. Both are scoped to the blocked state:
+    // reading them unconditionally would leave the previous turn's question attached to the pane.
+    let str_field = |k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let blocked = t.hook_state.as_deref() == Some("blocked");
+    t.ask = blocked.then(|| str_field("ask")).flatten();
+    t.ask_reason = blocked.then(|| str_field("reason")).flatten();
     if let Some(cs) = v
         .get("claudeSessionId")
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
     {
         t.claude_session_id = Some(cs.to_string());
+    }
+    // The hook knows the pane's project directory; the frontend's richer label may never arrive
+    // (a detached window, a restored pane). Name the project as soon as the first hook lands, but
+    // only while the label is still the spawn-time default — a frontend push always outranks this.
+    if let Some(base) = str_field("cwd")
+        .as_deref()
+        .map(std::path::Path::new)
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+    {
+        if t.label == spawn_label(&t.tool, &t.profile) {
+            t.label = format!("{} · {base}", t.label);
+        }
     }
 }
 
@@ -1038,6 +1106,8 @@ pub fn start(app: tauri::AppHandle) {
                         exited: t.exited,
                         hook_idle: t.hook_state.as_deref() == Some("idle"),
                         limit_menu: menu,
+                        ask: t.ask.clone(),
+                        ask_reason: t.ask_reason.clone(),
                         typed_recently: now.saturating_sub(t.last_user_input.load(Ordering::Relaxed))
                             < TYPED_RECENTLY_MS,
                         profile: t.profile.clone(),
@@ -1085,6 +1155,8 @@ mod tests {
             hook_ts: 0,
             hook_mtime: 0,
             claude_session_id: None,
+            ask: None,
+            ask_reason: None,
             last_emitted: None,
             last_menu: false,
         }
@@ -1157,6 +1229,56 @@ mod tests {
         t.last_output.store(now, Ordering::Relaxed);
         assert_eq!(compute(&t, now + 100), "idle");
         assert_eq!(t.hook_state.as_deref(), Some("idle")); // hook_idle=true → "finished" is honest
+    }
+
+    #[test]
+    fn a_blocked_report_carries_the_question_and_the_next_one_clears_it() {
+        let now = 2_000_000;
+        let mut t = track("claude", now);
+        t.profile = "cc1".into();
+        t.label = spawn_label("claude", "cc1");
+        apply_hook_report(
+            &serde_json::json!({
+                "state": "blocked", "event": "PreToolUse", "ts": now,
+                "reason": "question", "ask": "Which approach?",
+                "cwd": r"E:\Scripts\Castellyn",
+            }),
+            &mut t,
+        );
+        assert_eq!(t.ask.as_deref(), Some("Which approach?"));
+        assert_eq!(t.ask_reason.as_deref(), Some("question"));
+        // Item 21: the project names itself from cwd, without waiting on the frontend's push.
+        assert_eq!(t.label, "claude · cc1 · Castellyn");
+        // A frontend label always outranks the cwd guess, and a later report must not undo it.
+        set_label_on(&mut t, "cc1 · Castellyn · main");
+        // The turn resumed: a stale question must not ride along into it.
+        apply_hook_report(
+            &serde_json::json!({ "state": "working", "event": "PostToolUse", "ts": now + 1,
+                                 "cwd": r"E:\Scripts\Castellyn" }),
+            &mut t,
+        );
+        assert_eq!(t.ask, None);
+        assert_eq!(t.ask_reason, None);
+        assert_eq!(t.label, "cc1 · Castellyn · main");
+    }
+
+    #[test]
+    fn the_toast_wording_needs_both_the_question_and_its_reason() {
+        assert_eq!(blocked_body_key(Some("rm -rf"), Some("permission")), "status.blocked_perm");
+        assert_eq!(blocked_body_key(Some("Which one?"), Some("question")), "status.blocked_ask");
+        // A reason with nothing to quote would render "…asking — " — use the plain body instead.
+        assert_eq!(blocked_body_key(None, Some("question")), "status.blocked_body");
+        // Hookless panes and the generic Notification event: no reason, no richer wording.
+        assert_eq!(blocked_body_key(Some("something"), None), "status.blocked_body");
+        assert_eq!(blocked_body_key(Some("x"), Some("notification")), "status.blocked_body");
+        // An unknown reason from a future hook must degrade, not vanish.
+        assert_eq!(blocked_body_key(Some("x"), Some("plan-approval")), "status.blocked_body");
+        assert_eq!(blocked_body_key(None, None), "status.blocked_body");
+    }
+
+    /// `set_label` goes through the global TRACKS map; this test owns its Track directly.
+    fn set_label_on(t: &mut Track, label: &str) {
+        t.label = label.to_string();
     }
 
     #[test]
@@ -1504,6 +1626,8 @@ mod tests {
             exited: t.exited,
             hook_idle: false,
             limit_menu: false,
+            ask: None,
+            ask_reason: None,
             typed_recently: false,
             profile: String::new(),
         };

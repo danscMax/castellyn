@@ -610,7 +610,10 @@ mod tests {
         assert!(!allow_send(Kind::Done, Some(COOLDOWN_MS - 1)));
         assert!(allow_send(Kind::Done, Some(COOLDOWN_MS)));
         assert!(allow_send(Kind::Limited, Some(COOLDOWN_MS)));
-        assert!(COOLDOWN_MS < ESCALATE_MS, "a cooldown longer than the escalation would invert the rules");
+        // Compile-time: a cooldown longer than the escalation would invert the two rules above.
+        // (A const assert rather than a runtime one — clippy 1.94 rejects asserting on constants,
+        // and this is genuinely a property of the constants, not of any test run.)
+        const _: () = assert!(COOLDOWN_MS < ESCALATE_MS);
     }
 
     #[test]
