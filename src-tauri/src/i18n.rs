@@ -62,6 +62,8 @@ const TABLE: &[(&str, [&str; 3])] = &[
     // ── background attention notifications (fire when the window is hidden/unfocused) ─────────
     ("notify.stack_down_title",     ["Сервис стека упал", "Stack service down", "技术栈服务已宕机"]),
     ("notify.stack_down_body",      ["{name} перестал отвечать", "{name} stopped responding", "{name} 已停止响应"]),
+    ("notify.run_done_title",       ["Прогон завершён", "Run finished", "运行已完成"]),
+    ("notify.run_done_body",        ["{component}: длинный прогон завершился успешно", "{component}: the long run finished successfully", "{component}: 长时间运行已成功完成"]),
     ("notify.run_failed_title",     ["Прогон завершился ошибкой", "Run failed", "运行失败"]),
     ("notify.run_failed_body",      ["{component}: прогон завершился с ошибкой", "{component}: the run finished with an error", "{component}: 运行以错误结束"]),
     ("notify.schedule_failed_title", ["Запланированная задача провалилась", "Scheduled task failed", "计划任务失败"]),

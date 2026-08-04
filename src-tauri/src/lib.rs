@@ -1132,7 +1132,26 @@ async fn spawn_streamed_prog(
 
     let component = id.clone();
     let app_n = app.clone();
+    let started = std::time::Instant::now();
     let code = pump_and_wait(app, id, child, "run-log", "run-done").await;
+    // A run long enough that the user walked away is worth telling them about when it SUCCEEDS too,
+    // not only when it fails — waiting for a long maintenance run and having to keep checking the
+    // window was the whole reason to look. Short runs stay silent: they finish before you leave.
+    const LONG_RUN_SECS: u64 = 60;
+    if code == 0
+        && started.elapsed().as_secs() >= LONG_RUN_SECS
+        && !app_n
+            .webview_windows()
+            .values()
+            .any(|w| w.is_focused().unwrap_or(false))
+    {
+        let lang = cur_lang();
+        notify_important(
+            &app_n,
+            i18n::tr("notify.run_done_title", lang),
+            &i18n::trv("notify.run_done_body", lang, &[("component", &component)]),
+        );
+    }
     drop(slot); // release the single run slot (also happens on any early return / panic above)
     // A failed maintenance run (RunState domain — NOT the stack phases, which have their own
     // suppression) is worth a toast when the user isn't already looking at the app.
