@@ -48,6 +48,11 @@ const BLOCKED_RESUME_MS: u64 = 1_500;
 const BLOCKED_RESUME_BYTES: u64 = 1_024;
 /// Time backstop: after this long in `blocked` with real post-block output but no byte burst
 /// (an Esc answer emits little), allow the flip so `blocked` can't stick forever.
+/// Backlog 23 NARROWED it: it may no longer fire while an approval prompt is demonstrably the last
+/// thing painted. Narrowing only — nothing shortens it. A per-chunk observation cannot prove a
+/// prompt was DISMISSED (ordinary interleaved output — Claude Code's own background hooks print
+/// into the terminal — clears the flag while the box is still on screen), so "the prompt stopped
+/// appearing" is never treated as "the user answered".
 const BLOCKED_STUCK_MS: u64 = 20_000;
 /// Codex's `notify` fires once when a turn ends, and there is no matching "a turn began" event. Its
 /// `idle` therefore cannot be authoritative forever, the way Claude's Stop hook can (a Claude turn
@@ -96,6 +101,13 @@ struct Track {
     /// Bytes emitted since the current `blocked` state began (reset in `apply_hook_report`).
     /// The hook-less fallback for clearing a stale `blocked` (item 6).
     bytes_since_block: AtomicU64,
+    /// Backlog 23: the LAST scanned PTY chunk carried an approval/permission prompt in its
+    /// unambiguous shape (`is_strong_permission_prompt`). Strictly a CORROBORATING signal, and only
+    /// in ONE direction: it may hold a `blocked` (by vetoing the time ceiling) and it may turn a
+    /// hookless pane's silence into `blocked`. It may never end a `blocked` or declare a turn
+    /// finished — `false` here means "this chunk didn't show a prompt", which is NOT evidence that
+    /// the box left the screen (any interleaved output lowers it).
+    prompt_on_screen: AtomicBool,
     /// A usage limit was detected in this session's PTY output (item 21b). Shown as `limited`
     /// until a genuine resume (LIMIT_RESUME_BYTES of output past the limit) clears it.
     limited: AtomicBool,
@@ -179,6 +191,7 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
             last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
+            prompt_on_screen: AtomicBool::new(false),
             limited: AtomicBool::new(false),
             bytes_since_limit: AtomicU64::new(0),
             limit_menu: AtomicBool::new(false),
@@ -352,6 +365,10 @@ fn is_resume_menu(s: &str) -> bool {
 /// Literal markers of a permission/approval prompt's affirmative options. Anchored on the OPTION
 /// LABELS rather than the volatile question line ("What do you want to do?" — the LIMIT menu's own
 /// header — contains "do you want to").
+///
+/// ORDER MATTERS: index 0 is the generic one — a bare "1. yes" also occurs in ordinary agent prose
+/// (an enumerated recommendation), so `is_strong_permission_prompt` treats only `[1..]` as
+/// self-sufficient. Keep any newly added generic wording at the front.
 const PERMISSION_MARKERS: [&str; 5] = [
     "1. yes",
     "yes, allow",
@@ -374,6 +391,24 @@ fn permission_menu_at(l: &str) -> Option<usize> {
 /// (retracting a standing menu flag), never for the positional veto itself.
 fn is_permission_menu(s: &str) -> bool {
     permission_menu_at(&s.to_ascii_lowercase()).is_some()
+}
+
+/// True only for the unmistakable SHAPE of an approval prompt: a question line together with an
+/// enumerated affirmative option, or one of the prompt-specific option labels that ordinary prose
+/// does not produce.
+///
+/// `is_permission_menu` is deliberately loose — it exists to RETRACT a menu claim, where a false
+/// positive costs nothing. `prompt_on_screen` is the opposite: it makes a positive claim ("someone
+/// is waiting for you") off nothing but this detector, so the generic `"1. yes"` alone is not
+/// enough. A finished turn ending in "Recommendation: 1. Yes, ship it / 2. Wait" would otherwise
+/// nag as `blocked` forever.
+///
+/// ponytail: still just substrings on a raw chunk — "1. Yes, and then deploy" in prose can pass.
+/// Upgrade path is the one `menu_signal_in_text` already uses: hand it the pane's rendered rows.
+fn is_strong_permission_prompt(s: &str) -> bool {
+    let l = s.to_ascii_lowercase();
+    PERMISSION_MARKERS[1..].iter().any(|m| l.contains(m))
+        || (l.contains(PERMISSION_MARKERS[0]) && l.contains("do you want to"))
 }
 
 /// Offset of the LAST occurrence of any needle. The needles are the detectors' own anchors, so the
@@ -493,7 +528,15 @@ pub fn menu_signal_in_text(text: String) -> Option<&'static str> {
 /// under a firehose.
 pub fn scan_limit(id: &str, chunk: &[u8]) {
     let tail = tail_of(chunk, PTY_TAIL);
-    match limit_signal_in(&tail) {
+    let signal = limit_signal_in(&tail);
+    // Backlog 23: is an approval prompt the thing on screen? Only the no-menu case has to ask — a
+    // limit/resume menu that won `limit_signal_in`'s positional veto has already established that no
+    // prompt sits below it, and this is the same lowercase+rfind pass the veto did, not a new one.
+    let prompt = signal.is_none() && is_permission_menu(&tail);
+    // The status flag needs the STRONGER shape (see `is_strong_permission_prompt`): it claims a pane
+    // is waiting, where `prompt` below only retracts a claim. The strict pass runs on the rare hit.
+    note_prompt(id, prompt && is_strong_permission_prompt(&tail));
+    match signal {
         Some(LimitSignal::LimitMenu) => on_limit_menu(id),
         Some(LimitSignal::Limit) => on_limit(id),
         Some(LimitSignal::ResumeMenu) => on_resume_menu(id),
@@ -505,10 +548,23 @@ pub fn scan_limit(id: &str, chunk: &[u8]) {
         // Presence (not position) is right here: nothing answerable was found anyway, so a prompt
         // anywhere in the window is reason enough to stop claiming a menu is up.
         None => {
-            if is_permission_menu(&tail) {
+            if prompt {
                 clear_menu(id);
             }
         }
+    }
+}
+
+/// Backlog 23: record whether the chunk just scanned shows an approval prompt. Mirrors the LATEST
+/// chunk, so a resume's flood of ordinary output lowers it by itself, with no threshold to tune.
+///
+/// ponytail: a raw PTY chunk is not a rendered screen, so `true` is a proxy and `false` is barely
+/// even that — ordinary interleaved output (background hooks print into the terminal, see
+/// `hook_expected`) lowers the flag with the box still up. That asymmetry is why every reader
+/// treats `true` as evidence and `false` as nothing at all.
+fn note_prompt(id: &str, on_screen: bool) {
+    if let Some(t) = TRACKS.lock().unwrap_or_else(|e| e.into_inner()).get(id) {
+        t.prompt_on_screen.store(on_screen, Ordering::Relaxed);
     }
 }
 
@@ -769,7 +825,15 @@ fn compute(t: &Track, now: u64) -> &'static str {
             let burst = t.bytes_since_block.load(Ordering::Relaxed) > BLOCKED_RESUME_BYTES;
             let real_output = last_output > t.hook_ts + BLOCKED_RESUME_MS;
             let stuck = now.saturating_sub(t.hook_ts) > BLOCKED_STUCK_MS;
-            if burst || (stuck && real_output) {
+            // Backlog 23: an approval prompt was the last thing the PTY painted. ONE-WAY: it can
+            // only veto the weak (time-ceiling) path, never shorten it. The reverse — "no prompt in
+            // the latest chunk, so the user must have answered" — is NOT available: any interleaved
+            // output lowers the flag while the box is still literally on screen, and reporting
+            // `working` on that would be exactly the false "resumed" this arm exists to prevent.
+            let on_screen = t.prompt_on_screen.load(Ordering::Relaxed);
+            // The byte burst keeps its authority untouched — item 6 tuned it, and letting the screen
+            // proxy veto it could pin a pane at `blocked` forever.
+            if burst || (stuck && real_output && !on_screen) {
                 // Same silence backstop as the `working` arm below: `bytes_since_block` only ever
                 // resets on a NEW blocked report, so once the burst threshold is passed this arm
                 // returns "working" forever — a turn that ended without a Stop hook would never
@@ -812,7 +876,20 @@ fn compute(t: &Track, now: u64) -> &'static str {
                 // false "done") instead of lying; enabling the hook restores authoritative status.
                 "unknown"
             } else if silent {
-                "idle"
+                // Backlog 23: a hookless pane parked at an approval prompt goes quiet in exactly the
+                // same way as one that finished, so 15 s of silence used to read as `idle` and the
+                // user was never told anyone was waiting — remote claude over SSH is the live case,
+                // and it is the one agent that gets no lifecycle hook at all. The prompt still being
+                // the last thing painted turns that silence into what it actually is. This can only
+                // refine `idle` into `blocked`; it never touches `working` and never declares a turn
+                // over, so it cannot produce a false "finished". It CAN produce a false "waiting",
+                // which is why the flag needs `is_strong_permission_prompt` and not the loose
+                // detector: a finished turn whose answer ends in an enumerated list must stay idle.
+                if t.prompt_on_screen.load(Ordering::Relaxed) {
+                    "blocked"
+                } else {
+                    "idle"
+                }
             } else {
                 "working"
             }
@@ -1146,6 +1223,7 @@ mod tests {
             last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
+            prompt_on_screen: AtomicBool::new(false),
             limited: AtomicBool::new(false),
             bytes_since_limit: AtomicU64::new(0),
             limit_menu: AtomicBool::new(false),
@@ -1664,6 +1742,160 @@ mod tests {
             .store(now + BLOCKED_RESUME_MS + 3_000, Ordering::Relaxed); // real post-block output
         assert_eq!(compute(&t, now + BLOCKED_STUCK_MS - 1_000), "blocked"); // before ceiling
         assert_eq!(compute(&t, now + BLOCKED_STUCK_MS + 1_000), "working"); // after ceiling
+    }
+
+    #[test]
+    fn the_time_ceiling_may_not_fire_while_the_prompt_is_still_on_screen() {
+        // Backlog 23. The regression this protects: the user walks away from a permission prompt,
+        // something small repaints past BLOCKED_RESUME_MS, and 20 s later BLOCKED_STUCK_MS declares
+        // the turn resumed — the pane goes `working`, the attention badge clears, and the agent sits
+        // unanswered with nothing on screen saying so. The prompt is STILL the last thing painted,
+        // so the clock has no business overruling it.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_state = Some("blocked".into());
+        t.hook_ts = now;
+        t.bytes_since_block.store(32, Ordering::Relaxed); // below BLOCKED_RESUME_BYTES
+        t.last_output
+            .store(now + BLOCKED_RESUME_MS + 3_000, Ordering::Relaxed); // real post-block output
+        t.prompt_on_screen.store(true, Ordering::Relaxed);
+        // Long past the ceiling that used to flip it — the screen still shows the prompt.
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS + 1_000), "blocked");
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS * 10), "blocked");
+        // The byte burst is NOT vetoed: item 6 tuned it as the resume signal, and letting a screen
+        // proxy override it could pin a pane at `blocked` for good.
+        t.bytes_since_block
+            .store(BLOCKED_RESUME_BYTES + 1, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + 3_000), "working");
+    }
+
+    #[test]
+    fn an_unrelated_chunk_while_the_prompt_is_up_never_reports_working() {
+        // THE cardinal sin this feature must not commit. `prompt_on_screen` is per-CHUNK, and the
+        // terminal is shared: Claude Code's own background hooks (claude-mem) print into it while a
+        // permission box sits unanswered on screen. That chunk carries no prompt wording, so the
+        // flag drops to false — which must mean "no evidence", never "the user answered". An earlier
+        // draft read it as an answer and reported `working` at the first stray byte, clearing the
+        // attention badge on a pane that was still waiting.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_state = Some("blocked".into());
+        t.hook_ts = now;
+        t.bytes_since_block.store(32, Ordering::Relaxed); // below BLOCKED_RESUME_BYTES
+        // The box paints, exactly as the scanner would see it.
+        t.prompt_on_screen.store(
+            is_strong_permission_prompt("Do you want to make this edit to lib.rs?\n 1. Yes\n 2. No"),
+            Ordering::Relaxed,
+        );
+        assert!(t.prompt_on_screen.load(Ordering::Relaxed));
+        // …then something unrelated prints while the box is still literally on screen.
+        t.prompt_on_screen.store(
+            is_strong_permission_prompt("claude-mem: indexed 12 files"),
+            Ordering::Relaxed,
+        );
+        t.last_output
+            .store(now + BLOCKED_RESUME_MS + 1, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + BLOCKED_RESUME_MS + 100), "blocked");
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS - 1), "blocked");
+        // Accepted residual, unchanged from before the feature: with no prompt in the latest chunk
+        // there is nothing to veto the ceiling, so the 20 s backstop still fires. That is the old
+        // behaviour, not a new claim — and a pane pinned at `blocked` forever is worse.
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS + 1_000), "working");
+    }
+
+    #[test]
+    fn a_block_with_no_visible_prompt_still_needs_the_time_ceiling() {
+        // Why BLOCKED_STUCK_MS was NOT removed. PERMISSION_MARKERS is a hand-authored allowlist and
+        // PTY_TAIL is 512 bytes, so a prompt can block a pane without ever reaching the scanner.
+        // With no evidence either way the clock is all there is; dropping it would leave this pane
+        // `blocked` for the rest of the session.
+        let now = 1_000_000;
+        let mut t = track("claude", now);
+        t.hook_state = Some("blocked".into());
+        t.hook_ts = now;
+        t.bytes_since_block.store(32, Ordering::Relaxed);
+        t.last_output
+            .store(now + BLOCKED_RESUME_MS + 3_000, Ordering::Relaxed);
+        assert!(!t.prompt_on_screen.load(Ordering::Relaxed));
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS - 1_000), "blocked");
+        // …and the ceiling is what eventually recovers it, exactly as before.
+        assert_eq!(compute(&t, now + BLOCKED_STUCK_MS + 1_000), "working");
+    }
+
+    #[test]
+    fn a_finished_turn_whose_answer_resembles_a_menu_stays_idle() {
+        // The other half of the trade: the hookless arm turns silence into `blocked` on the strength
+        // of the detector alone, so a loose detector nags "waiting" on every turn that happens to
+        // end in an enumerated recommendation. `1. Yes` is ordinary prose; only the full prompt
+        // SHAPE counts.
+        let now = 1_000_000;
+        let t = track("claude", now - STARTUP_GRACE_MS - 1); // hookless (remote claude)
+        t.last_output.store(now, Ordering::Relaxed);
+        t.prompt_on_screen.store(
+            is_strong_permission_prompt("Recommendation:\n 1. Yes, ship it now\n 2. Wait for CI"),
+            Ordering::Relaxed,
+        );
+        assert_eq!(compute(&t, now + ACTIVITY_IDLE_MS + 1), "idle");
+        // The real thing — question line AND enumerated affirmative — is still recognised.
+        t.prompt_on_screen.store(
+            is_strong_permission_prompt("Do you want to proceed?\n 1. Yes\n 2. No"),
+            Ordering::Relaxed,
+        );
+        assert_eq!(compute(&t, now + ACTIVITY_IDLE_MS + 1), "blocked");
+    }
+
+    #[test]
+    fn a_hookless_pane_sitting_at_a_prompt_reports_blocked_not_idle() {
+        // Backlog 23. Remote claude over SSH gets no lifecycle hook, so the heartbeat is its only
+        // signal — and an agent waiting at an approval prompt is just as quiet as one that finished.
+        // ACTIVITY_IDLE_MS of silence therefore greyed the dot and nobody was told anyone was
+        // waiting. The prompt still being on screen is what tells the two apart.
+        let now = 1_000_000;
+        let t = track("claude", now - STARTUP_GRACE_MS - 1); // hook_expected=false → remote
+        t.last_output.store(now, Ordering::Relaxed);
+        t.prompt_on_screen.store(true, Ordering::Relaxed);
+        // Output still flowing: an on-screen prompt must not pre-empt a live turn.
+        assert_eq!(compute(&t, now + ACTIVITY_IDLE_MS - 1), "working");
+        // Gone quiet with the prompt up → waiting for the user, not finished.
+        assert_eq!(compute(&t, now + ACTIVITY_IDLE_MS + 1), "blocked");
+        // Without a prompt on screen the same silence is a plain idle, exactly as before.
+        t.prompt_on_screen.store(false, Ordering::Relaxed);
+        assert_eq!(compute(&t, now + ACTIVITY_IDLE_MS + 1), "idle");
+    }
+
+    #[test]
+    fn the_pty_scanner_raises_and_lowers_the_on_screen_prompt_flag() {
+        // The wiring behind the two tests above: `scan_limit` is the only writer, and it has to both
+        // raise the flag on the prompt AND lower it again on ordinary output, or `blocked` would
+        // latch. Same tail window as the answer-button veto — no second copy of the wording.
+        let id = "tpromptscreen1";
+        on_spawn(id, "claude", "cc1", true);
+        let up = |id: &str| {
+            TRACKS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .map(|t| t.prompt_on_screen.load(Ordering::Relaxed))
+        };
+        assert_eq!(up(id), Some(false));
+        scan_limit(
+            id,
+            "Do you want to make this edit to lib.rs?\n\u{276f} 1. Yes\n  2. No".as_bytes(),
+        );
+        assert_eq!(up(id), Some(true), "the prompt is on screen");
+        // Ordinary output lowers the flag on its own, with no threshold to tune.
+        scan_limit(id, b"Reading lib.rs ... done. Applying the edit.");
+        assert_eq!(up(id), Some(false));
+        // A limit menu owns the screen instead — also "no prompt up", so a stale flag can't survive.
+        scan_limit(id, "Do you want to proceed?\n 1. Yes\n 2. No".as_bytes());
+        assert_eq!(up(id), Some(true));
+        scan_limit(id, b"What do you want to do?\n1. Stop and wait for limit to reset\n2. Upgrade your plan");
+        assert_eq!(up(id), Some(false));
+        // A menu-shaped list in ordinary prose is not a prompt: the flag makes a positive claim, so
+        // the generic "1. yes" alone must not raise it.
+        scan_limit(id, b"Two options: 1. Yes, ship it now  2. wait for CI. I recommend the first.");
+        assert_eq!(up(id), Some(false));
+        TRACKS.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
 
     #[test]

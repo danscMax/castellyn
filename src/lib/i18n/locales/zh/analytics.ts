@@ -92,5 +92,13 @@ export default {
   sessTotal: '总计',
   sessFootnote: '来自 agent-status 的实时快照——非持久化历史。',
   sessEmptyTitle: '没有活动会话',
-  sessEmptyHint: '在“会话”标签页启动会话，其实时状态将显示在此。'
+  sessEmptyHint: '在“会话”标签页启动会话，其实时状态将显示在此。',
+  waitTitle: '智能体等待你的时长',
+  waitTotal: '等待总时长',
+  waitCount: '共 {n} 次等待',
+  waitAvg: '平均等待',
+  waitLongest: '最长等待',
+  waitFootnote: '面板因等待你的输入而阻塞的时间，自 {since} 起统计。',
+  waitClear: '重置',
+  waitEmpty: '尚无智能体等待过你——当面板因等待你的输入而阻塞时开始计时。'
 };

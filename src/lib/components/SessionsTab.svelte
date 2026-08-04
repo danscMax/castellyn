@@ -74,7 +74,7 @@
   import { composeLaunchArgs } from '$lib/launchArgs';
   import { hookHealth } from '$lib/hookHealth';
   import { parseTsMs, localeTag } from '$lib/relativeTime';
-  import { agentSummary, type AgentPaneState } from '$lib/agentStatus.svelte';
+  import { agentSummary, noteWait, type AgentPaneState } from '$lib/agentStatus.svelte';
   import { getMonitors, invalidateMonitors, openDetached } from '$lib/monitors';
   import Select from './Select.svelte';
   import { anchored } from '$lib/floating';
@@ -393,6 +393,9 @@
             ? 'done'
             : (state as AgentPaneState);
         agentStates = { ...agentStates, [id]: next };
+        // Backlog 25: the only place a pane's state change is observed — so the "waiting for me"
+        // clock starts and stops here (Analytics reads the accumulated total).
+        noteWait(id, next);
         // #3: drive auto-continue on the EVENT, not only the ≤12s tick — a blocking menu can appear and
         // vanish faster than a tick, so press option 1 the instant a limit/menu is detected (phase 2
         // still waits for the endpoint reset). Idempotent: maybeAutoContinue is fully guarded per pane.

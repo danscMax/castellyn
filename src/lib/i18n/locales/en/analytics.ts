@@ -96,5 +96,13 @@ export default {
   sessTotal: 'Total',
   sessFootnote: 'A live snapshot from agent-status — not a persisted history.',
   sessEmptyTitle: 'No active sessions',
-  sessEmptyHint: 'Launch a session from the Sessions tab and its live status shows up here.'
+  sessEmptyHint: 'Launch a session from the Sessions tab and its live status shows up here.',
+  waitTitle: 'How long agents waited for you',
+  waitTotal: 'Total wait',
+  waitCount: 'over {n} wait(s)',
+  waitAvg: 'Average wait',
+  waitLongest: 'Longest wait',
+  waitFootnote: 'Time panes spent blocked on your input, counted since {since}.',
+  waitClear: 'Reset',
+  waitEmpty: 'No agent has waited on you yet — the clock starts when a pane blocks on your input.'
 };

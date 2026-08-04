@@ -9,7 +9,7 @@
   import Segmented from './Segmented.svelte';
   import { runHistory, clearRunHistory, type RunRecord } from '$lib/runHistory.svelte';
   import { limitsStore } from '$lib/limits.svelte';
-  import { agentSummary } from '$lib/agentStatus.svelte';
+  import { agentSummary, agentWait, clearAgentWait } from '$lib/agentStatus.svelte';
   import type { LimitsStatusEvent } from '$lib/ipc';
   import { formatAbsTime, localeTag } from '$lib/relativeTime';
   import { downloadBlob } from '$lib/download';
@@ -338,6 +338,20 @@
   // semantic agent status — working/blocked/done stay as the breakdown of those that have one.
   const sessTotal = $derived(agentSummary.live);
 
+  // Backlog 25: waits run from seconds to hours, so a fixed unit lies at one end — rendering a
+  // 40-second wait as "0м" (SessionsTab's minute-granularity humanizeMs) would read as "never
+  // waited". Units come from the existing keys; no new formatter module for four call sites.
+  const dur = (ms: number): string => {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s} ${t('analytics.unitS')}`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}${t('sessions.unitMin')}`;
+    return `${Math.floor(m / 60)}${t('sessions.unitHour')} ${m % 60}${t('sessions.unitMin')}`;
+  };
+  // A single long wait is the news here — an agent that sat unanswered for ten minutes is time the
+  // user did not know they were losing. Flag it the same way the Claude meters flag a near limit.
+  const LONG_WAIT_MS = 600_000;
+
   const grainLabel = $derived.by(() => {
     const step = data?.stepSec ?? 0;
     const k =
@@ -575,6 +589,38 @@
     {:else}
       <EmptyState icon={BarChart3} title={t('analytics.sessEmptyTitle')} description={t('analytics.sessEmptyHint')} />
     {/if}
+
+    <!-- Backlog 25: the snapshot above says who is waiting NOW; this says how much time agents have
+         spent waiting on the user. Accumulated from agent-status transitions and persisted, so it
+         is shown regardless of whether any pane is live right now. -->
+    <div class="mt-sw-6">
+      <SectionHeader title={t('analytics.waitTitle')} />
+      {#if agentWait.count}
+        <div class="card-grid mb-sw-4">
+          <div class="sw-card">
+            <p class="text-sw-xs text-sw-text-muted">{t('analytics.waitTotal')}</p>
+            <p class="mt-1 text-2xl font-semibold">{dur(agentWait.totalMs)}</p>
+            <p class="mt-1 text-sw-xs text-sw-text-secondary">{t('analytics.waitCount', { n: agentWait.count })}</p>
+          </div>
+          <div class="sw-card">
+            <p class="text-sw-xs text-sw-text-muted">{t('analytics.waitAvg')}</p>
+            <p class="mt-1 text-2xl font-semibold">{dur(agentWait.totalMs / agentWait.count)}</p>
+          </div>
+          <div class="sw-card">
+            <p class="text-sw-xs text-sw-text-muted">{t('analytics.waitLongest')}</p>
+            <p class="mt-1 text-2xl font-semibold {agentWait.longestMs >= LONG_WAIT_MS ? 'status-warn' : ''}">{dur(agentWait.longestMs)}</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-sw-2">
+          <p class="text-sw-xs text-sw-text-muted">
+            {t('analytics.waitFootnote', { since: formatAbsTime(new Date(agentWait.since).toISOString()) })}
+          </p>
+          <button class="sw-btn sw-btn-ghost text-sw-xs" onclick={clearAgentWait}>{t('analytics.waitClear')}</button>
+        </div>
+      {:else}
+        <div class="sw-card text-sw-sm text-sw-text-muted">{t('analytics.waitEmpty')}</div>
+      {/if}
+    </div>
   {/if}
 
   {#if source === 'gateway'}
