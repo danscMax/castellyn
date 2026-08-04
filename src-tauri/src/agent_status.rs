@@ -630,6 +630,34 @@ fn apply_hook_report(v: &serde_json::Value, t: &mut Track) {
 /// Start the poll thread. Called once from `setup()`.
 /// (blocked, limited) counts across live panes, from each track's last-emitted state. Cheap
 /// snapshot for the tray tooltip — no recompute, just reads what the poll already published.
+/// Reflect "someone is waiting" OUTSIDE the window: flash the taskbar button and put the count in
+/// the native title, which is what Alt+Tab and the taskbar preview show. The in-window strip
+/// already covers the case where the user is looking at Castellyn; this is for when they are not.
+///
+/// Called on the same transitions as the tray tooltip, so the two never disagree.
+pub(crate) fn update_attention_surfaces(app: &tauri::AppHandle) {
+    let (blocked, limited) = attention_counts();
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    // The custom chrome hides the native title bar, so this string is invisible IN the app — it
+    // exists purely for the taskbar and Alt+Tab, which is exactly where it is needed.
+    let _ = w.set_title(&if blocked > 0 {
+        format!("({blocked}) Castellyn")
+    } else {
+        "Castellyn".to_string()
+    });
+    // Flash only while unfocused: requesting attention on the window the user is already in is
+    // noise. `None` clears a flash that a previous transition started.
+    let focused = w.is_focused().unwrap_or(false);
+    let want = (blocked > 0 || limited > 0) && !focused;
+    let _ = w.request_user_attention(if want {
+        Some(tauri::UserAttentionType::Informational)
+    } else {
+        None
+    });
+}
+
 pub(crate) fn attention_counts() -> (usize, usize) {
     let map = TRACKS.lock().unwrap_or_else(|e| e.into_inner());
     let mut blocked = 0;
@@ -768,6 +796,7 @@ pub fn start(app: tauri::AppHandle) {
         // Only when a state actually changed — the tooltip's attention line reads these counts.
         if changed {
             crate::update_tray_tooltip(&app);
+            update_attention_surfaces(&app);
         }
         });
         }

@@ -816,6 +816,7 @@
   <div
     class="bar"
     class:ssh={isSsh}
+    class:waiting-bar={!!waitingFor && !exited && !error}
     draggable={!!onDragStart}
     ondragstart={(e) => {
       if (!onDragStart) return;
@@ -1074,6 +1075,29 @@
     white-space: nowrap;
     flex-shrink: 0;
   }
+  /* The pane's whole header breathes while it waits. The 8px dot is invisible peripherally; a
+     moving header is what actually catches the eye across a wall of terminals. Slow and low
+     contrast on purpose — this must be noticeable, not distracting. */
+  .bar.waiting-bar {
+    background: color-mix(in srgb, var(--sw-danger, #f85149) 10%, transparent);
+    animation: bar-breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes bar-breathe {
+    0%,
+    100% {
+      background: color-mix(in srgb, var(--sw-danger, #f85149) 7%, transparent);
+    }
+    50% {
+      background: color-mix(in srgb, var(--sw-danger, #f85149) 18%, transparent);
+    }
+  }
+  /* Respect the OS "reduce motion" preference: the colour still marks the pane, it just holds still. */
+  @media (prefers-reduced-motion: reduce) {
+    .bar.waiting-bar {
+      animation: none;
+    }
+  }
+
   /* Same pill as .autoresume, in danger colours — this one means "a human is needed here". */
   .waiting {
     display: inline-flex;
