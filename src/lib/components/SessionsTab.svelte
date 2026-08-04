@@ -1338,6 +1338,13 @@
   });
   // The strip shows blocked panes OTHER than the focused one (you're already looking at that one),
   // oldest first — "who has been waiting for me the longest".
+  let attnListOpen = $state(false);
+  /// Every waiting pane except the focused one, oldest first — the strip names only the first.
+  const attnAll = $derived(
+    activePanes
+      .filter((p) => displayStateById[p.key] === 'blocked' && p.key !== activeKey)
+      .sort((a, b) => (blockedSince[a.key] ?? 0) - (blockedSince[b.key] ?? 0))
+  );
   const attention = $derived.by(() => {
     const list = activePanes
       .filter((p) => displayStateById[p.key] === 'blocked' && p.key !== activeKey)
@@ -3308,10 +3315,25 @@
       <span class="attn-dot"></span>
       <span class="text-sw-xs attn-msg">
         <b>{plabel(attention.first)}</b>{#if spaces.length > 1}&nbsp;· {spaces.find((s) => s.id === paneSpace(attention.first))?.name}{/if}
-        — {t('sessions.attnWaiting', { d: attnElapsed(attention.first.key) })}{#if attention.more}&nbsp;· {t('sessions.attnMore', { n: attention.more })}{/if}
+        — {t('sessions.attnWaiting', { d: attnElapsed(attention.first.key) })}{#if attention.more}&nbsp;·
+          <!-- "and 1 more" was a dead end: the other waiting panes had no clock and no way to reach
+               them without hunting. The count now opens the full list, each row jumping to its pane. -->
+          <button type="button" class="attn-more" onclick={() => (attnListOpen = !attnListOpen)}
+            aria-expanded={attnListOpen}>{t('sessions.attnMore', { n: attention.more })}</button>{/if}
       </span>
       <button class="sw-btn sw-btn-primary text-sw-xs" onclick={() => railFocus(attention.first.key)}>{t('sessions.attnJump')}</button>
     </div>
+    {#if attnListOpen && attention.more}
+      <div class="attn-list">
+        {#each attnAll.slice(1) as p (p.key)}
+          <button type="button" class="attn-row" onclick={() => { attnListOpen = false; railFocus(p.key); }}>
+            <span class="attn-dot"></span>
+            <span class="attn-row-name">{plabel(p)}</span>
+            <span class="attn-row-age">{t('sessions.attnWaiting', { d: attnElapsed(p.key) })}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
   {/if}
 
   <!-- Saved workspaces: one click re-opens the whole set of sessions -->
@@ -3683,6 +3705,43 @@
     white-space: nowrap;
     color: var(--sw-text-secondary);
   }
+  .attn-more {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    text-decoration: underline dotted;
+    cursor: pointer;
+    font: inherit;
+  }
+  .attn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 2px 0 0 var(--sw-space-4, 16px);
+  }
+  .attn-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sw-space-2, 8px);
+    padding: 3px 8px;
+    background: none;
+    border: none;
+    border-radius: var(--sw-radius-sm);
+    cursor: pointer;
+    text-align: left;
+    color: var(--sw-text-secondary);
+    font-size: var(--sw-text-xs);
+  }
+  .attn-row:hover {
+    background: var(--sw-bg-hover);
+    color: var(--sw-text-primary);
+  }
+  .attn-row-age {
+    margin-left: auto;
+    color: var(--sw-text-muted);
+  }
+
   /* Agent-status rollup chips (header): blocked / working / done counts. Buttons — click cycles
      focus through the panes in that state (cross-project). */
   .status-sum {

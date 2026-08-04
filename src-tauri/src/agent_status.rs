@@ -409,19 +409,24 @@ struct StatusEvent {
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
 /// sound scheme and mute state). No-op on non-Windows.
-fn beep(attention: bool) {
+fn beep(kind: crate::notify::Kind) {
     #[cfg(windows)]
     unsafe {
         use windows::Win32::System::Diagnostics::Debug::MessageBeep;
-        use windows::Win32::UI::WindowsAndMessaging::{MB_ICONASTERISK, MB_ICONEXCLAMATION};
-        let _ = MessageBeep(if attention {
-            MB_ICONEXCLAMATION
-        } else {
-            MB_ICONASTERISK
+        use windows::Win32::UI::WindowsAndMessaging::{
+            MB_ICONASTERISK, MB_ICONEXCLAMATION, MB_ICONHAND,
+        };
+        // Three states, three sounds — one "attention vs not" split could not tell "answer me" from
+        // "I am parked on quota", and those call for very different reactions. System sounds, so the
+        // user's own scheme and mute still govern.
+        let _ = MessageBeep(match kind {
+            crate::notify::Kind::Blocked | crate::notify::Kind::BlockedMany => MB_ICONEXCLAMATION,
+            crate::notify::Kind::Limited => MB_ICONHAND,
+            _ => MB_ICONASTERISK,
         });
     }
     #[cfg(not(windows))]
-    let _ = attention;
+    let _ = kind;
 }
 
 /// Popup + sound policy (herdr-style): →blocked = attention; working/blocked→idle =
@@ -470,7 +475,13 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     let cfg = crate::read_config_file();
     let lang = crate::cur_lang();
     if cfg.status_sounds.unwrap_or(true) {
-        beep(to_blocked || to_limited);
+        beep(if to_blocked {
+            crate::notify::Kind::Blocked
+        } else if to_limited {
+            crate::notify::Kind::Limited
+        } else {
+            crate::notify::Kind::Done
+        });
     }
     // Everything OS-facing goes through the one channel (crate::notify): it owns the app identity,
     // replaces a previous notice about the SAME session instead of stacking, and gives the waiting
