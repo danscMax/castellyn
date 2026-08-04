@@ -55,9 +55,13 @@ pub struct Notice {
     pub kind: Kind,
     pub title: String,
     pub body: String,
-    /// The session this is about, when there is one. Used as the toast TAG — a newer notice about
-    /// the same session replaces the older one instead of stacking — and as the payload of the
-    /// click, so activating the toast can jump straight to that pane.
+    /// What this notice is ABOUT — a session id, a profile name. Used as the toast tag, so a newer
+    /// notice on the same subject REPLACES the older one instead of stacking. Kept separate from
+    /// `session` on purpose: a usage-limit alert is per-profile and wants replacement, but there is
+    /// no pane to jump to, and conflating the two silently left those alerts untagged.
+    pub tag: Option<String>,
+    /// The pane to focus when the toast is clicked, when there is one. Drives the button and the
+    /// activation payload; `None` means the notice carries neither.
     pub session: Option<String>,
 }
 
@@ -112,6 +116,16 @@ fn toast_xml(kind: Kind, title: &str, body: &str, session: Option<&str>, goto_la
 #[cfg(windows)]
 const AUMID: &str = "com.danscmax.castellyn";
 
+/// Is the rich channel usable at all? Set once at startup from the registration result.
+///
+/// This exists because `Show()` is NOT a reliable signal: with an unregistered identity Windows
+/// drops the toast and still returns `Ok`, so an error-triggered fallback would never fire and the
+/// user would get nothing — no toast, no error. Registration, on the other hand, is knowable, and
+/// it is exactly the precondition the platform enforces. If it failed, every notification goes
+/// through the plugin from the start.
+#[cfg(windows)]
+static CHANNEL_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Make Windows aware of our AppUserModelID by planting a Start Menu shortcut that carries it.
 ///
 /// This is not cosmetic plumbing — it is the precondition for the entire channel. Windows only
@@ -127,9 +141,44 @@ const AUMID: &str = "com.danscmax.castellyn";
 pub fn ensure_registered() {
     // Report the outcome instead of swallowing it: a missing shortcut means Windows silently drops
     // every toast (Show() still returns Ok), which is the hardest possible failure to notice.
-    match ensure_registered_inner() {
-        Ok(msg) => eprintln!("notify: AUMID registration — {msg}"),
-        Err(e) => eprintln!("notify: AUMID registration FAILED — {e}"),
+    let ok = match ensure_registered_inner() {
+        Ok(msg) => {
+            eprintln!("notify: AUMID registration — {msg}");
+            true
+        }
+        Err(e) => {
+            eprintln!("notify: AUMID registration FAILED — {e}");
+            false
+        }
+    };
+    CHANNEL_READY.store(ok, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The AppUserModelID already stored on a shortcut, if any. `None` covers "no such property" just
+/// as much as "could not read the file" — both mean the same thing to the caller: not ours yet.
+#[cfg(windows)]
+fn shortcut_aumid(path: &std::path::Path) -> Option<String> {
+    use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ};
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::core::{Interface, PCWSTR};
+    use std::os::windows::ffi::OsStrExt;
+
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let file: IPersistFile = link.cast().ok()?;
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // Read-only: we only inspect the property.
+        file.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
+        let store: IPropertyStore = link.cast().ok()?;
+        let value = store.GetValue(&PKEY_AppUserModel_ID as *const _).ok()?;
+        let s = value.to_string();
+        if s.is_empty() { None } else { Some(s) }
     }
 }
 
@@ -139,7 +188,7 @@ fn ensure_registered_inner() -> Result<String, String> {
     use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-        IPersistFile,
+        CoTaskMemFree, IPersistFile,
     };
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
     use windows::Win32::UI::Shell::{FOLDERID_Programs, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_CREATE};
@@ -156,7 +205,13 @@ fn ensure_registered_inner() -> Result<String, String> {
         // Measured live — with a redirected APPDATA (the isolated test world) DEFAULT fails with
         // 0x80070003 "path not found", and the whole channel silently degrades from there.
         let dir = match SHGetKnownFolderPath(&FOLDERID_Programs, KF_FLAG_CREATE, None) {
-            Ok(p) => p.to_string().unwrap_or_default(),
+            Ok(p) => {
+                let s = p.to_string().unwrap_or_default();
+                // The shell allocates this buffer with CoTaskMemAlloc and hands ownership over;
+                // `PWSTR` is a bare pointer with no Drop, so without this it leaks every call.
+                CoTaskMemFree(Some(p.0 as *const std::ffi::c_void));
+                s
+            }
             Err(_) => String::new(),
         };
         // Last resort: compose the path from APPDATA ourselves. Shell folder lookup can fail on an
@@ -174,8 +229,12 @@ fn ensure_registered_inner() -> Result<String, String> {
             dir
         };
         let lnk = std::path::Path::new(&dir).join("Castellyn.lnk");
-        // Already registered (by us on an earlier run, or by the installer) — leave it alone.
-        if lnk.exists() {
+        // A shortcut being PRESENT is not the same as it carrying our identity. The installer
+        // creates one too, and an NSIS shortcut has no AppUserModelID — trusting mere existence
+        // would skip registration on exactly the machines that install the app properly, and every
+        // toast would be dropped with nothing to explain why. So read the property and only leave
+        // the file alone when it already says what we need.
+        if lnk.exists() && shortcut_aumid(&lnk).as_deref() == Some(AUMID) {
             return Ok(format!("already registered: {}", lnk.display()));
         }
 
@@ -251,9 +310,11 @@ fn winrt_show(app: &AppHandle, n: &Notice, goto_label: &str) -> Result<(), Strin
     // Tag = the subject. Windows replaces a notification with the same (tag, group) pair, which is
     // exactly "one live notice per session" instead of a growing stack. Tags are limited in length
     // and character set, and our session ids are short hex — but truncate defensively anyway.
-    if let Some(id) = n.session.as_deref() {
-        let tag: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).take(60).collect();
-        let _ = toast.SetTag(&HSTRING::from(tag));
+    if let Some(subject) = n.tag.as_deref() {
+        let tag: String = subject.chars().filter(|c| c.is_ascii_alphanumeric()).take(60).collect();
+        if !tag.is_empty() {
+            let _ = toast.SetTag(&HSTRING::from(tag));
+        }
     }
     let _ = toast.SetGroup(&HSTRING::from(n.kind.group()));
 
@@ -313,9 +374,18 @@ pub fn notify(app: &AppHandle, n: Notice) {
         return;
     }
     let goto_label = crate::i18n::tr("notify.action_goto", crate::cur_lang());
+    // Registration is checked FIRST, and deliberately not `Show()`'s return value: an unregistered
+    // identity makes Windows drop the toast while still returning Ok, so waiting for an error would
+    // leave the user with nothing at all — no toast and no fallback. If we are not registered, the
+    // plugin is the only path that can still deliver something.
+    #[cfg(windows)]
+    if !CHANNEL_READY.load(std::sync::atomic::Ordering::Relaxed) {
+        plugin_show(app, &n);
+        return;
+    }
     if let Err(e) = winrt_show(app, &n, goto_label) {
-        // One line per failure, not a silent swap: if the rich channel is unavailable (typically an
-        // unregistered AppUserModelID) the user still gets the toast, and the reason is on record.
+        // One line per failure, not a silent swap: if the rich channel is unavailable the user
+        // still gets the toast, and the reason is on record.
         eprintln!("notify: winrt channel unavailable ({e}), using the plugin");
         plugin_show(app, &n);
     }
@@ -360,6 +430,8 @@ pub fn notify_test(app: AppHandle) {
             kind: Kind::Important,
             title: crate::i18n::tr("notify.test_title", lang).to_string(),
             body: crate::i18n::tr("notify.test_body", lang).to_string(),
+            // Repeated presses replace the previous test toast rather than stacking four of them.
+            tag: Some("selftest".to_string()),
             session: None,
         },
     );

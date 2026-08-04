@@ -380,6 +380,9 @@ fn fire_alert(app: &AppHandle, profile: &str, window: &str, level: u8, util: f64
                 lang,
                 &[("profile", &profile), ("window", &window), ("pct", &pct)],
             ),
+            // Tagged by PROFILE: crossing the threshold again replaces this profile's own
+            // earlier alert. There is no pane to jump to, hence no session.
+            tag: Some(profile.to_string()),
             session: None,
         },
     );

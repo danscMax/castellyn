@@ -14973,6 +14973,9 @@ pub(crate) fn notify_important(app: &AppHandle, title: &str, body: &str) {
             kind: notify::Kind::Important,
             title: title.to_string(),
             body: body.to_string(),
+            // Maintenance notices are distinct events (a service down, a run failed) — replacing
+            // one with the next would hide the first, so they are deliberately untagged.
+            tag: None,
             session: None,
         },
     );

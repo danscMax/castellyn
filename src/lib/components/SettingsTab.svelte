@@ -109,10 +109,19 @@
   // arrives is otherwise indistinguishable from a broken feature.
   let notifyDiagText = $state('');
   async function runNotifyTest() {
+    // Order matters, and it is the opposite of the obvious one. `notifyEnabled` REJECTS in exactly
+    // the case this button exists for — an unregistered notification identity — so asking it first
+    // aborted the whole handler and neither repaired anything nor explained why. Repair first
+    // (notifyDiag re-runs registration), then send (which has its own fallback), and treat the
+    // permission probe as advisory: it must never stop the other two.
     try {
-      notifyBlockedByOs = !(await notifyEnabled());
       notifyDiagText = await notifyDiag();
       await notifyTest();
+      try {
+        notifyBlockedByOs = !(await notifyEnabled());
+      } catch {
+        notifyBlockedByOs = false; // cannot ask ≠ muted; notifyDiagText already carries the reason
+      }
       flash(notifyBlockedByOs ? t('sessions.notifyBlockedByOs') : t('sessions.notifySelfTestSent'));
     } catch (e) {
       errMsg = String(e);

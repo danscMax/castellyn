@@ -442,6 +442,9 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
             kind,
             title: crate::i18n::tr(tk, lang).to_string(),
             body: crate::i18n::trv(bk, lang, &[("label", &ev.label)]),
+            // Same subject = same session, so a later notice about this pane replaces the
+            // earlier one instead of stacking.
+            tag: Some(ev.id.clone()),
             session: Some(ev.id.clone()),
         },
     );
