@@ -646,6 +646,39 @@ fn apply_hook_report(v: &serde_json::Value, t: &mut Track) {
 /// already covers the case where the user is looking at Castellyn; this is for when they are not.
 ///
 /// Called on the same transitions as the tray tooltip, so the two never disagree.
+/// A bounded ring of recent state transitions, newest last.
+///
+/// Every false "done" and stuck "blocked" this engine ever produced was diagnosed by reconstructing
+/// what the state machine saw — from memory, after the fact, from a user's description. This keeps
+/// the last few hundred transitions so the next one can be read instead of reconstructed. In memory
+/// only: it is a debugging aid, not a record worth writing to disk.
+static TRANSITIONS: LazyLock<Mutex<std::collections::VecDeque<String>>> =
+    LazyLock::new(Default::default);
+const TRANSITION_LOG_CAP: usize = 300;
+
+fn log_transition(id: &str, label: &str, prev: Option<&str>, state: &str, now: u64) {
+    let mut log = TRANSITIONS.lock().unwrap_or_else(|e| e.into_inner());
+    log.push_back(format!(
+        "{now} {id} [{label}] {} -> {state}",
+        prev.unwrap_or("-")
+    ));
+    while log.len() > TRANSITION_LOG_CAP {
+        log.pop_front();
+    }
+}
+
+/// The recent transitions, oldest first — surfaced so a misbehaving status can be inspected while
+/// it is still misbehaving.
+#[tauri::command]
+pub fn agent_status_log() -> Vec<String> {
+    TRANSITIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn update_attention_surfaces(app: &tauri::AppHandle) {
     let (blocked, limited) = attention_counts();
     let Some(w) = app.get_webview_window("main") else {
@@ -780,6 +813,7 @@ pub fn start(app: tauri::AppHandle) {
                 // while state stays "limited" must still reach the frontend. (item 21f)
                 if t.last_emitted.as_deref() != Some(state) || t.last_menu != menu {
                     let prev = t.last_emitted.take();
+                    log_transition(id, &t.label, prev.as_deref(), state, now);
                     t.last_emitted = Some(state.to_string());
                     t.last_menu = menu;
                     events.push(StatusEvent {

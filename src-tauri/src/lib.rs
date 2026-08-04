@@ -16023,6 +16023,7 @@ pub fn run() {
             session_list,
             session_set_label,
             session_set_focus,
+            agent_status::agent_status_log,
             notify::notify_enabled,
             notify::notify_test,
             notify::notify_diag,
