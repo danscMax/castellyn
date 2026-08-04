@@ -20,6 +20,7 @@
     sessionWrite,
     sessionList,
     sessionSetLabel,
+    sessionSetFocus,
     type SessionTool,
     type DetachPane,
     type SshHost,
@@ -1654,6 +1655,18 @@
     const sp = spaces.length > 1 ? spaces.find((s) => s.id === paneSpace(p))?.name : undefined;
     return sp ? `${plabel(p)} · ${sp}` : plabel(p);
   };
+  // Which pane the user is actually looking at, pushed to the backend so a notification about a
+  // DIFFERENT project is not silenced just because the window has focus. Null when the tab is not
+  // visible or nothing is focused.
+  let sentFocus = '';
+  $effect(() => {
+    const id = visible && activeKey ? (sessionIds[activeKey] ?? '') : '';
+    if (id === sentFocus) return;
+    sentFocus = id;
+    void sessionSetFocus(id || null).catch((e) =>
+      console.warn('[castellyn] session_set_focus failed:', e)
+    );
+  });
   // Last label pushed per session id — this effect re-runs on any pane/space change, but the IPC
   // call must only fire when the STRING actually changed.
   const sentLabels: Record<string, string> = {};

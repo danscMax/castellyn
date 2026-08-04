@@ -59,6 +59,10 @@ const TURN_END_ECHO_MS: u64 = 2_000;
 /// then floods far more than this, so that many bytes since the limit clears the `limited` state
 /// (item 21b). Higher than the block threshold — a limit banner + its surrounding repaint is larger.
 const LIMIT_RESUME_BYTES: u64 = 4_096;
+/// A turn that ends this soon after the user's own keystroke needs no "finished" toast — they are
+/// at the keyboard. Long enough to cover a quick answer, short enough that a turn they walked away
+/// from still reports (item 33).
+const TYPED_RECENTLY_MS: u64 = 20_000;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -78,7 +82,17 @@ struct Track {
     hook_expected: bool,
     /// Human label for notifications ("claude · cc1", "codex").
     label: String,
+    /// The claude profile this pane runs, so a limit notice can look up when that profile's window
+    /// resets. Empty for tools that have no profile.
+    profile: String,
     spawned_at: u64,
+    /// When the COMPUTED state last changed (unix ms). `last_emitted` stored only the value, so
+    /// "how long has this been waiting" existed nowhere in the backend — and the frontend's copy
+    /// resets on every webview reload. Escalation, cooldown and the wait metric all need this.
+    state_since: u64,
+    /// Unix ms of the last keystroke the USER sent into this pane. A turn that ends seconds after
+    /// the user typed does not deserve a "finished" toast — they are sitting right there.
+    last_user_input: AtomicU64,
     /// Unix ms of the last PTY output. Atomic so `on_output` can update it under a shared
     /// borrow (still under the TRACKS lock — see item-8 scope note).
     last_output: AtomicU64,
@@ -115,6 +129,17 @@ struct Track {
 
 static TRACKS: LazyLock<Mutex<HashMap<String, Track>>> = LazyLock::new(Default::default);
 
+/// The session the user currently has open and focused, as reported by the frontend. The backend
+/// otherwise only knows whether the WINDOW has focus, which silenced notifications about every
+/// OTHER project while the user worked in one of them (item 35).
+static FOCUSED_SESSION: LazyLock<Mutex<Option<String>>> = LazyLock::new(Default::default);
+
+/// Frontend tells us which pane is on screen and focused; `None` when the Sessions tab is not
+/// visible or nothing holds focus.
+pub fn set_focused(id: Option<String>) {
+    *FOCUSED_SESSION.lock().unwrap_or_else(|e| e.into_inner()) = id;
+}
+
 /// %APPDATA%\castellyn\agent-status (hook output directory).
 pub fn status_dir() -> Option<std::path::PathBuf> {
     std::env::var("APPDATA")
@@ -140,7 +165,10 @@ pub fn on_spawn(id: &str, tool: &str, profile: &str, hook_expected: bool) {
             } else {
                 tool.to_string()
             },
+            profile: profile.to_string(),
             spawned_at: now,
+            state_since: now,
+            last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
             limited: AtomicBool::new(false),
@@ -205,6 +233,18 @@ pub fn on_output(id: &str, bytes: usize) {
         {
             t.limit_menu.store(false, Ordering::Relaxed);
         }
+    }
+}
+
+/// The user typed into this pane. Recorded so a turn that ends right after they pressed Enter does
+/// not fire a "finished" toast at someone who is already looking at the screen (item 33).
+pub fn on_user_input(id: &str) {
+    if let Some(t) = TRACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+    {
+        t.last_user_input.store(now_ms(), Ordering::Relaxed);
     }
 }
 
@@ -371,6 +411,14 @@ struct StatusEvent {
     /// The interactive limit menu is up (`limitMenu`): the frontend picks "Stop and wait" to dismiss
     /// it before injecting "continue" after reset. Rides alongside `state` ("limited"). (item 21f)
     limit_menu: bool,
+    /// Backend-only, for the notification policy: which profile this pane runs (limit reset lookup),
+    /// when the state changed (escalation/cooldown), and whether the user typed here moments ago.
+    #[serde(skip)]
+    profile: String,
+    #[serde(skip)]
+    state_since: u64,
+    #[serde(skip)]
+    typed_recently: bool,
 }
 
 /// System sound for a transition (no bundled audio: MessageBeep respects the user's
@@ -414,11 +462,23 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     if !to_blocked && !completed && !to_limited {
         return;
     }
-    if app
+    // A finished turn seconds after the user's own keystroke is not news to them (item 33).
+    if completed && ev.typed_recently {
+        return;
+    }
+    // The window having focus is not enough to stay silent: with several projects open the user
+    // looks at ONE pane, and the others were being silenced too (item 35). Suppress only when the
+    // very pane this is about is the one on screen.
+    let window_focused = app
         .webview_windows()
         .values()
-        .any(|w| w.is_focused().unwrap_or(false))
-    {
+        .any(|w| w.is_focused().unwrap_or(false));
+    let looking_at_it = FOCUSED_SESSION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_deref()
+        == Some(ev.id.as_str());
+    if window_focused && looking_at_it {
         return;
     }
     let cfg = crate::read_config_file();
@@ -429,6 +489,25 @@ fn notify_transition(app: &tauri::AppHandle, ev: &StatusEvent) {
     // Everything OS-facing goes through the one channel (crate::notify): it owns the app identity,
     // replaces a previous notice about the SAME session instead of stacking, and gives the waiting
     // toast a click that jumps to that pane. The `status_notify` switch is checked in there.
+    // Several agents waiting at once is ONE piece of news, not N. Beyond the first, collapse into a
+    // single tagged notice that replaces itself as the count moves — otherwise a fleet of panes
+    // stopping together buries the screen in toasts saying the same thing.
+    let waiting = attention_counts().0;
+    if to_blocked && waiting > 1 {
+        crate::notify::notify(
+            app,
+            crate::notify::Notice {
+                kind: crate::notify::Kind::Blocked,
+                title: crate::i18n::tr("status.blocked_title", lang).to_string(),
+                body: crate::i18n::trv("status.blocked_many", lang, &[("n", &waiting)]),
+                tag: Some("blocked-many".to_string()),
+                // Jump to the pane that just stopped — the most recent one is as good a landing
+                // place as any, and the rail lists the rest.
+                session: Some(ev.id.clone()),
+            },
+        );
+        return;
+    }
     let (kind, tk, bk) = if to_blocked {
         (crate::notify::Kind::Blocked, "status.blocked_title", "status.blocked_body")
     } else if to_limited {
@@ -676,6 +755,11 @@ pub fn start(app: tauri::AppHandle) {
                 // while state stays "limited" must still reach the frontend. (item 21f)
                 if t.last_emitted.as_deref() != Some(state) || t.last_menu != menu {
                     let prev = t.last_emitted.take();
+                    // Only a real STATE change restarts the clock; the menu flag flipping does not
+                    // mean the pane started waiting again.
+                    if prev.as_deref() != Some(state) {
+                        t.state_since = now;
+                    }
                     t.last_emitted = Some(state.to_string());
                     t.last_menu = menu;
                     events.push(StatusEvent {
@@ -688,6 +772,10 @@ pub fn start(app: tauri::AppHandle) {
                         exited: t.exited,
                         hook_idle: t.hook_state.as_deref() == Some("idle"),
                         limit_menu: menu,
+                        profile: t.profile.clone(),
+                        state_since: t.state_since,
+                        typed_recently: now.saturating_sub(t.last_user_input.load(Ordering::Relaxed))
+                            < TYPED_RECENTLY_MS,
                     });
                 }
                 !t.exited // exited sessions emit their final idle above, then drop
@@ -717,7 +805,10 @@ mod tests {
             // Default hookless (codex/opencode/remote-claude); the local-claude tests set it true.
             hook_expected: false,
             label: tool.into(),
+            profile: String::new(),
             spawned_at: now,
+            state_since: now,
+            last_user_input: AtomicU64::new(0),
             last_output: AtomicU64::new(now),
             bytes_since_block: AtomicU64::new(0),
             limited: AtomicBool::new(false),
@@ -1016,6 +1107,9 @@ mod tests {
             exited: t.exited,
             hook_idle: false,
             limit_menu: false,
+            profile: String::new(),
+            state_since: now,
+            typed_recently: false,
         };
         assert_ne!(ev.spawned_at, 0);
         assert_eq!(ev.spawned_at, now);

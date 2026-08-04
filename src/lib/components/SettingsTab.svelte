@@ -102,6 +102,24 @@
   // U11: the Sessions notification/limit settings, surfaced here too (same config fields).
   let statusSounds = $state(true);
   let statusNotify = $state(true);
+  // Per-kind switches under the master one: "waiting" blocks the user's work, "finished" is a
+  // nicety, "limit" sits between — one switch for all three was too blunt.
+  let notifyBlocked = $state(true);
+  let notifyDone = $state(true);
+  let notifyLimited = $state(true);
+  async function toggleNotifyKind(kind: 'Blocked' | 'Done' | 'Limited', v: boolean) {
+    if (kind === 'Blocked') notifyBlocked = v;
+    else if (kind === 'Done') notifyDone = v;
+    else notifyLimited = v;
+    const patch = { [`notify${kind}`]: v } as Partial<HubConfig>;
+    if (!(await persist(patch))) {
+      if (kind === 'Blocked') notifyBlocked = !v;
+      else if (kind === 'Done') notifyDone = !v;
+      else notifyLimited = !v;
+      return;
+    }
+    flash(t('settings.saved'));
+  }
   // Windows can mute the app entirely; asked once on mount so the hint can say so instead of
   // leaving the user to guess why nothing pops up (see docs/adr/0004).
   let notifyBlockedByOs = $state(false);
@@ -201,6 +219,9 @@
     updateCheckOnStart = c.updateCheckOnStart ?? true;
     statusSounds = c.statusSounds ?? true;
     statusNotify = c.statusNotify ?? true;
+    notifyBlocked = c.notifyBlocked ?? true;
+    notifyDone = c.notifyDone ?? true;
+    notifyLimited = c.notifyLimited ?? true;
     limitMode = c.limitMode ?? 'wait';
     toggleHotkey = c.toggleHotkey ?? '';
   }
@@ -614,6 +635,24 @@
         </span>
         <Toggle checked={statusNotify} onCheckedChange={toggleStatusNotify} title={t('sessions.statusToast')} />
       </label>
+      <!-- Under the master switch: the three transitions differ enough in urgency that one toggle
+           for all of them meant turning off the useful one to silence the chatty one. -->
+      {#if statusNotify}
+        <div class="flex flex-col gap-sw-2 pl-sw-4">
+          <label class="flex items-center justify-between gap-sw-4">
+            <span class="text-sw-xs text-sw-text-secondary">{t('sessions.state_blocked')}</span>
+            <Toggle checked={notifyBlocked} onCheckedChange={(v) => toggleNotifyKind('Blocked', v)} title={t('sessions.state_blocked')} />
+          </label>
+          <label class="flex items-center justify-between gap-sw-4">
+            <span class="text-sw-xs text-sw-text-secondary">{t('sessions.state_done')}</span>
+            <Toggle checked={notifyDone} onCheckedChange={(v) => toggleNotifyKind('Done', v)} title={t('sessions.state_done')} />
+          </label>
+          <label class="flex items-center justify-between gap-sw-4">
+            <span class="text-sw-xs text-sw-text-secondary">{t('sessions.state_limited')}</span>
+            <Toggle checked={notifyLimited} onCheckedChange={(v) => toggleNotifyKind('Limited', v)} title={t('sessions.state_limited')} />
+          </label>
+        </div>
+      {/if}
       <!-- A toast that never arrives is indistinguishable from a feature that does not work. Windows
            can mute an app entirely (Focus assist / per-app switch), and nothing in the app could say
            so — now the platform is asked directly, and the test button proves the whole path. -->

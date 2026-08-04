@@ -417,6 +417,10 @@ export const sessionKill = (id: string) => invoke('session_kill', { id });
 export const sessionSetLabel = (id: string, label: string) =>
   invoke('session_set_label', { id, label });
 
+// Which pane the user is looking at. The backend otherwise only sees window focus and would mute
+// notifications from every OTHER project while you work in one of them.
+export const sessionSetFocus = (id: string | null) => invoke('session_set_focus', { id });
+
 // --- OS notifications (see docs/adr/0004) ---
 // Whether Windows currently allows this app to show toasts. `false` means the user muted Castellyn
 // in Windows settings — worth saying out loud, since a muted app looks exactly like a broken one.
@@ -1212,6 +1216,10 @@ export type HubConfig = {
   // Agent-status notifications (Sessions). Absent = default (on).
   statusSounds?: boolean | null;
   statusNotify?: boolean | null;
+  // Per-kind refinement of statusNotify (which is still the master switch).
+  notifyBlocked?: boolean | null;
+  notifyDone?: boolean | null;
+  notifyLimited?: boolean | null;
   // #21c: auto-continue a limited Claude pane after its 5h reset. Absent = default (on). No UI
   // toggle — a config-only escape hatch; read-only from the app (read-patch-write preserves it).
   autoContinueOnReset?: boolean | null;

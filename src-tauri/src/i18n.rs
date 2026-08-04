@@ -53,6 +53,7 @@ const TABLE: &[(&str, [&str; 3])] = &[
     // ── agent-status notifications (Sessions) ────────────────────────────────
     ("status.blocked_title", ["Агент ждёт решения", "Agent needs a decision", "代理等待决定"]),
     ("status.blocked_body",  ["{label}: нужен ваш ответ в терминале", "{label}: your input is needed in the terminal", "{label}: 终端中需要你的确认"]),
+    ("status.blocked_many",  ["{n} агентов ждут вашего ответа", "{n} agents are waiting for you", "{n} 个代理在等待你的回复"]),
     ("status.done_title",    ["Агент закончил", "Agent finished", "代理已完成"]),
     ("status.done_body",     ["{label}: ход завершён — можно смотреть результат", "{label}: the turn finished — ready for review", "{label}: 本轮已结束 — 可以查看结果"]),
     ("limits.crit_title",    ["Лимит почти исчерпан", "Usage limit almost reached", "用量即将达到上限"]),

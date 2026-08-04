@@ -367,11 +367,104 @@ fn plugin_show(app: &AppHandle, n: &Notice) {
     }
 }
 
+// ── policy ───────────────────────────────────────────────────────────────────────────────────────
+// Everything above delivers a notification; this decides whether it should exist at all. Kept as a
+// pure decision plus one small map, so the rules are unit-testable without a notification platform
+// (the same reason the frontend keeps its logic in modules like `menuContinue.ts`).
+
+/// Two notices about the SAME subject closer together than this are a repeat, not news.
+const COOLDOWN_MS: u64 = 90_000;
+/// …except "someone is still waiting on you", which earns exactly one reminder after this long.
+/// Silence would be worse than a second toast when a human is the blocker.
+const ESCALATE_MS: u64 = 10 * 60_000;
+
+/// When we last notified about a given subject. Small and bounded by the number of live sessions
+/// plus profiles; entries are dropped when a subject is quiet for a full escalation window.
+static LAST_SENT: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, u64>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Should this notice go out, given how long ago we last said something about the same subject?
+///
+/// `None` = never notified about it. "Waiting" repeats only as an escalation, because a pane that
+/// flips blocked→working→blocked while the user works through it would otherwise toast every time;
+/// everything else just respects a plain cooldown.
+fn allow_send(kind: Kind, since_last_ms: Option<u64>) -> bool {
+    match since_last_ms {
+        None => true,
+        Some(ms) => match kind {
+            Kind::Blocked => ms >= ESCALATE_MS,
+            _ => ms >= COOLDOWN_MS,
+        },
+    }
+}
+
+/// Is the user in a state where Windows itself says "do not disturb"? Presentation mode, a
+/// full-screen game, Focus assist / quiet hours. Honouring this is the difference between a helpful
+/// notification and one that lands in the middle of a screen share.
+#[cfg(windows)]
+fn os_wants_quiet() -> bool {
+    use windows::Win32::UI::Shell::{
+        QUNS_ACCEPTS_NOTIFICATIONS, QUNS_APP, SHQueryUserNotificationState,
+    };
+    unsafe {
+        match SHQueryUserNotificationState() {
+            // ACCEPTS = normal desktop; APP = a foreground app is running but notifications are fine.
+            Ok(state) => !(state == QUNS_ACCEPTS_NOTIFICATIONS || state == QUNS_APP),
+            // Unknown → assume it is fine; going silent on an API hiccup is the worse failure.
+            Err(_) => false,
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn os_wants_quiet() -> bool {
+    false
+}
+
+/// Per-kind switch on top of the master `status_notify`.
+fn kind_enabled(cfg: &crate::HubConfig, kind: Kind) -> bool {
+    match kind {
+        Kind::Blocked => cfg.notify_blocked.unwrap_or(true),
+        Kind::Done => cfg.notify_done.unwrap_or(true),
+        Kind::Limited => cfg.notify_limited.unwrap_or(true),
+        // Maintenance follows the master switch only — it reports things the user cannot foresee.
+        Kind::Important => true,
+    }
+}
+
 /// Send one notification. Honours the `status_notify` switch; everything past that is the channel's
 /// business. Never returns an error to the caller — a monitor thread must not die over a toast.
 pub fn notify(app: &AppHandle, n: Notice) {
-    if !crate::read_config_file().status_notify.unwrap_or(true) {
+    let cfg = crate::read_config_file();
+    if !cfg.status_notify.unwrap_or(true) || !kind_enabled(&cfg, n.kind) {
         return;
+    }
+    // Windows' own "do not disturb" outranks us — except for the one thing the user is actively
+    // blocked on, which is exactly what they would want to hear about even in focus mode.
+    if n.kind != Kind::Blocked && os_wants_quiet() {
+        return;
+    }
+    // Repeat suppression, keyed on the subject. A notice with no subject (maintenance) is always a
+    // distinct event, so it is never throttled.
+    if let Some(subject) = n.tag.as_deref() {
+        let now = now_ms();
+        let mut seen = LAST_SENT.lock().unwrap_or_else(|e| e.into_inner());
+        let since = seen.get(subject).map(|t| now.saturating_sub(*t));
+        if !allow_send(n.kind, since) {
+            return;
+        }
+        seen.insert(subject.to_string(), now);
+        // Keep the map from growing for the lifetime of the app: anything older than an escalation
+        // window can never change a decision again.
+        seen.retain(|_, t| now.saturating_sub(*t) < ESCALATE_MS * 2);
     }
     let goto_label = crate::i18n::tr("notify.action_goto", crate::cur_lang());
     // Registration is checked FIRST, and deliberately not `Show()`'s return value: an unregistered
@@ -472,6 +565,55 @@ mod tests {
         let maintenance = toast_xml(Kind::Important, "t", "b", None, "Перейти");
         assert!(!maintenance.contains("<action"));
         assert!(!maintenance.contains("launch="));
+    }
+
+    #[test]
+    fn a_first_notice_always_goes_out() {
+        // Nothing said about this subject yet — every kind must reach the user.
+        for k in [Kind::Blocked, Kind::Done, Kind::Limited, Kind::Important] {
+            assert!(allow_send(k, None), "{k:?} suppressed on first notice");
+        }
+    }
+
+    #[test]
+    fn waiting_repeats_only_as_an_escalation_but_never_goes_silent() {
+        // A pane the user is working through flips blocked→working→blocked; toasting on every flip
+        // is the spam this guards. But silence is worse than one extra toast when a HUMAN is the
+        // blocker, so after the escalation window it speaks again.
+        assert!(!allow_send(Kind::Blocked, Some(COOLDOWN_MS)));
+        assert!(!allow_send(Kind::Blocked, Some(ESCALATE_MS - 1)));
+        assert!(allow_send(Kind::Blocked, Some(ESCALATE_MS)));
+    }
+
+    #[test]
+    fn other_kinds_use_the_plain_cooldown() {
+        // "Finished" and "hit the limit" are informational: a short cooldown is enough, and they
+        // must NOT wait for the (much longer) escalation window that only waiting uses.
+        assert!(!allow_send(Kind::Done, Some(COOLDOWN_MS - 1)));
+        assert!(allow_send(Kind::Done, Some(COOLDOWN_MS)));
+        assert!(allow_send(Kind::Limited, Some(COOLDOWN_MS)));
+        assert!(COOLDOWN_MS < ESCALATE_MS, "a cooldown longer than the escalation would invert the rules");
+    }
+
+    #[test]
+    fn per_kind_switches_default_to_on_and_never_gag_maintenance() {
+        // An empty config must behave exactly as before the switches existed.
+        let cfg = crate::HubConfig::default();
+        for k in [Kind::Blocked, Kind::Done, Kind::Limited, Kind::Important] {
+            assert!(kind_enabled(&cfg, k), "{k:?} off by default");
+        }
+        // Turning off agent chatter must not also silence "the stack is down" — those are the
+        // notices the user cannot anticipate.
+        let quiet = crate::HubConfig {
+            notify_blocked: Some(false),
+            notify_done: Some(false),
+            notify_limited: Some(false),
+            ..Default::default()
+        };
+        assert!(!kind_enabled(&quiet, Kind::Blocked));
+        assert!(!kind_enabled(&quiet, Kind::Done));
+        assert!(!kind_enabled(&quiet, Kind::Limited));
+        assert!(kind_enabled(&quiet, Kind::Important));
     }
 
     #[test]

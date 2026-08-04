@@ -330,6 +330,16 @@ struct HubConfig {
         skip_serializing_if = "Option::is_none"
     )]
     status_notify: Option<bool>,
+    // Which agent-status transitions are worth a toast. `statusNotify` remains the master switch;
+    // these three are the per-kind refinement, because the three carry very different urgency:
+    // "waiting" blocks the user's work, "finished" is a nicety, "hit its limit" is somewhere between.
+    // None = default (true).
+    #[serde(rename = "notifyBlocked", default, skip_serializing_if = "Option::is_none")]
+    notify_blocked: Option<bool>,
+    #[serde(rename = "notifyDone", default, skip_serializing_if = "Option::is_none")]
+    notify_done: Option<bool>,
+    #[serde(rename = "notifyLimited", default, skip_serializing_if = "Option::is_none")]
+    notify_limited: Option<bool>,
     // Anthropic OAuth usage-limit monitor (Sessions): None = default (true). Polls each profile's
     // usage every 5 min and alerts at 85% / 99%. Set false to stop the background api.anthropic.com poll.
     #[serde(
@@ -15602,6 +15612,9 @@ fn session_spawn(
 /// Forward keystrokes (UTF-8) from an xterm pane into the PTY.
 #[tauri::command]
 fn session_write(state: State<'_, SessionState>, id: String, data: String) -> Result<(), String> {
+    // Note the keystroke: a turn ending seconds after the user typed must not toast "finished"
+    // at someone who is sitting right there (item 33).
+    agent_status::on_user_input(&id);
     use std::io::Write;
     // Clone out the per-session writer handle under the map lock, then RELEASE the map lock before the
     // (potentially blocking) PTY write — otherwise one stalled child head-of-lines every other session
@@ -15743,6 +15756,14 @@ fn session_list(state: State<'_, SessionState>) -> Vec<String> {
 #[tauri::command]
 fn session_set_label(id: String, label: String) {
     agent_status::set_label(&id, &label);
+}
+
+/// Tell the backend which pane the user is actually looking at. Without it the notifier only knows
+/// whether the WINDOW has focus, so working in one project silenced notifications from every other
+/// one. `None` = the Sessions tab is not visible, or no pane holds focus.
+#[tauri::command]
+fn session_set_focus(id: Option<String>) {
+    agent_status::set_focused(id);
 }
 
 /// Open a source location in the user's editor (#13), triggered by clicking a `path:line` link in a
@@ -15982,6 +16003,7 @@ pub fn run() {
             session_detach,
             session_list,
             session_set_label,
+            session_set_focus,
             notify::notify_enabled,
             notify::notify_test,
             notify::notify_diag,
