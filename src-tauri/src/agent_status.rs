@@ -679,6 +679,26 @@ pub fn agent_status_log() -> Vec<String> {
         .collect()
 }
 
+/// A small round badge, drawn in code rather than shipped as an asset — it is one flat colour and
+/// generating it avoids adding (and keeping in sync) a set of PNGs for every state.
+#[cfg(windows)]
+fn badge_image(rgb: (u8, u8, u8)) -> tauri::image::Image<'static> {
+    const S: u32 = 32;
+    let r = S as f32 / 2.0;
+    let mut px = Vec::with_capacity((S * S * 4) as usize);
+    for y in 0..S {
+        for x in 0..S {
+            // Distance from the centre, with a one-pixel soft edge so the dot is not jagged.
+            let dx = x as f32 + 0.5 - r;
+            let dy = y as f32 + 0.5 - r;
+            let d = (dx * dx + dy * dy).sqrt();
+            let a = ((r - d).clamp(0.0, 1.0) * 255.0) as u8;
+            px.extend_from_slice(&[rgb.0, rgb.1, rgb.2, a]);
+        }
+    }
+    tauri::image::Image::new_owned(px, S, S)
+}
+
 pub(crate) fn update_attention_surfaces(app: &tauri::AppHandle) {
     let (blocked, limited) = attention_counts();
     let Some(w) = app.get_webview_window("main") else {
@@ -703,6 +723,20 @@ pub(crate) fn update_attention_surfaces(app: &tauri::AppHandle) {
     // noise. `None` clears a flash that a previous transition started.
     let focused = w.is_focused().unwrap_or(false);
     let want = (blocked > 0 || limited > 0) && !focused;
+    // A badge on the taskbar button says HOW MANY without the window being visible; the flash only
+    // says "something happened". Windows has no badge-count API for desktop apps — the documented
+    // route is an overlay icon, so the dot is drawn and applied as one.
+    #[cfg(windows)]
+    {
+        let overlay = if blocked > 0 {
+            Some(badge_image((248, 81, 73)))
+        } else if limited > 0 {
+            Some(badge_image((239, 68, 68)))
+        } else {
+            None
+        };
+        let _ = w.set_overlay_icon(overlay);
+    }
     let _ = w.request_user_attention(if want {
         Some(tauri::UserAttentionType::Informational)
     } else {
