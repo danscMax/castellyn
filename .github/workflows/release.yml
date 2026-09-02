@@ -28,7 +28,7 @@ jobs:
       # This job holds TAURI_SIGNING_PRIVATE_KEY, so EVERY action here is SHA-pinned (a moved/hijacked
       # major tag would otherwise run with signing-key access). SHAs resolved from the major tags on
       # 2026-07-15; the trailing comment tracks which tag they pinned so updates stay auditable.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
