@@ -268,8 +268,8 @@ mod ssh_config_tests {
     #[test]
     fn parses_aliases_fields_and_skips_wildcards() {
         let cfg = "# my hosts\n\
-Host minipc 192.168.1.177\n\
-    HostName 192.168.1.177\n\
+Host minipc minipc-ts\n\
+    HostName minipc.tailea95dd.ts.net\n\
     User dansc\n\
     Port 22\n\
     IdentityFile ~/.ssh/id_ed25519\n\
@@ -286,7 +286,7 @@ Host *\n\
             .iter()
             .find(|h| h.name == "minipc")
             .expect("minipc host");
-        assert_eq!(mini.host, "192.168.1.177");
+        assert_eq!(mini.host, "minipc.tailea95dd.ts.net");
         assert_eq!(mini.user.as_deref(), Some("dansc"));
         assert_eq!(mini.port, Some(22));
         assert_eq!(mini.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
