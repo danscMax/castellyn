@@ -354,7 +354,7 @@ $controlStubs = @{}
 $controlStubs['Backup-ClaudeSetup.ps1'] = @'
 param([switch]$Force, [int]$KeepSnapshots = 0, [string]$DeleteSnapshot, [Parameter(ValueFromRemainingArguments = $true)]$rest)
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$backups = Join-Path $PSScriptRoot 'Backups'
+$backups = Join-Path $PSScriptRoot "Backups\$env:COMPUTERNAME"
 if (-not (Test-Path -LiteralPath $backups)) { New-Item -ItemType Directory -Path $backups -Force | Out-Null }
 if ($DeleteSnapshot) {
   if ($DeleteSnapshot -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$') { Write-Host "iso: неверный id снапшота: $DeleteSnapshot"; exit 1 }

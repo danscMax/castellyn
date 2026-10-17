@@ -2581,7 +2581,8 @@ fn build_profiles_snapshot() -> Result<profiles_status::Snapshot, String> {
         shared_items,
         shared_files: shared_file_items(),
         conflict_roots,
-        backups_dir: profiles_dir.join("Backups"),
+        // Per-machine snapshots: Backups\<COMPUTERNAME>\ (see backups::backup_dir).
+        backups_dir: std::path::PathBuf::from(crate::backups::backup_dir()),
         is_admin: is_elevated(),
         machine_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
         generated_at: profiles_status::now_iso(),
@@ -14071,7 +14072,7 @@ fn app_paths() -> serde_json::Value {
         "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
         "stackPath": if std::path::Path::new(&stack).exists() { Some(stack) } else { None },
         // F11: backup folder path (Backups/) so Settings → About can offer "Open in Explorer".
-        "backupDir": abs(crate::backups::BACKUP_DIR_REL),
+        "backupDir": crate::backups::backup_dir(),
     })
 }
 

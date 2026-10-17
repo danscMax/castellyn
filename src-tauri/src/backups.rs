@@ -1,5 +1,5 @@
 //! ===================== Backups tab (snapshots, weekly archives, restore) =====================
-//! Snapshots and weekly zips live under `{{PROFILES}}\Backups`, written by the PowerShell
+//! Snapshots and weekly zips live under `{{PROFILES}}\Backups\<COMPUTERNAME>`, written by the PowerShell
 //! Backup-/Restore-ClaudeSetup scripts. Listing/verifying/extracting an archive is native here
 //! (bsdtar), while creating a backup or restoring one streams the script through `spawn_streamed`.
 
@@ -14,6 +14,16 @@ use crate::{abs, cur_lang, parse_json_bom, spawn_streamed, stream_id, RunState, 
 pub(crate) const BACKUP_DIR_REL: &str = "{{PROFILES}}\\Backups";
 pub(crate) const BACKUP_SCRIPT_REL: &str = "{{PROFILES}}\\Backup-ClaudeSetup.ps1";
 const RESTORE_SCRIPT_REL: &str = "{{PROFILES}}\\Restore-ClaudeSetup.ps1";
+
+/// This machine's backup dir. Since 2026-10-17 Backup-ClaudeSetup.ps1 writes to
+/// `Backups\<COMPUTERNAME>\`: both PCs sync one folder, and a shared dir made them prune each other.
+pub(crate) fn backup_dir() -> String {
+    let base = abs(BACKUP_DIR_REL);
+    match std::env::var("COMPUTERNAME") {
+        Ok(h) if !h.is_empty() => format!("{base}\\{h}"),
+        _ => base,
+    }
+}
 
 #[derive(Serialize)]
 pub struct BackupList {
@@ -51,7 +61,7 @@ fn is_snapshot_name(s: &str) -> bool {
 /// frontend never needs the absolute Backups path.
 #[tauri::command]
 pub fn list_backups() -> BackupList {
-    let dir = abs(BACKUP_DIR_REL);
+    let dir = backup_dir();
     let mut snapshots: Vec<String> = Vec::new();
     let mut weeklies: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -88,7 +98,7 @@ fn weekly_archive_path(name: &str) -> Result<String, String> {
     {
         return Err(trv("err.dir_not_found", cur_lang(), &[("path", &name)]));
     }
-    let path = format!("{}\\{}", abs(BACKUP_DIR_REL), name);
+    let path = format!("{}\\{}", backup_dir(), name);
     if !std::path::Path::new(&path).exists() {
         return Err(trv("err.dir_not_found", cur_lang(), &[("path", &path)]));
     }
