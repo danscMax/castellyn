@@ -28,18 +28,18 @@ jobs:
       # This job holds TAURI_SIGNING_PRIVATE_KEY, so EVERY action here is SHA-pinned (a moved/hijacked
       # major tag would otherwise run with signing-key access). SHAs resolved from the major tags on
       # 2026-07-15; the trailing comment tracks which tag they pinned so updates stay auditable.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-06-30
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master @ 2026-06-30
         with:
           toolchain: "1.94.0"   # must match rust-toolchain.toml — bump the two together
           components: clippy
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: src-tauri
       - run: npm ci
