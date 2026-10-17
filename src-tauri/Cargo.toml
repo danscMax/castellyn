@@ -106,7 +106,10 @@ windows = { version = "0.62", features = [
 ] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-updater = "2"
+# No `zip` feature: it only unpacks v1-compatible *.zip update bundles, and tauri.conf.json builds
+# v2 artifacts (createUpdaterArtifacts: true -> raw signed installer). Dropping it also drops zip 4.x
+# and its extraction advisories (RUSTSEC-2026-0367/0368) that cargo-deny gates on.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 # Single-instance guard (desktop-only): a second launch focuses the running window instead of
 # opening a duplicate. Must be registered as the first plugin in run().
 tauri-plugin-single-instance = "2"
