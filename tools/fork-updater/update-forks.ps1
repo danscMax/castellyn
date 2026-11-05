@@ -9,10 +9,12 @@
     pwsh -File .\update-forks.ps1 -NoFetch      # offline: use already-fetched refs
     pwsh -File .\update-forks.ps1 -Unattended   # no toast/prompts (scheduler)
 #>
+#Requires -Version 7.2
 [CmdletBinding()]
 param(
     [switch]$Unattended,
     [switch]$NoFetch,
+    [switch]$NoGh,
     [string[]]$Roots,
     [string[]]$Paths,
     [int]$FetchTimeoutSec,
@@ -31,13 +33,19 @@ param(
     [switch]$Yes,              # skip confirmations (for scripting / the skill)
     [string]$Single,          # strict single-repo mode (process ONLY this path) — concurrent-safe
     [string]$OutFile,         # write the status JSON here instead of the shared fork-sync.last.json
-    [string]$ConfigPath       # durable fork config (Castellyn %APPDATA%\castellyn\forks.json)
+    [string]$ConfigPath,      # durable fork config (Castellyn %APPDATA%\castellyn\forks.json)
+    [string]$ScriptsRoot
 )
 
 chcp 65001 | Out-Null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-Import-Module (Join-Path $PSScriptRoot 'ForkSync.psm1') -Force
+$localScripts = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$sharedModule = Join-Path $localScripts 'fork-updater/GitRepository.psm1'
+if (-not (Test-Path -LiteralPath $sharedModule)) { throw "Canonical fork-updater is missing: $sharedModule" }
+Import-Module $sharedModule -Force
+$resolvedRoot = Resolve-ScriptsRoot -ScriptsRoot $ScriptsRoot -StartPath $PSScriptRoot
+Import-Module (Join-Path $resolvedRoot 'fork-updater/ForkSync.psm1') -Force
 
 # Single-instance lock. A whole-stack run takes the global lock; a -Single run takes a PER-REPO
 # lock so different repos run concurrently, while the same repo still can't double-run.
@@ -51,12 +59,12 @@ try {
         exit 3
     }
 
-    $code = Invoke-ForkSync -Root $PSScriptRoot -Unattended:$Unattended -NoFetch:$NoFetch `
+    $code = Invoke-ForkSync -Root $PSScriptRoot -Unattended:$Unattended -NoFetch:$NoFetch -NoGh:$NoGh `
         -Roots $Roots -Paths $Paths -FetchTimeoutSec $FetchTimeoutSec -GhTimeoutSec $GhTimeoutSec `
         -Apply:$Apply -FfMain:$FfMain -DeleteMerged:$DeleteMerged -NormalizeRemotes:$NormalizeRemotes `
         -Rebase:$Rebase -SyncWipLocal:$SyncWipLocal -DeleteWip:$DeleteWip -Prune:$Prune `
         -PushRebased:$PushRebased -DryRun:$DryRun -Yes:$Yes `
-        -Single $Single -OutFile $OutFile -ConfigPath $ConfigPath
+        -Single $Single -OutFile $OutFile -ConfigPath $ConfigPath -ScriptsRoot $resolvedRoot
 
     exit ([int]$code)
 }

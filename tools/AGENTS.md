@@ -13,8 +13,11 @@ folder holds the shared kit and Castellyn-local tooling.
 - `Sync-ScriptKit.ps1` — syncs `ScriptKit.ps1` out to the component scripts
 - `make-icon.py` — regenerates icon formats from `src-tauri/icons/icon.png`
 - `shoot.py`, `shoot-all.py` — screenshot capture for docs / design review
-- `claude-profiles/`, `fork-updater/`, `stack/`, `analytics/` — Castellyn-local script sets for
+- `claude-profiles/`, `stack/`, `analytics/` — Castellyn-local script sets for
   those feature areas
+- `fork-updater/` contains compatibility launchers only. The canonical Git engine and shared
+  snapshot/fast-forward helpers live in `<Scripts>/fork-updater`; preserve Castellyn's config,
+  output paths and command parameters when delegating to that installation.
 
 ## Local Contracts
 
