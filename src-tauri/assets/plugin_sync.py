@@ -1,4 +1,4 @@
-# plugin-sync-version: 5
+# plugin-sync-version: 6
 # SessionStart hook: propagate newly-installed plugins across all CC profiles.
 #
 # There is no native "plugin installed" event, so we reconcile at session start:
@@ -107,6 +107,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # iverdict-quiet: a CLI session spawned by iVerdict (reviews/translations) must not
+    # rewrite profile settings or print into the model's context (11.11.2026).
+    if os.environ.get("IVERDICT_CLI"):
+        sys.exit(0)
     try:
         main()
     except Exception:
